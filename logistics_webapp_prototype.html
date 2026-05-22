@@ -1,0 +1,1870 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logistics Tracking — KOB & BTV</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<style>
+/* ── Design tokens ─────────────────────────────────────── */
+:root {
+  --kob:       #c91253;   /* Kiss of Beauty — deep rose-pink */
+  --btv:       #7c3aed;
+  --oversea:   #2563eb;
+  --domestic:  #16a34a;
+  --pk:        #ea580c;
+  --fg:        #7c3aed;
+
+  --bg:        #f7f3f5;   /* warm blush off-white */
+  --surface:   #ffffff;
+  --border:    #e8dde4;   /* warm-tinted border */
+  --text-1:    #0f172a;
+  --text-2:    #475569;
+  --text-3:    #94a3b8;
+  --primary:   #c91253;   /* KOB rose-pink as primary accent */
+  --primary-lt:#fce7f3;   /* light rose for highlights */
+  --radius:    10px;
+  --radius-lg: 14px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04);
+  --shadow:    0 4px 16px rgba(0,0,0,.08), 0 1px 4px rgba(0,0,0,.04);
+  --shadow-lg: 0 12px 36px rgba(0,0,0,.14), 0 4px 10px rgba(0,0,0,.06);
+  --col-color: #94a3b8;   /* default kanban column accent – overridden inline */
+}
+
+/* ── Base ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text-1);
+  font-size: 13.5px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+code { font-size: 12px; }
+
+/* ── Scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ── Progress bar (indeterminate shimmer) ──────────────── */
+#syncBar {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px;
+  background: #c91253; z-index: 9999; display: none; overflow: hidden;
+}
+#syncBar::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 0%, #f9a8d4 40%, #fbcfe8 60%, transparent 100%);
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+/* ── Toast ─────────────────────────────────────────────── */
+#toastWrap {
+  position: fixed; bottom: 24px; right: 24px;
+  z-index: 9999; display: flex; flex-direction: column; gap: 8px;
+}
+.toast-msg {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--text-1); color: #fff;
+  padding: 11px 16px; border-radius: var(--radius);
+  font-size: 13px; font-weight: 500;
+  box-shadow: var(--shadow-lg); max-width: 340px;
+  animation: slideUp .22s cubic-bezier(.34,1.56,.64,1);
+}
+.toast-msg::before { content: 'ℹ'; font-size: 15px; opacity: .7; }
+.toast-msg.error   { background: #dc2626; }
+.toast-msg.error::before  { content: '✕'; }
+.toast-msg.success { background: #16a34a; }
+.toast-msg.success::before { content: '✓'; }
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px) scale(.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Navbar ────────────────────────────────────────────── */
+.app-navbar {
+  background: #0a0a0a;
+  padding: 0 24px;
+  height: 56px;
+  display: flex; align-items: center;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: 0 1px 0 rgba(255,255,255,.06);
+}
+.app-brand {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 15px; color: #fff;
+  text-decoration: none; letter-spacing: -.2px;
+}
+.app-brand .brand-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: linear-gradient(135deg, #c91253, #e91e8c);
+  display: grid; place-items: center; font-size: 17px;
+}
+.app-brand .brand-sub {
+  font-size: 11px; font-weight: 400; color: #64748b;
+  letter-spacing: 0;
+}
+.app-nav-right {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+}
+.db-pill {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 500;
+  padding: 4px 10px; border-radius: 20px;
+  background: rgba(255,255,255,.07); color: #94a3b8;
+  border: 1px solid rgba(255,255,255,.08);
+}
+.db-pill.ok  { color: #4ade80; border-color: rgba(74,222,128,.2); background: rgba(74,222,128,.08); }
+.db-pill.err { color: #f87171; border-color: rgba(248,113,113,.2); background: rgba(248,113,113,.08); }
+.sync-time { font-size: 11.5px; color: #475569; white-space: nowrap; }
+.btn-nav {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 8px; border: none;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: all .15s;
+}
+.btn-nav-primary { background: var(--primary); color: #fff; }
+.btn-nav-primary:hover { background: #a50f44; }
+.btn-nav-ghost  { background: rgba(255,255,255,.07); color: #94a3b8; }
+.btn-nav-ghost:hover  { background: rgba(255,255,255,.12); color: #e2e8f0; }
+
+/* ── Main content ──────────────────────────────────────── */
+.app-main { padding: 24px; max-width: 100%; }
+
+/* ── Page header + Tab nav ─────────────────────────────── */
+.page-header {
+  display: flex; align-items: center; gap: 0;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.tab-link {
+  display: flex; align-items: center; gap: 7px;
+  padding: 12px 20px 11px;
+  font-size: 13.5px; font-weight: 500; color: var(--text-2);
+  text-decoration: none; border: none; background: none; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.tab-link:hover { color: var(--primary); }
+.tab-link.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.tab-badge {
+  font-size: 10.5px; font-weight: 600;
+  padding: 1px 7px; border-radius: 20px; min-width: 20px; text-align: center;
+  background: #fce7f3; color: var(--primary);
+}
+.tab-link.active .tab-badge { background: var(--primary); color: #fff; }
+
+/* ── Toolbar ───────────────────────────────────────────── */
+.toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.toolbar-left {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.toolbar-right {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.toolbar-sep {
+  width: 1px; height: 22px; background: var(--border); flex-shrink: 0; margin: 0 2px;
+}
+
+/* Type pills */
+.type-group { display: flex; gap: 4px; flex-wrap: wrap; }
+.type-pill {
+  padding: 5px 13px; border-radius: 20px; border: 1.5px solid var(--border);
+  font-size: 12.5px; font-weight: 500; color: var(--text-2);
+  background: var(--surface); cursor: pointer; transition: all .15s;
+}
+.type-pill:hover { border-color: var(--primary); color: var(--primary); }
+.type-pill.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* Selects */
+.filter-select {
+  height: 34px; padding: 0 10px; font-size: 13px; font-family: inherit;
+  border: 1.5px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text-1); cursor: pointer;
+  outline: none; transition: border-color .15s;
+  appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%2394a3b8' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center;
+  padding-right: 28px;
+}
+.filter-select:focus { border-color: var(--primary); }
+
+/* Search field */
+.search-wrap { position: relative; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); font-size: 13px; pointer-events: none; }
+.search-inp {
+  height: 34px; padding: 0 10px 0 32px; font-size: 13px; font-family: inherit;
+  border: 1.5px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text-1); outline: none;
+  transition: border-color .15s; min-width: 200px;
+}
+.search-inp:focus { border-color: var(--primary); }
+
+/* ── Search / Filter bar ───────────────────────────────── */
+/* Outer pill wrapper — all filter controls live inside */
+.sf-wrap {
+  position: relative;
+  display: flex; align-items: center;
+  border: 1.5px solid var(--border); border-radius: 9px;
+  background: var(--surface); overflow: visible;
+  transition: border-color .15s, box-shadow .15s;
+}
+.sf-wrap:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(201,18,83,.1);
+}
+.sf-toggle {
+  height: 34px; padding: 0 10px 0 12px;
+  display: flex; align-items: center; gap: 5px;
+  border: none; border-right: 1px solid var(--border);
+  background: #fdf5f7; border-radius: 7px 0 0 7px;
+  color: var(--text-2); font-size: 12px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  font-family: inherit;
+}
+.sf-toggle:hover { color: var(--primary); background: var(--primary-lt); }
+.sf-input-text {
+  height: 34px; padding: 0 10px; font-size: 13px; font-family: inherit;
+  border: none; background: transparent; color: var(--text-1);
+  outline: none; min-width: 190px;
+}
+/* Date row — hidden by default (no Bootstrap d-flex class needed) */
+.sf-date-row {
+  display: none;   /* toggled to flex via JS */
+  align-items: center;
+}
+.sf-period-sel {
+  height: 34px; padding: 0 8px; font-size: 12px; font-family: inherit;
+  border: none; border-left: 1px solid var(--border);
+  background: #f8fafc; color: var(--text-2); outline: none; cursor: pointer;
+}
+.sf-date-inp {
+  height: 34px; padding: 0 10px; font-size: 13px; font-family: inherit;
+  border: none; border-left: 1px solid var(--border);
+  background: transparent; color: var(--text-1); outline: none;
+  max-width: 100px;
+}
+.sf-clear {
+  height: 34px; width: 32px; display: none; align-items: center; justify-content: center;
+  border: none; border-left: 1px solid var(--border);
+  border-radius: 0 7px 7px 0;
+  background: transparent; color: var(--text-3);
+  cursor: pointer; transition: all .15s; font-size: 11px; flex-shrink: 0;
+}
+.sf-clear.show { display: flex; }
+.sf-clear:hover { color: #dc2626; background: #fff5f5; }
+.sf-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 1000;
+  background: var(--surface); border: 1.5px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  padding: 4px 0; min-width: 150px; display: none;
+}
+.sf-menu.open { display: block; }
+.sf-menu-item {
+  padding: 8px 14px; cursor: pointer; font-size: 13px; color: var(--text-2);
+  display: flex; align-items: center; gap: 8px; transition: background .1s;
+}
+.sf-menu-item:hover { background: var(--bg); color: var(--text-1); }
+.sf-menu-item.active { color: var(--primary); font-weight: 600; }
+
+/* View toggle */
+.view-toggle {
+  display: flex; border: 1.5px solid var(--border); border-radius: 8px; overflow: hidden;
+}
+.view-btn {
+  height: 34px; width: 36px; display: flex; align-items: center; justify-content: center;
+  border: none; background: var(--surface); color: var(--text-2); cursor: pointer;
+  font-size: 14px; transition: all .15s;
+}
+.view-btn + .view-btn { border-left: 1px solid var(--border); }
+.view-btn.active { background: var(--primary); color: #fff; }
+.view-btn:not(.active):hover { background: var(--bg); }
+
+/* Add button */
+.btn-add {
+  height: 34px; padding: 0 16px; display: flex; align-items: center; gap: 6px;
+  border: none; border-radius: 8px; background: var(--primary); color: #fff;
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s;
+}
+.btn-add:hover { background: #a50f44; }
+
+/* Summary line */
+.summary-line { font-size: 12.5px; color: var(--text-3); margin-bottom: 14px; }
+
+/* ── Kanban ────────────────────────────────────────────── */
+.kanban-wrap {
+  display: flex; gap: 12px; overflow-x: auto;
+  padding-bottom: 20px; min-height: 220px;
+  scrollbar-width: thin;
+}
+.kanban-col {
+  min-width: 218px; max-width: 234px; flex-shrink: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0 0 8px 0;
+  box-shadow: var(--shadow-sm);
+  display: flex; flex-direction: column;
+}
+/* Colored header band */
+.kanban-col-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 9px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: color-mix(in srgb, var(--col-color) 8%, white);
+  border-bottom: 1px solid color-mix(in srgb, var(--col-color) 20%, transparent);
+  margin-bottom: 8px;
+}
+.kanban-col-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .7px; color: var(--col-color);
+}
+.kanban-count {
+  font-size: 10.5px; font-weight: 700; min-width: 20px; text-align: center;
+  padding: 1px 7px; border-radius: 20px;
+  background: color-mix(in srgb, var(--col-color) 15%, white);
+  color: var(--col-color);
+}
+/* Card body area inside column */
+.kanban-body { flex: 1; padding: 0 8px; }
+
+/* Cards */
+.kanban-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--col-color);
+  border-radius: 0 8px 8px 0;
+  padding: 9px 11px 9px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: box-shadow .15s, transform .12s, border-color .15s;
+  position: relative;
+}
+.kanban-card:hover {
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--col-color) 60%, transparent);
+  border-left-color: var(--col-color);
+}
+.kanban-card-id {
+  font-size: 10.5px; font-weight: 700; color: var(--col-color);
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  letter-spacing: -.1px; line-height: 1;
+}
+.kanban-card-party {
+  font-size: 12px; color: var(--text-1); font-weight: 500;
+  margin: 4px 0 5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px;
+}
+.kanban-card-badges { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 5px; }
+.kanban-card-meta {
+  font-size: 10.5px; color: var(--text-3);
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border);
+}
+.kanban-card-amount { font-size: 11px; font-weight: 700; color: var(--text-1); }
+.kanban-empty {
+  font-size: 12px; color: var(--text-3); text-align: center;
+  padding: 18px 0 10px; letter-spacing: .2px;
+}
+.kanban-add {
+  width: calc(100% - 16px); margin: 4px 8px 0;
+  padding: 6px 0;
+  border: 1.5px dashed var(--border); border-radius: 7px;
+  background: none; color: var(--text-3); font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all .15s;
+}
+.kanban-add:hover {
+  border-color: var(--col-color);
+  color: var(--col-color);
+  background: color-mix(in srgb, var(--col-color) 6%, white);
+}
+
+/* ── Table ─────────────────────────────────────────────── */
+.tbl-wrap { overflow-x: auto; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.tbl-ship { font-size: 13px; margin: 0; border-collapse: separate; border-spacing: 0; }
+.tbl-ship thead th {
+  background: #f8fafc; color: var(--text-2);
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  padding: 10px 14px; border-bottom: 1.5px solid var(--border);
+  white-space: nowrap; position: sticky; top: 0;
+}
+.tbl-ship thead th:first-child { border-radius: var(--radius-lg) 0 0 0; }
+.tbl-ship thead th:last-child  { border-radius: 0 var(--radius-lg) 0 0; }
+.tbl-ship tbody tr { cursor: pointer; background: var(--surface); transition: background .12s; }
+.tbl-ship tbody tr:hover { background: var(--primary-lt); }
+.tbl-ship tbody td {
+  padding: 10px 14px; vertical-align: middle; white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.tbl-ship tbody tr:last-child td { border-bottom: none; }
+
+/* ── Badges ────────────────────────────────────────────── */
+.state-badge {
+  display: inline-block; font-size: 10.5px; padding: 2px 9px;
+  border-radius: 20px; font-weight: 600; white-space: nowrap; letter-spacing: .2px;
+}
+.co-badge {
+  display: inline-block; font-size: 10.5px; padding: 2px 8px;
+  border-radius: 6px; font-weight: 700; white-space: nowrap;
+}
+.badge-kob      { background: #fce7f3; color: #c91253; border: 1px solid #fbcfe8; }
+.badge-btv      { background: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; }
+.badge-oversea  { background: #dbeafe; color: #1d4ed8; }
+.badge-domestic { background: #dcfce7; color: #15803d; }
+.badge-pk       { background: #ffedd5; color: #c2410c; }
+.badge-fg       { background: #ede9fe; color: #6d28d9; }
+.badge-odoo     { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 20px; background: #dbeafe; color: #1d4ed8; font-weight: 600; }
+
+/* ── Stat cards ────────────────────────────────────────── */
+.stat-cards { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 24px; }
+@media (max-width: 900px) { .stat-cards { grid-template-columns: repeat(2,1fr); } }
+.stat-card {
+  background: var(--surface); border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg); padding: 20px 22px;
+  box-shadow: var(--shadow-sm); position: relative; overflow: hidden;
+}
+.stat-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+}
+.stat-card.c1::before { background: linear-gradient(90deg,#c91253,#e91e8c); }  /* Import — KOB deep rose */
+.stat-card.c2::before { background: linear-gradient(90deg,#7c3aed,#a78bfa); }  /* Export — violet */
+.stat-card.c3::before { background: linear-gradient(90deg,#f59e0b,#ea580c); }  /* Active — amber/orange */
+.stat-card.c4::before { background: linear-gradient(90deg,#059669,#10b981); }  /* Pending — emerald */
+.stat-icon {
+  width: 40px; height: 40px; border-radius: 10px;
+  display: grid; place-items: center; font-size: 18px; margin-bottom: 12px;
+}
+.stat-card.c1 .stat-icon { background: #fce7f3; color: #c91253; }
+.stat-card.c2 .stat-icon { background: #ede9fe; color: #7c3aed; }
+.stat-card.c3 .stat-icon { background: #fffbeb; color: #d97706; }
+.stat-card.c4 .stat-icon { background: #f0fdf4; color: #059669; }
+.stat-value { font-size: 2.2rem; font-weight: 800; color: var(--text-1); line-height: 1; margin-bottom: 4px; letter-spacing: -1px; }
+.stat-label { font-size: 12px; color: var(--text-2); font-weight: 500; }
+
+/* ── Chart cards ───────────────────────────────────────── */
+.chart-card {
+  background: var(--surface); border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg); padding: 20px 22px;
+  box-shadow: var(--shadow-sm);
+}
+.chart-card-title { font-size: 13.5px; font-weight: 600; color: var(--text-1); }
+.chart-card-header { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:16px; }
+.chart-card-sub    { font-size:12px; color:var(--text-3); }
+
+/* ── Stat card sub-line ─────────────────────────────────── */
+.stat-sub { font-size:11px; color:var(--text-3); margin-top:6px; letter-spacing:.2px; }
+
+/* ── Dashboard grid layouts ─────────────────────────────── */
+.dash-grid-2-1 { display:grid; grid-template-columns:2fr 1fr; gap:16px; margin-bottom:16px; }
+@media(max-width:960px) { .dash-grid-2-1 { grid-template-columns:1fr; } }
+
+/* ── Pipeline bars ──────────────────────────────────────── */
+.pipeline { display:flex; flex-direction:column; gap:9px; }
+.pipeline-row { display:grid; grid-template-columns:108px 1fr 38px; align-items:center; gap:10px; }
+.pipeline-lbl { font-size:12px; color:var(--text-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pipeline-track { background:var(--bg); border-radius:99px; height:8px; overflow:hidden; }
+.pipeline-fill  { height:100%; border-radius:99px; transition:width .55s cubic-bezier(.4,0,.2,1); min-width:3px; }
+.pipeline-num   { font-size:12px; font-weight:600; color:var(--text-1); text-align:right; }
+.pipeline-zero  { opacity:.35; }
+
+/* ── Donut center label ─────────────────────────────────── */
+.donut-wrap { position:relative; }
+.donut-center {
+  position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  pointer-events:none; padding-bottom:32px; /* nudge up above legend */
+}
+.donut-center-num { font-size:1.6rem; font-weight:800; color:var(--text-1); line-height:1; }
+.donut-center-lbl { font-size:11px; color:var(--text-3); margin-top:3px; }
+
+/* ── Company split bars ─────────────────────────────────── */
+.comp-split-item   { margin-bottom:20px; }
+.comp-split-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+.comp-split-title  { font-size:13px; font-weight:600; color:var(--text-1); }
+.comp-split-total  { font-size:12px; color:var(--text-3); }
+.comp-split-bar    { height:10px; border-radius:99px; overflow:hidden; display:flex; background:var(--bg); }
+.comp-split-kob    { background:#c91253; transition:width .5s ease; }
+.comp-split-btv    { background:#7c3aed; transition:width .5s ease; }
+.comp-split-nums   { display:flex; justify-content:space-between; font-size:11px; color:var(--text-3); margin-top:5px; }
+.comp-split-legend { display:flex; gap:16px; margin-top:18px; font-size:12px; color:var(--text-2); }
+.comp-split-legend-item { display:flex; align-items:center; gap:5px; }
+.comp-dot { width:8px; height:8px; border-radius:50%; }
+
+/* ── Modal ─────────────────────────────────────────────── */
+.modal-content {
+  border: none; border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.modal-header {
+  padding: 18px 22px 14px; border-bottom: 1.5px solid var(--border);
+  background: #f8fafc; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.modal-title { font-size: 15px; font-weight: 700; color: var(--text-1); }
+.modal-body { padding: 20px 22px; }
+.modal-footer { padding: 14px 22px; border-top: 1.5px solid var(--border); }
+
+.form-label { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .4px; }
+.form-control, .form-select {
+  border: 1.5px solid var(--border); border-radius: 8px;
+  font-family: inherit; font-size: 13px; color: var(--text-1);
+  transition: border-color .15s, box-shadow .15s;
+}
+.form-control:focus, .form-select:focus {
+  border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.form-control-sm, .form-select-sm { font-size: 13px; padding: 5px 10px; }
+.f-readonly { background: #f8fafc; color: var(--text-2); cursor: default; }
+
+/* Form section separator */
+.form-section-label {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .8px; color: var(--text-3); padding: 8px 0 6px;
+  border-bottom: 1px solid var(--border); margin-bottom: 10px;
+}
+
+/* Modal buttons */
+.btn-modal-save {
+  padding: 7px 20px; border-radius: 8px; border: none;
+  background: var(--primary); color: #fff; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background .15s; display: flex; align-items: center; gap: 6px;
+}
+.btn-modal-save:hover { background: #a50f44; }
+.btn-modal-cancel {
+  padding: 7px 16px; border-radius: 8px; border: 1.5px solid var(--border);
+  background: var(--surface); color: var(--text-2); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .15s;
+}
+.btn-modal-cancel:hover { border-color: var(--text-2); color: var(--text-1); }
+.btn-modal-delete {
+  padding: 7px 14px; border-radius: 8px; border: 1.5px solid #fecaca;
+  background: #fff5f5; color: #dc2626; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .15s; display: flex; align-items: center; gap: 6px;
+}
+.btn-modal-delete:hover { background: #dc2626; border-color: #dc2626; color: #fff; }
+
+/* ── Vendor picker ─────────────────────────────────────── */
+.vp-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  z-index: 1060; display: none; align-items: center; justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.vp-overlay.open { display: flex; }
+.vp-box {
+  background: var(--surface); border-radius: var(--radius-lg);
+  width: 540px; max-height: 500px; display: flex; flex-direction: column;
+  box-shadow: var(--shadow-lg); border: 1.5px solid var(--border);
+}
+.vp-header {
+  padding: 16px 18px; border-bottom: 1.5px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.vp-header-title { font-size: 14px; font-weight: 700; color: var(--text-1); }
+.vp-search {
+  flex: 1; padding: 7px 12px; border: 1.5px solid var(--border); border-radius: 8px;
+  font-size: 13px; font-family: inherit; outline: none; transition: border-color .15s;
+}
+.vp-search:focus { border-color: var(--primary); }
+.vp-list { overflow-y: auto; flex: 1; padding: 4px 0; }
+.vp-item {
+  padding: 9px 18px; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  transition: background .1s;
+}
+.vp-item:hover { background: var(--primary-lt); }
+.vp-name { flex: 1; font-size: 13px; color: var(--text-1); font-weight: 500; }
+.vp-country { font-size: 11.5px; color: var(--text-3); }
+.vp-badge {
+  background: #ede9fe; color: #6d28d9;
+  font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 20px;
+}
+
+/* ── Empty board ───────────────────────────────────────── */
+.empty-board {
+  text-align: center; padding: 70px 20px; color: var(--text-3);
+  background: var(--surface); border: 1.5px dashed var(--border);
+  border-radius: var(--radius-lg); margin-top: 4px;
+}
+.empty-board .empty-icon {
+  font-size: 3rem; display: block; margin-bottom: 12px; opacity: .4;
+}
+.empty-board .empty-title { font-size: 15px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.empty-board .empty-sub   { font-size: 13px; margin-bottom: 18px; }
+</style>
+</head>
+<body>
+
+<!-- Progress bar -->
+<div id="syncBar"></div>
+
+<!-- Toast container -->
+<div id="toastWrap"></div>
+
+<!-- ── Navbar ──────────────────────────────────────────── -->
+<nav class="app-navbar">
+  <a class="app-brand" href="#">
+    <span class="brand-icon"><i class="bi bi-boxes" style="color:#fff"></i></span>
+    <span>
+      <div>Logistics</div>
+      <div class="brand-sub">KOB &amp; BTV Tracking</div>
+    </span>
+  </a>
+
+  <div class="app-nav-right">
+    <span id="dbStatus" class="db-pill">
+      <i class="bi bi-circle-fill" style="font-size:7px"></i>DB...
+    </span>
+    <span id="syncStatus" class="sync-time"></span>
+    <button class="btn-nav btn-nav-ghost" onclick="clearCache()">
+      <i class="bi bi-lightning-charge"></i> Clear Cache
+    </button>
+    <button class="btn-nav btn-nav-primary" id="btnSync" onclick="syncOdoo()">
+      <i class="bi bi-arrow-repeat"></i> Sync Odoo
+    </button>
+  </div>
+</nav>
+
+<!-- ── Main ────────────────────────────────────────────── -->
+<div class="app-main">
+
+  <!-- Tab navigation -->
+  <div class="page-header">
+    <button class="tab-link active" onclick="switchTab('import',this)">
+      <i class="bi bi-arrow-down-circle"></i>Import Board
+      <span class="tab-badge" id="impBadge"></span>
+    </button>
+    <button class="tab-link" onclick="switchTab('export',this)">
+      <i class="bi bi-arrow-up-circle"></i>Export Board
+      <span class="tab-badge" id="expBadge"></span>
+    </button>
+    <button class="tab-link" onclick="switchTab('dashboard',this)">
+      <i class="bi bi-bar-chart-line"></i>Dashboard
+    </button>
+  </div>
+
+  <!-- ══ IMPORT TAB ══════════════════════════════════════ -->
+  <div id="tab-import">
+    <!-- Toolbar — grid: left filters | right actions -->
+    <div class="toolbar">
+      <!-- Type pills — left side only -->
+      <div class="toolbar-left">
+        <div class="type-group" id="impTypeTabs">
+          <button class="type-pill active" onclick="setImpType('all',this)">All</button>
+          <button class="type-pill" onclick="setImpType('oversea',this)">🌐 Oversea</button>
+          <button class="type-pill" onclick="setImpType('domestic',this)">🏠 Domestic</button>
+          <button class="type-pill" onclick="setImpType('pk',this)">📦 PK</button>
+          <button class="type-pill" onclick="setImpType('fg',this)">🏭 FG</button>
+        </div>
+      </div>
+
+      <!-- All filter/action controls — right side -->
+      <div class="toolbar-right">
+        <!-- Company + State selects -->
+        <select class="filter-select" id="impCompanyFilter" onchange="renderImport()">
+          <option value="">บริษัท: ทั้งหมด</option>
+          <option value="KOB">KOB</option>
+          <option value="BTV">BTV</option>
+        </select>
+        <select class="filter-select" id="impStateFilter" onchange="renderImport()">
+          <option value="">สถานะ: ทั้งหมด</option>
+          <option value="draft">Draft</option>
+          <option value="supplier_ready">PO Issued</option>
+          <option value="booking_confirmed">Booking</option>
+          <option value="etd">Shipped</option>
+          <option value="eta">Arrived</option>
+          <option value="customs_clearance">Customs</option>
+          <option value="duty_payment">Duty Payment</option>
+          <option value="goods_received">Delivered</option>
+        </select>
+        <div class="toolbar-sep"></div>
+        <!-- Search pill -->
+        <div class="sf-wrap">
+          <button class="sf-toggle" id="sfTypeBtn" onclick="toggleSfMenu()">
+            <i class="bi bi-funnel" style="font-size:11px"></i>
+            <span id="sfTypeLabel">All</span>
+            <i class="bi bi-chevron-down" style="font-size:9px"></i>
+          </button>
+          <div class="sf-menu" id="sfMenu">
+            <div class="sf-menu-item active" onclick="setSfType('all','All',this)"><i class="bi bi-grid" style="font-size:11px"></i>ทั้งหมด</div>
+            <div class="sf-menu-item" onclick="setSfType('vendor','Vendor',this)"><i class="bi bi-building" style="font-size:11px"></i>Vendor</div>
+            <div class="sf-menu-item" onclick="setSfType('po','PO No.',this)"><i class="bi bi-hash" style="font-size:11px"></i>PO Number</div>
+            <div class="sf-menu-item" onclick="setSfType('date','Date',this)"><i class="bi bi-calendar2" style="font-size:11px"></i>Order Date</div>
+          </div>
+          <div id="sfTextArea">
+            <input type="text" class="sf-input-text" id="sfText" placeholder="ค้นหา..." oninput="onSfInput()">
+          </div>
+          <!-- date fields: NO d-flex class — toggled to display:flex by JS -->
+          <div id="sfDateArea" class="sf-date-row">
+            <select class="sf-period-sel" id="sfPeriodSel" onchange="onSfPeriodChange()">
+              <option value="year">ปี</option>
+              <option value="month">เดือน</option>
+              <option value="day">วัน</option>
+            </select>
+            <input type="text" class="sf-date-inp" id="sfDateInp" placeholder="2026" maxlength="10" oninput="onSfInput()">
+          </div>
+          <button class="sf-clear" id="sfClearBtn" onclick="clearSf()" title="ล้าง">
+            <i class="bi bi-x"></i>
+          </button>
+        </div>
+
+        <!-- View toggle -->
+        <div class="view-toggle">
+          <button class="view-btn active" id="btnKanban" onclick="setView('kanban')" title="Kanban">
+            <i class="bi bi-kanban"></i>
+          </button>
+          <button class="view-btn" id="btnTable" onclick="setView('table')" title="Table">
+            <i class="bi bi-table"></i>
+          </button>
+        </div>
+
+        <button class="btn-add" onclick="openCreate('import')">
+          <i class="bi bi-plus-lg"></i>เพิ่ม
+        </button>
+      </div>
+    </div><!-- /toolbar -->
+
+    <div class="summary-line" id="impSummary"></div>
+    <div id="impKanban"></div>
+    <div id="impTable" style="display:none"></div>
+  </div>
+
+  <!-- ══ EXPORT TAB ══════════════════════════════════════ -->
+  <div id="tab-export" style="display:none">
+    <div class="toolbar">
+      <div class="toolbar-left"></div>
+      <div class="toolbar-right">
+        <select class="filter-select" id="expCompanyFilter" onchange="renderExport()">
+          <option value="">บริษัท: ทั้งหมด</option>
+          <option value="KOB">KOB</option>
+          <option value="BTV">BTV</option>
+        </select>
+        <select class="filter-select" id="expStateFilter" onchange="renderExport()">
+          <option value="">สถานะ: ทั้งหมด</option>
+          <option value="draft">Draft</option>
+          <option value="order_confirmed">SO Confirmed</option>
+          <option value="production">Production</option>
+          <option value="packing">Packing</option>
+          <option value="booking_confirmed">Booking</option>
+          <option value="etd">Shipped</option>
+          <option value="eta_arrived">Arrived</option>
+          <option value="closed">Closed</option>
+        </select>
+        <div class="toolbar-sep"></div>
+        <div class="sf-wrap">
+          <div style="height:34px;padding:0 10px;display:flex;align-items:center;border-right:1px solid var(--border);color:var(--text-3)">
+            <i class="bi bi-search" style="font-size:12px"></i>
+          </div>
+          <input type="text" class="sf-input-text" id="expSearch" placeholder="ค้นหา SO / ลูกค้า..." oninput="renderExport()">
+        </div>
+        <div class="view-toggle">
+          <button class="view-btn active" id="expBtnKanban" onclick="setExpView('kanban')"><i class="bi bi-kanban"></i></button>
+          <button class="view-btn" id="expBtnTable" onclick="setExpView('table')"><i class="bi bi-table"></i></button>
+        </div>
+        <button class="btn-add" onclick="openCreate('export')"><i class="bi bi-plus-lg"></i>เพิ่ม</button>
+      </div>
+    </div>
+    <div class="summary-line" id="expSummary"></div>
+    <div id="expKanban"></div>
+    <div id="expTable" style="display:none"></div>
+  </div>
+
+  <!-- ══ DASHBOARD TAB ═══════════════════════════════════ -->
+  <div id="tab-dashboard" style="display:none">
+
+    <!-- KPI Cards -->
+    <div class="stat-cards">
+      <div class="stat-card c1">
+        <div class="stat-icon"><i class="bi bi-arrow-down-circle"></i></div>
+        <div class="stat-value" id="dashImp">—</div>
+        <div class="stat-label">Import (Total)</div>
+        <div class="stat-sub" id="dashImpSub"></div>
+      </div>
+      <div class="stat-card c2">
+        <div class="stat-icon"><i class="bi bi-arrow-up-circle"></i></div>
+        <div class="stat-value" id="dashExp">—</div>
+        <div class="stat-label">Export (Total)</div>
+        <div class="stat-sub" id="dashExpSub"></div>
+      </div>
+      <div class="stat-card c3">
+        <div class="stat-icon"><i class="bi bi-activity"></i></div>
+        <div class="stat-value" id="dashActive">—</div>
+        <div class="stat-label">Active (Non-Draft)</div>
+        <div class="stat-sub" id="dashActiveSub"></div>
+      </div>
+      <div class="stat-card c4">
+        <div class="stat-icon"><i class="bi bi-hourglass-split"></i></div>
+        <div class="stat-value" id="dashPending">—</div>
+        <div class="stat-label">Pending Action</div>
+        <div class="stat-sub" id="dashPendingSub"></div>
+      </div>
+    </div>
+
+    <!-- Row 1: Import Pipeline + Import by Type donut -->
+    <div class="dash-grid-2-1">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div class="chart-card-title">Import Pipeline</div>
+          <div class="chart-card-sub" id="dashImpTotal"></div>
+        </div>
+        <div id="dashImpPipeline"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div class="chart-card-title">Import by Type</div>
+        </div>
+        <div class="donut-wrap">
+          <canvas id="chartImpType" height="220"></canvas>
+          <div class="donut-center">
+            <div class="donut-center-num" id="donutImpNum">—</div>
+            <div class="donut-center-lbl">Import</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: Export Pipeline + Company Split -->
+    <div class="dash-grid-2-1">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div class="chart-card-title">Export Pipeline</div>
+          <div class="chart-card-sub" id="dashExpTotal"></div>
+        </div>
+        <div id="dashExpPipeline"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div class="chart-card-title">Company Split</div>
+          <div class="chart-card-sub">KOB vs BTV</div>
+        </div>
+        <div id="dashCompSplit"></div>
+      </div>
+    </div>
+
+  </div>
+
+</div><!-- /app-main -->
+
+<!-- ══ SHIPMENT MODAL ══════════════════════════════════════ -->
+<div class="modal fade" id="shipModal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="modalTitle">Shipment</h5>
+        </div>
+        <div id="modalBadges" class="ms-2 d-flex align-items-center gap-1"></div>
+        <button type="button" class="btn-close ms-auto" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <!-- Left column -->
+          <div class="col-md-6">
+            <div class="form-section-label">ข้อมูลทั่วไป</div>
+            <div class="row g-2">
+              <div class="col-6">
+                <label class="form-label">PO / SO Number</label>
+                <input class="form-control form-control-sm" id="f-poso" readonly>
+              </div>
+              <div class="col-6">
+                <label class="form-label">บริษัท</label>
+                <select class="form-select form-select-sm" id="f-company">
+                  <option value="KOB">KOB</option><option value="BTV">BTV</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label">Supplier / Customer</label>
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="f-party" placeholder="ชื่อ supplier / customer">
+                  <button class="btn btn-outline-secondary" type="button" onclick="openVendorPicker()" id="btnPickVendor">
+                    <i class="bi bi-search"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="col-12">
+                <label class="form-label">สินค้า (Goods)</label>
+                <input class="form-control form-control-sm" id="f-goods" placeholder="ชื่อสินค้า">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Mode</label>
+                <select class="form-select form-select-sm" id="f-mode">
+                  <option value="sea">Sea</option><option value="air">Air</option>
+                  <option value="land">Land</option><option value="courier">Courier</option>
+                </select>
+              </div>
+              <div class="col-6">
+                <label class="form-label">Forwarder</label>
+                <input class="form-control form-control-sm" id="f-forwarder">
+              </div>
+              <div class="col-6">
+                <label class="form-label">สกุลเงิน</label>
+                <input class="form-control form-control-sm" id="f-currency" placeholder="USD">
+              </div>
+              <div class="col-6">
+                <label class="form-label">มูลค่า</label>
+                <input class="form-control form-control-sm" id="f-amount" type="number">
+              </div>
+              <div class="col-6">
+                <label class="form-label">
+                  Order Date
+                  <span id="f-order-date-src" style="display:none" class="badge-odoo ms-1">🗄 Odoo</span>
+                </label>
+                <input class="form-control form-control-sm" id="f-order-date" type="date">
+              </div>
+              <div class="col-6">
+                <label class="form-label">สถานะ</label>
+                <select class="form-select form-select-sm" id="f-state">
+                  <optgroup label="Import" id="grp-import">
+                    <option value="draft">Draft</option>
+                    <option value="supplier_ready">PO Issued</option>
+                    <option value="booking_confirmed">Booking</option>
+                    <option value="etd">Shipped (ETD)</option>
+                    <option value="eta">Arrived (ETA)</option>
+                    <option value="customs_clearance">Customs Clearance</option>
+                    <option value="duty_payment">Duty Payment</option>
+                    <option value="goods_received">Delivered</option>
+                  </optgroup>
+                  <optgroup label="Export" id="grp-export">
+                    <option value="order_confirmed">SO Confirmed</option>
+                    <option value="production">Production</option>
+                    <option value="packing">Packing</option>
+                    <option value="eta_arrived">Arrived</option>
+                    <option value="closed">Closed</option>
+                  </optgroup>
+                </select>
+              </div>
+            </div>
+          </div>
+          <!-- Right column -->
+          <div class="col-md-6">
+            <div class="form-section-label">Shipping Details</div>
+            <div class="row g-2">
+              <div class="col-12">
+                <label class="form-label">BL / AWB</label>
+                <input class="form-control form-control-sm" id="f-blawb">
+              </div>
+              <div class="col-12">
+                <label class="form-label">Container No.</label>
+                <input class="form-control form-control-sm" id="f-container">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Vessel</label>
+                <input class="form-control form-control-sm" id="f-vessel">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Voyage</label>
+                <input class="form-control form-control-sm" id="f-voyage">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Port of Origin</label>
+                <input class="form-control form-control-sm" id="f-origin">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Port of Dest.</label>
+                <input class="form-control form-control-sm" id="f-dest">
+              </div>
+              <div class="col-6">
+                <label class="form-label">ETD</label>
+                <input class="form-control form-control-sm" id="f-etd" type="date">
+              </div>
+              <div class="col-6">
+                <label class="form-label">ETA</label>
+                <input class="form-control form-control-sm" id="f-eta" type="date">
+              </div>
+              <div class="form-section-label mt-2">ค่าใช้จ่าย (฿)</div>
+              <div class="col-4">
+                <label class="form-label">Duty</label>
+                <input class="form-control form-control-sm" id="f-duty" type="number" placeholder="0">
+              </div>
+              <div class="col-4">
+                <label class="form-label">VAT</label>
+                <input class="form-control form-control-sm" id="f-vat" type="number" placeholder="0">
+              </div>
+              <div class="col-4">
+                <label class="form-label">Fees</label>
+                <input class="form-control form-control-sm" id="f-fees" type="number" placeholder="0">
+              </div>
+              <div class="col-12">
+                <label class="form-label">Notes</label>
+                <textarea class="form-control form-control-sm" id="f-notes" rows="3" style="resize:vertical"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-modal-delete me-auto" id="btnDelete" onclick="deleteShipment()" style="display:none">
+          <i class="bi bi-trash"></i>ลบ
+        </button>
+        <button type="button" class="btn-modal-cancel" data-bs-dismiss="modal">ยกเลิก</button>
+        <button type="button" class="btn-modal-save" onclick="saveShipment()">
+          <i class="bi bi-check2"></i>บันทึก
+        </button>
+      </div>
+    </div>
+  </div>
+  <!-- Vendor picker overlay -->
+  <div class="vp-overlay" id="vendorOverlay">
+    <div class="vp-box">
+      <div class="vp-header">
+        <i class="bi bi-building text-secondary"></i>
+        <span class="vp-header-title">เลือก Vendor / Supplier</span>
+        <input type="text" class="vp-search ms-2" id="vpSearch" placeholder="ค้นหา vendor..." oninput="filterVendors()">
+        <button class="btn-close ms-2" onclick="closeVendorPicker()"></button>
+      </div>
+      <div class="vp-list" id="vp-list">
+        <div class="text-center text-muted py-4 small">กำลังโหลด...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+'use strict';
+
+// ════════════════════════════════════════════════════════
+// CONSTANTS
+// ════════════════════════════════════════════════════════
+const STORAGE_KEY = 'kisb_logistics_v4';
+const TODAY = new Date().toISOString().slice(0,10);
+
+const IMP_STATES = [
+  {id:'draft',             label:'Draft',        color:'#6c757d'},
+  {id:'supplier_ready',    label:'PO Issued',    color:'#2563eb'},
+  {id:'booking_confirmed', label:'Booking',      color:'#7c3aed'},
+  {id:'etd',               label:'Shipped',      color:'#ea580c'},
+  {id:'eta',               label:'Arrived',      color:'#0891b2'},
+  {id:'customs_clearance', label:'Customs',      color:'#dc2626'},
+  {id:'duty_payment',      label:'Duty Payment', color:'#be185d'},
+  {id:'goods_received',    label:'Delivered',    color:'#16a34a'},
+];
+const EXP_STATES = [
+  {id:'draft',             label:'Draft',       color:'#6c757d'},
+  {id:'order_confirmed',   label:'SO Confirmed',color:'#2563eb'},
+  {id:'production',        label:'Production',  color:'#7c3aed'},
+  {id:'packing',           label:'Packing',     color:'#ea580c'},
+  {id:'booking_confirmed', label:'Booking',     color:'#6d28d9'},
+  {id:'etd',               label:'Shipped',     color:'#0891b2'},
+  {id:'eta_arrived',       label:'Arrived',     color:'#059669'},
+  {id:'closed',            label:'Closed',      color:'#16a34a'},
+];
+const IMP_TYPE_LABELS = {oversea:'🌐 Oversea', domestic:'🏠 Domestic', pk:'📦 PK', fg:'🏭 FG'};
+const PK_KW = ['pack','packaging','bottle','jar','label','pump','cap','tube','กระปุก','ขวด','แพ็ก','บรรจุ'];
+const FG_KW = ['finished','finish','cosmetic','cream','serum','oem','odm','product','ผลิตภัณฑ์'];
+
+// ════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════
+let shipments = [];
+let vendors   = [];
+let editingId = null;
+let currentTab = 'import';
+let impView = 'kanban';
+let expView = 'kanban';
+let impTypeFilter = 'all';
+let sfType = 'all', sfPeriod = 'year', sfDate = '', searchQuery = '';
+let modalInst = null;
+let charts = {};
+let syncing = false;
+
+// ════════════════════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════════════════════
+function strVal(v) {
+  if (!v) return '';
+  if (typeof v === 'object') return v.en_US || v.th_TH || Object.values(v)[0] || '';
+  if (typeof v === 'string') {
+    if (v.startsWith('{')) { try { const p=JSON.parse(v); return p.en_US||p.th_TH||Object.values(p)[0]||v; } catch(e){} }
+    return v;
+  }
+  return String(v);
+}
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmt(n) {
+  if (!n && n!==0) return '—';
+  return Number(n).toLocaleString('th-TH',{minimumFractionDigits:0,maximumFractionDigits:2});
+}
+function toast(msg, type='', ms=3500) {
+  const w = document.getElementById('toastWrap');
+  const d = document.createElement('div');
+  d.className = 'toast-msg' + (type ? ' '+type : '');
+  d.textContent = msg;
+  w.appendChild(d);
+  setTimeout(() => d.remove(), ms);
+}
+function setSyncBar(on) {
+  document.getElementById('syncBar').style.display = on ? 'block' : 'none';
+}
+function setSyncStatus(msg) {
+  document.getElementById('syncStatus').textContent = msg;
+}
+
+// ════════════════════════════════════════════════════════
+// STORAGE
+// ════════════════════════════════════════════════════════
+function load() {
+  try { shipments = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]'); }
+  catch(e) { shipments = []; console.warn('localStorage parse error', e); }
+}
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(shipments)); }
+  catch(e) { console.warn('localStorage save error', e); }
+}
+function nextSeq(type) {
+  return shipments.filter(s=>s.type===type).reduce((m,s)=>Math.max(m,s.seq||0),0) + 1;
+}
+
+// ════════════════════════════════════════════════════════
+// CLASSIFICATION
+// ════════════════════════════════════════════════════════
+function detectImportType(row) {
+  const combo = [(strVal(row.notes)||''), (row.goods||''), (strVal(row.party)||strVal(row.supplier)||'')].join(' ').toLowerCase();
+  if (PK_KW.some(k=>combo.includes(k))) return 'pk';
+  if (FG_KW.some(k=>combo.includes(k))) return 'fg';
+  if (row.source_type==='domestic') return 'domestic';
+  return 'oversea';
+}
+
+// ════════════════════════════════════════════════════════
+// UPSERT (Odoo → localStorage)
+// ════════════════════════════════════════════════════════
+function upsert(newRec) {
+  const idx = shipments.findIndex(s=>s.odoo_id===newRec.odoo_id);
+  if (idx>=0) {
+    Object.assign(shipments[idx], {
+      po_so:newRec.po_so, party:newRec.party, currency:newRec.currency,
+      amount_total:newRec.amount_total, odoo_state:newRec.odoo_state,
+      company:newRec.company, source_type:newRec.source_type,
+      import_type:newRec.import_type, created:newRec.created,
+    });
+  } else {
+    shipments.push(newRec);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// SYNC
+// ════════════════════════════════════════════════════════
+async function syncOdoo() {
+  if (syncing) { toast('กำลัง sync อยู่...'); return; }
+  syncing = true;
+  setSyncBar(true);
+  setSyncStatus('กำลัง sync...');
+  document.getElementById('btnSync').disabled = true;
+
+  try {
+    const [ir, er] = await Promise.all([
+      fetch('/api/import-pos').then(r=>{ if(!r.ok) throw new Error('import-pos '+r.status); return r.json(); }),
+      fetch('/api/export-sos').then(r=>{ if(!r.ok) throw new Error('export-sos '+r.status); return r.json(); }),
+    ]);
+
+    let impCount=0, expCount=0;
+
+    if (ir.ok) {
+      ir.rows.forEach(row => {
+        const rec = {
+          id:`PO_${row.id}`, odoo_id:`PO_${row.id}`, seq:row.id, type:'import',
+          company: row.company_code||'KOB',
+          po_so:   strVal(row.po_number),
+          party:   strVal(row.supplier),
+          goods:'', mode:'sea', forwarder:'', bl_awb:'', container:'',
+          vessel:'', voyage:'', origin:'', dest:'Laem Chabang, Thailand',
+          etd:'', eta:'',
+          created: (row.date_order||'').slice(0,10),
+          currency: strVal(row.currency),
+          rate: row.currency_rate||'',
+          amount_total: row.amount_total||0,
+          duty:0, vat:0, fees:0,
+          notes: strVal(row.notes)||strVal(row.origin)||'',
+          odoo_state: row.odoo_state,
+          source_type: row.source_type,
+          state: 'draft',
+        };
+        rec.import_type = detectImportType(rec);
+        upsert(rec);
+        impCount++;
+      });
+    }
+
+    if (er.ok) {
+      er.rows.forEach(row => {
+        const rec = {
+          id:`SO_${row.id}`, odoo_id:`SO_${row.id}`, seq:row.id, type:'export',
+          company: row.company_code||'KOB',
+          po_so:   strVal(row.so_number),
+          party:   strVal(row.customer),
+          goods:'', mode:'sea', forwarder:'', bl_awb:'', container:'',
+          vessel:'', voyage:'', origin:'Thailand', dest:'',
+          etd:'', eta:'',
+          created: (row.date_order||'').slice(0,10),
+          currency: strVal(row.currency),
+          amount_total: row.amount_total||0,
+          duty:0, vat:0, fees:0,
+          notes: strVal(row.origin)||'',
+          odoo_state: row.odoo_state,
+          state: 'draft',
+        };
+        upsert(rec);
+        expCount++;
+      });
+    }
+
+    save();
+    const ts = new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
+    setSyncStatus(`Synced ${ts} · Import ${impCount} · Export ${expCount}`);
+    toast(`✓ Sync สำเร็จ — Import ${impCount}, Export ${expCount}`, 'success');
+    renderAll();
+
+  } catch(e) {
+    console.error('[Sync]', e);
+    setSyncStatus('Sync ล้มเหลว');
+    toast('Sync ล้มเหลว: ' + e.message, 'error', 5000);
+  } finally {
+    syncing = false;
+    setSyncBar(false);
+    document.getElementById('btnSync').disabled = false;
+  }
+}
+
+async function clearCache() {
+  try {
+    await fetch('/api/cache/clear');
+    toast('✓ Cache ล้างแล้ว', 'success');
+  } catch(e) { toast('❌ '+e.message, 'error'); }
+}
+
+async function loadVendors() {
+  try {
+    const r = await fetch('/api/vendors').then(x=>x.json());
+    if (r.ok) vendors = r.rows;
+  } catch(e) { console.warn('[Vendors]', e); }
+}
+
+async function pingDb() {
+  const el = document.getElementById('dbStatus');
+  try {
+    const r = await fetch('/api/ping').then(x=>x.json());
+    if (r.ok) {
+      el.innerHTML = '<i class="bi bi-circle-fill" style="font-size:7px"></i>DB OK';
+      el.className = 'db-pill ok';
+    } else {
+      el.innerHTML = '<i class="bi bi-circle-fill" style="font-size:7px"></i>DB ERR';
+      el.className = 'db-pill err';
+    }
+  } catch(e) {
+    el.innerHTML = '<i class="bi bi-circle-fill" style="font-size:7px"></i>DB ERR';
+    el.className = 'db-pill err';
+    toast('ไม่สามารถเชื่อมต่อ API server', 'error', 6000);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// FILTER / SEARCH
+// ════════════════════════════════════════════════════════
+function matchSearch(s) {
+  const q = searchQuery.trim().toLowerCase();
+  if (sfType==='date') {
+    if (!sfDate) return true;
+    const d = (s.created||'').substring(0,10);
+    if (!d) return false;
+    return d.startsWith(sfDate);
+  }
+  if (!q) return true;
+  if (sfType==='vendor')
+    return (s.party||'').toLowerCase().includes(q)||(s.forwarder||'').toLowerCase().includes(q);
+  if (sfType==='po')
+    return (s.po_so||'').toLowerCase().includes(q)||(s.id||'').toLowerCase().includes(q);
+  return `${s.id} ${s.po_so} ${s.party} ${s.goods} ${s.bl_awb} ${s.vessel} ${s.forwarder} ${s.origin} ${s.dest} ${s.company}`.toLowerCase().includes(q);
+}
+
+function getImp() {
+  const co = document.getElementById('impCompanyFilter').value;
+  const st = document.getElementById('impStateFilter').value;
+  return shipments.filter(s => s.type==='import'
+    && (!co || s.company===co)
+    && (!st || s.state===st)
+    && (impTypeFilter==='all' || s.import_type===impTypeFilter)
+    && matchSearch(s));
+}
+function getExp() {
+  const co = document.getElementById('expCompanyFilter').value;
+  const st = document.getElementById('expStateFilter').value;
+  const q  = (document.getElementById('expSearch').value||'').toLowerCase();
+  return shipments.filter(s => s.type==='export'
+    && (!co || s.company===co)
+    && (!st || s.state===st)
+    && (!q  || `${s.po_so} ${s.party} ${s.bl_awb} ${s.vessel} ${s.forwarder}`.toLowerCase().includes(q)));
+}
+
+// ════════════════════════════════════════════════════════
+// BADGE HELPERS
+// ════════════════════════════════════════════════════════
+function stateBadge(id, states) {
+  const s = states.find(x=>x.id===id);
+  if (!s) return `<span class="state-badge" style="background:#e2e8f0;color:#64748b">${esc(id||'draft')}</span>`;
+  // Light background version
+  return `<span class="state-badge" style="background:${s.color}18;color:${s.color};border:1px solid ${s.color}30">${s.label}</span>`;
+}
+function coBadge(c) {
+  return `<span class="co-badge badge-${(c||'').toLowerCase()}">${esc(c)}</span>`;
+}
+function typeBadge(t) {
+  const cls={oversea:'badge-oversea',domestic:'badge-domestic',pk:'badge-pk',fg:'badge-fg'}[t]||'';
+  return `<span class="co-badge ${cls}">${esc(IMP_TYPE_LABELS[t]||t)}</span>`;
+}
+
+// ════════════════════════════════════════════════════════
+// RENDER — IMPORT
+// ════════════════════════════════════════════════════════
+function renderImport() {
+  try {
+    const rows = getImp();
+    document.getElementById('impSummary').textContent = `แสดง ${rows.length} รายการ จากทั้งหมด ${shipments.filter(s=>s.type==='import').length} Import`;
+    document.getElementById('impBadge').textContent = rows.length||'';
+
+    if (impView==='kanban') {
+      document.getElementById('impKanban').innerHTML = buildImpKanban(rows);
+      document.getElementById('impKanban').style.display='';
+      document.getElementById('impTable').style.display='none';
+    } else {
+      document.getElementById('impTable').innerHTML = buildImpTable(rows);
+      document.getElementById('impKanban').style.display='none';
+      document.getElementById('impTable').style.display='';
+    }
+  } catch(e) {
+    console.error('[renderImport]', e);
+    document.getElementById('impKanban').innerHTML = `<div class="alert alert-danger m-3">Render error: ${esc(e.message)}</div>`;
+  }
+}
+
+function buildImpKanban(rows) {
+  if (rows.length===0 && shipments.filter(s=>s.type==='import').length===0) {
+    return `<div class="empty-board">
+      <i class="bi bi-inbox empty-icon"></i>
+      <div class="empty-title">ยังไม่มีข้อมูล Import</div>
+      <div class="empty-sub">กด Sync Odoo เพื่อดึงข้อมูลจาก Odoo</div>
+      <button class="btn-add" onclick="syncOdoo()"><i class="bi bi-arrow-repeat"></i>Sync Odoo</button>
+    </div>`;
+  }
+  return '<div class="kanban-wrap">' +
+    IMP_STATES.map(st => {
+      const cards = rows.filter(s=>s.state===st.id);
+      return `<div class="kanban-col" style="--col-color:${st.color}">
+        <div class="kanban-col-header">
+          <span class="kanban-col-title">${esc(st.label)}</span>
+          <span class="kanban-count">${cards.length}</span>
+        </div>
+        <div class="kanban-body">
+          ${cards.length ? cards.map(s=>impCard(s)).join('') : '<div class="kanban-empty">ไม่มีรายการ</div>'}
+        </div>
+        <button class="kanban-add" onclick="openCreate('import','${st.id}')">+ เพิ่ม</button>
+      </div>`;
+    }).join('') +
+  '</div>';
+}
+
+function impCard(s) {
+  const hasMeta = s.eta || s.amount_total;
+  return `<div class="kanban-card" onclick="openEdit('${esc(s.id)}')">
+    <div class="kanban-card-id">${esc(s.po_so||s.id)}</div>
+    <div class="kanban-card-party">${esc(strVal(s.party)||'—')}</div>
+    <div class="kanban-card-badges">
+      ${coBadge(s.company)}${typeBadge(s.import_type||'oversea')}
+    </div>
+    ${hasMeta ? `<div class="kanban-card-meta">
+      <span>${s.eta ? `<i class="bi bi-calendar2-check" style="margin-right:3px"></i>${s.eta}` : ''}</span>
+      <span class="kanban-card-amount">${s.amount_total ? `${s.currency||''} ${fmt(s.amount_total)}` : ''}</span>
+    </div>` : ''}
+  </div>`;
+}
+
+function buildImpTable(rows) {
+  if (!rows.length) return '<div class="empty-board" style="border-radius:var(--radius-lg)"><i class="bi bi-search empty-icon"></i><div class="empty-title">ไม่พบรายการ</div></div>';
+  return `<div class="tbl-wrap">
+    <table class="table tbl-ship">
+      <thead>
+        <tr>
+          <th>PO</th><th>บริษัท</th><th>Type</th><th>Supplier</th>
+          <th>สถานะ</th><th>ETA</th><th>BL/AWB</th><th>Forwarder</th><th class="text-end">มูลค่า</th><th>Order Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(s=>`
+          <tr onclick="openEdit('${esc(s.id)}')">
+            <td><span class="kanban-card-id">${esc(s.po_so||s.id)}</span></td>
+            <td>${coBadge(s.company)}</td>
+            <td>${typeBadge(s.import_type||'oversea')}</td>
+            <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(strVal(s.party)||'—')}</td>
+            <td>${stateBadge(s.state,IMP_STATES)}</td>
+            <td style="color:var(--text-2)">${s.eta||'—'}</td>
+            <td style="color:var(--text-2)">${esc(s.bl_awb||'—')}</td>
+            <td style="color:var(--text-2)">${esc(s.forwarder||'—')}</td>
+            <td class="text-end fw-semibold">${s.amount_total?`${s.currency||''} ${fmt(s.amount_total)}`:'—'}</td>
+            <td style="color:var(--text-2)">${s.created||'—'}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════════════
+// RENDER — EXPORT
+// ════════════════════════════════════════════════════════
+function renderExport() {
+  try {
+    const rows = getExp();
+    document.getElementById('expSummary').textContent = `แสดง ${rows.length} รายการ จากทั้งหมด ${shipments.filter(s=>s.type==='export').length} Export`;
+    document.getElementById('expBadge').textContent = rows.length||'';
+
+    if (expView==='kanban') {
+      document.getElementById('expKanban').innerHTML = buildExpKanban(rows);
+      document.getElementById('expKanban').style.display='';
+      document.getElementById('expTable').style.display='none';
+    } else {
+      document.getElementById('expTable').innerHTML = buildExpTable(rows);
+      document.getElementById('expKanban').style.display='none';
+      document.getElementById('expTable').style.display='';
+    }
+  } catch(e) {
+    console.error('[renderExport]', e);
+  }
+}
+
+function buildExpKanban(rows) {
+  if (rows.length===0 && shipments.filter(s=>s.type==='export').length===0) {
+    return `<div class="empty-board">
+      <i class="bi bi-inbox empty-icon"></i>
+      <div class="empty-title">ยังไม่มีข้อมูล Export</div>
+      <div class="empty-sub">กด Sync Odoo เพื่อดึงข้อมูล</div>
+      <button class="btn-add" onclick="syncOdoo()"><i class="bi bi-arrow-repeat"></i>Sync Odoo</button>
+    </div>`;
+  }
+  return '<div class="kanban-wrap">' +
+    EXP_STATES.map(st => {
+      const cards = rows.filter(s=>s.state===st.id);
+      return `<div class="kanban-col" style="--col-color:${st.color}">
+        <div class="kanban-col-header">
+          <span class="kanban-col-title">${esc(st.label)}</span>
+          <span class="kanban-count">${cards.length}</span>
+        </div>
+        <div class="kanban-body">
+          ${cards.length ? cards.map(s=>`
+            <div class="kanban-card" onclick="openEdit('${esc(s.id)}')">
+              <div class="kanban-card-id">${esc(s.po_so||s.id)}</div>
+              <div class="kanban-card-party">${esc(strVal(s.party)||'—')}</div>
+              <div class="kanban-card-badges">${coBadge(s.company)}</div>
+              ${s.etd||s.eta ? `<div class="kanban-card-meta">
+                <span>${s.etd?`<i class="bi bi-airplane" style="margin-right:3px"></i>ETD ${s.etd}`:''}</span>
+                <span>${s.eta?`<i class="bi bi-geo-alt" style="margin-right:3px"></i>${s.eta}`:''}</span>
+              </div>` : ''}
+            </div>`).join('') : '<div class="kanban-empty">ไม่มีรายการ</div>'}
+        </div>
+        <button class="kanban-add" onclick="openCreate('export','${st.id}')">+ เพิ่ม</button>
+      </div>`;
+    }).join('') +
+  '</div>';
+}
+
+function buildExpTable(rows) {
+  if (!rows.length) return '<div class="empty-board" style="border-radius:var(--radius-lg)"><i class="bi bi-search empty-icon"></i><div class="empty-title">ไม่พบรายการ</div></div>';
+  return `<div class="tbl-wrap">
+    <table class="table tbl-ship">
+      <thead><tr>
+        <th>SO</th><th>บริษัท</th><th>Customer</th><th>สถานะ</th><th>ETD</th><th>ETA</th><th>BL/AWB</th><th>Forwarder</th><th class="text-end">มูลค่า</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(s=>`<tr onclick="openEdit('${esc(s.id)}')">
+          <td><span class="kanban-card-id">${esc(s.po_so||s.id)}</span></td>
+          <td>${coBadge(s.company)}</td>
+          <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(strVal(s.party)||'—')}</td>
+          <td>${stateBadge(s.state,EXP_STATES)}</td>
+          <td style="color:var(--text-2)">${s.etd||'—'}</td>
+          <td style="color:var(--text-2)">${s.eta||'—'}</td>
+          <td style="color:var(--text-2)">${esc(s.bl_awb||'—')}</td>
+          <td style="color:var(--text-2)">${esc(s.forwarder||'—')}</td>
+          <td class="text-end fw-semibold">${s.amount_total?`${s.currency||''} ${fmt(s.amount_total)}`:'—'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════════════
+// RENDER — DASHBOARD
+// ════════════════════════════════════════════════════════
+function renderDashboard() {
+  try {
+    const imp = shipments.filter(s=>s.type==='import');
+    const exp = shipments.filter(s=>s.type==='export');
+
+    const ACTIVE = new Set(['supplier_ready','booking_confirmed','etd','eta',
+      'customs_clearance','duty_payment','goods_received',
+      'order_confirmed','production','packing','eta_arrived']);
+    const active  = shipments.filter(s=>ACTIVE.has(s.state));
+    const pending = shipments.filter(s=>['customs_clearance','duty_payment'].includes(s.state));
+
+    const kobImp = imp.filter(s=>s.company==='KOB').length;
+    const btvImp = imp.filter(s=>s.company==='BTV').length;
+    const kobExp = exp.filter(s=>s.company==='KOB').length;
+    const btvExp = exp.filter(s=>s.company==='BTV').length;
+
+    // ── KPI cards
+    document.getElementById('dashImp').textContent       = imp.length;
+    document.getElementById('dashExp').textContent       = exp.length;
+    document.getElementById('dashActive').textContent    = active.length;
+    document.getElementById('dashPending').textContent   = pending.length;
+    document.getElementById('dashImpSub').textContent    = `KOB: ${kobImp}  ·  BTV: ${btvImp}`;
+    document.getElementById('dashExpSub').textContent    = `KOB: ${kobExp}  ·  BTV: ${btvExp}`;
+    document.getElementById('dashActiveSub').textContent =
+      `${active.filter(s=>s.type==='import').length} import  ·  ${active.filter(s=>s.type==='export').length} export`;
+    document.getElementById('dashPendingSub').textContent=
+      `Customs: ${pending.filter(s=>s.state==='customs_clearance').length}  ·  Duty: ${pending.filter(s=>s.state==='duty_payment').length}`;
+
+    // ── Pipelines
+    document.getElementById('dashImpTotal').textContent  = `${imp.length} รายการ`;
+    document.getElementById('dashExpTotal').textContent  = `${exp.length} รายการ`;
+    document.getElementById('dashImpPipeline').innerHTML = buildPipeline(imp, IMP_STATES);
+    document.getElementById('dashExpPipeline').innerHTML = buildPipeline(exp, EXP_STATES);
+
+    // ── Donut — Import by Type
+    Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+    Chart.defaults.font.size   = 12;
+    const tCtx = document.getElementById('chartImpType').getContext('2d');
+    if (charts.impType) charts.impType.destroy();
+    const types = ['oversea','domestic','pk','fg'];
+    const typeCounts = types.map(t=>imp.filter(x=>x.import_type===t).length);
+    charts.impType = new Chart(tCtx, {
+      type:'doughnut',
+      data:{
+        labels: types.map(t=>IMP_TYPE_LABELS[t]),
+        datasets:[{
+          data: typeCounts,
+          backgroundColor:['#dbeafe','#dcfce7','#ffedd5','#ede9fe'],
+          borderColor:    ['#2563eb','#16a34a','#ea580c','#7c3aed'],
+          borderWidth: 2, hoverOffset: 6,
+        }]
+      },
+      options:{
+        plugins:{
+          legend:{position:'bottom',labels:{padding:14,boxWidth:10,usePointStyle:true,pointStyle:'circle'}},
+          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${ctx.parsed} (${imp.length?Math.round(ctx.parsed/imp.length*100):0}%)`}}
+        },
+        cutout:'68%', animation:{animateScale:true}
+      }
+    });
+    document.getElementById('donutImpNum').textContent = imp.length;
+
+    // ── Company split
+    document.getElementById('dashCompSplit').innerHTML =
+      buildCompSplit(imp.length, exp.length, kobImp, btvImp, kobExp, btvExp);
+
+  } catch(e) { console.error('[renderDashboard]', e); }
+}
+
+function buildPipeline(items, states) {
+  const counts = states.map(s=>items.filter(x=>x.state===s.id).length);
+  const max = Math.max(...counts, 1);
+  return `<div class="pipeline">${states.map((s,i)=>{
+    const cnt = counts[i];
+    const pct = Math.round(cnt/max*100);
+    const zero = cnt===0 ? ' pipeline-zero' : '';
+    return `<div class="pipeline-row${zero}">
+      <div class="pipeline-lbl" title="${s.label}">${s.label}</div>
+      <div class="pipeline-track">
+        <div class="pipeline-fill" style="width:${pct}%;background:${s.color}"></div>
+      </div>
+      <div class="pipeline-num">${cnt}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function buildCompSplit(impTotal, expTotal, kobImp, btvImp, kobExp, btvExp) {
+  const rows=[
+    {label:'Import', total:impTotal, kob:kobImp, btv:btvImp},
+    {label:'Export', total:expTotal, kob:kobExp, btv:btvExp},
+  ];
+  const items = rows.map(r=>{
+    const kobPct = r.total ? Math.round(r.kob/r.total*100) : 50;
+    const btvPct = 100-kobPct;
+    return `<div class="comp-split-item">
+      <div class="comp-split-header">
+        <span class="comp-split-title">${r.label}</span>
+        <span class="comp-split-total">${r.total} รายการ</span>
+      </div>
+      <div class="comp-split-bar">
+        <div class="comp-split-kob" style="width:${kobPct}%" title="KOB ${r.kob}"></div>
+        <div class="comp-split-btv" style="width:${btvPct}%" title="BTV ${r.btv}"></div>
+      </div>
+      <div class="comp-split-nums">
+        <span>KOB: ${r.kob} (${kobPct}%)</span>
+        <span>BTV: ${r.btv} (${btvPct}%)</span>
+      </div>
+    </div>`;
+  }).join('');
+  return items + `<div class="comp-split-legend">
+    <div class="comp-split-legend-item"><div class="comp-dot" style="background:#c91253"></div>KOB — Kiss of Beauty</div>
+    <div class="comp-split-legend-item"><div class="comp-dot" style="background:#7c3aed"></div>BTV — Beautiville</div>
+  </div>`;
+}
+
+function renderAll() {
+  renderImport();
+  renderExport();
+  if (currentTab==='dashboard') renderDashboard();
+}
+
+// ════════════════════════════════════════════════════════
+// TABS / VIEWS
+// ════════════════════════════════════════════════════════
+function switchTab(tab, el) {
+  document.querySelectorAll('.tab-link').forEach(a=>a.classList.remove('active'));
+  el.classList.add('active');
+  ['import','export','dashboard'].forEach(t=>document.getElementById(`tab-${t}`).style.display=t===tab?'':'none');
+  currentTab=tab;
+  if (tab==='dashboard') renderDashboard();
+}
+function setView(v) {
+  impView=v;
+  document.getElementById('btnKanban').className = 'view-btn'+(v==='kanban'?' active':'');
+  document.getElementById('btnTable').className  = 'view-btn'+(v==='table'?' active':'');
+  renderImport();
+}
+function setExpView(v) {
+  expView=v;
+  document.getElementById('expBtnKanban').className = 'view-btn'+(v==='kanban'?' active':'');
+  document.getElementById('expBtnTable').className  = 'view-btn'+(v==='table'?' active':'');
+  renderExport();
+}
+function setImpType(t, el) {
+  impTypeFilter=t;
+  document.querySelectorAll('#impTypeTabs .type-pill').forEach(b=>{
+    b.classList.toggle('active', b===el);
+  });
+  renderImport();
+}
+
+// ════════════════════════════════════════════════════════
+// SEARCH FILTER BAR
+// ════════════════════════════════════════════════════════
+function toggleSfMenu() { document.getElementById('sfMenu').classList.toggle('open'); }
+function setSfType(type, label, el) {
+  sfType=type; sfDate=''; searchQuery='';
+  document.getElementById('sfTypeLabel').textContent=label;
+  document.getElementById('sfMenu').classList.remove('open');
+  document.querySelectorAll('.sf-menu-item').forEach(i=>i.classList.remove('active'));
+  el.classList.add('active');
+  const isDate=type==='date';
+  document.getElementById('sfTextArea').style.display=isDate?'none':'';
+  document.getElementById('sfDateArea').style.display=isDate?'flex':'none';
+  document.getElementById('sfText').value='';
+  document.getElementById('sfDateInp').value='';
+  updateSfClear(); renderImport();
+}
+function onSfPeriodChange() {
+  sfPeriod=document.getElementById('sfPeriodSel').value;
+  document.getElementById('sfDateInp').placeholder={year:'2026',month:'2026-05',day:'2026-05-19'}[sfPeriod]||'2026';
+  sfDate=''; document.getElementById('sfDateInp').value='';
+  updateSfClear(); renderImport();
+}
+function onSfInput() {
+  if (sfType==='date') sfDate=document.getElementById('sfDateInp').value.trim();
+  else searchQuery=document.getElementById('sfText').value;
+  updateSfClear(); renderImport();
+}
+function clearSf() {
+  sfType='all'; sfDate=''; searchQuery='';
+  document.getElementById('sfTypeLabel').textContent='ทั้งหมด';
+  document.getElementById('sfText').value='';
+  document.getElementById('sfDateInp').value='';
+  document.getElementById('sfTextArea').style.display='';
+  document.getElementById('sfDateArea').style.display='none';
+  document.querySelectorAll('.sf-menu-item').forEach((i,idx)=>i.classList.toggle('active',idx===0));
+  updateSfClear(); renderImport();
+}
+function updateSfClear() {
+  document.getElementById('sfClearBtn').classList.toggle('show', !!(sfType!=='all'||sfDate||searchQuery));
+}
+document.addEventListener('click', e=>{
+  if (!e.target.closest('#sfTypeBtn') && !e.target.closest('#sfMenu'))
+    document.getElementById('sfMenu').classList.remove('open');
+});
+
+// ════════════════════════════════════════════════════════
+// MODAL
+// ════════════════════════════════════════════════════════
+const FORM_IDS = ['f-poso','f-party','f-goods','f-forwarder','f-currency','f-amount',
+  'f-order-date','f-blawb','f-container','f-vessel','f-voyage','f-origin','f-dest',
+  'f-etd','f-eta','f-duty','f-vat','f-fees','f-notes'];
+
+function resetForm() {
+  FORM_IDS.forEach(id=>{
+    const el=document.getElementById(id);
+    if(el){el.value='';el.readOnly=false;el.classList.remove('f-readonly');}
+  });
+  document.getElementById('f-state').value='draft';
+  document.getElementById('f-company').value='KOB';
+  document.getElementById('f-mode').value='sea';
+  document.getElementById('f-order-date-src').style.display='none';
+  document.getElementById('modalBadges').innerHTML='';
+  document.getElementById('btnDelete').style.display='none';
+  document.getElementById('btnPickVendor').style.display='';
+}
+function showStateGroups(type) {
+  document.getElementById('grp-import').style.display=type==='import'?'':'none';
+  document.getElementById('grp-export').style.display=type==='export'?'':'none';
+}
+function getModal() {
+  if (!modalInst) modalInst=new bootstrap.Modal(document.getElementById('shipModal'));
+  return modalInst;
+}
+
+function openCreate(type, state) {
+  editingId=null; resetForm(); showStateGroups(type);
+  document.getElementById('modalTitle').textContent=type==='import'?'+ Import Shipment':'+ Export Shipment';
+  document.getElementById('f-order-date').value=TODAY;
+  document.getElementById('f-dest').value=type==='import'?'Laem Chabang, Thailand':'';
+  document.getElementById('f-origin').value=type==='export'?'Thailand':'';
+  if (state) document.getElementById('f-state').value=state;
+  document.getElementById('shipModal').dataset.type=type;
+  document.getElementById('btnPickVendor').style.display=type==='export'?'none':'';
+  getModal().show();
+}
+
+function openEdit(id) {
+  const s=shipments.find(x=>x.id===id); if(!s) return;
+  editingId=id; resetForm(); showStateGroups(s.type);
+  document.getElementById('modalTitle').textContent=s.po_so||s.id;
+  document.getElementById('modalBadges').innerHTML=
+    coBadge(s.company)+(s.type==='import'?typeBadge(s.import_type):'')+
+    (s.odoo_id?'<span class="badge-odoo ms-1">🗄 Odoo</span>':'');
+
+  const set=(id,val)=>{ const el=document.getElementById(id); if(el) el.value=val||''; };
+  set('f-poso',s.po_so); set('f-party',strVal(s.party)); set('f-goods',s.goods);
+  set('f-forwarder',s.forwarder); set('f-currency',s.currency); set('f-amount',s.amount_total);
+  set('f-blawb',s.bl_awb); set('f-container',s.container); set('f-vessel',s.vessel);
+  set('f-voyage',s.voyage); set('f-origin',s.origin); set('f-dest',s.dest);
+  set('f-etd',s.etd); set('f-eta',s.eta);
+  set('f-duty',s.duty); set('f-vat',s.vat); set('f-fees',s.fees); set('f-notes',s.notes);
+  document.getElementById('f-state').value=s.state||'draft';
+  document.getElementById('f-company').value=s.company||'KOB';
+  document.getElementById('f-mode').value=s.mode||'sea';
+
+  const odooSynced=!!s.odoo_id;
+  const dateEl=document.getElementById('f-order-date');
+  dateEl.value=s.created||TODAY; dateEl.readOnly=odooSynced;
+  dateEl.classList.toggle('f-readonly',odooSynced);
+  document.getElementById('f-order-date-src').style.display=odooSynced?'':'none';
+  document.getElementById('btnDelete').style.display='';
+  document.getElementById('btnPickVendor').style.display=s.type==='export'?'none':'';
+  document.getElementById('shipModal').dataset.type=s.type;
+  getModal().show();
+}
+
+function saveShipment() {
+  const type=document.getElementById('shipModal').dataset.type||'import';
+  const v=id=>document.getElementById(id)?.value||'';
+  const rec={
+    type, company:v('f-company'), po_so:v('f-poso').trim(), party:v('f-party').trim(),
+    goods:v('f-goods').trim(), mode:v('f-mode'), forwarder:v('f-forwarder').trim(),
+    currency:v('f-currency').trim(), amount_total:parseFloat(v('f-amount'))||0,
+    created:v('f-order-date')||TODAY, bl_awb:v('f-blawb').trim(), container:v('f-container').trim(),
+    vessel:v('f-vessel').trim(), voyage:v('f-voyage').trim(), origin:v('f-origin').trim(),
+    dest:v('f-dest').trim(), etd:v('f-etd'), eta:v('f-eta'),
+    duty:parseFloat(v('f-duty'))||0, vat:parseFloat(v('f-vat'))||0, fees:parseFloat(v('f-fees'))||0,
+    notes:v('f-notes').trim(), state:v('f-state'),
+  };
+  if (editingId) {
+    const idx=shipments.findIndex(s=>s.id===editingId);
+    if (idx>=0) {
+      const ex=shipments[idx];
+      shipments[idx]={...ex,...rec,id:ex.id,odoo_id:ex.odoo_id,seq:ex.seq,source_type:ex.source_type,
+        import_type:type==='import'?detectImportType({...ex,...rec}):ex.import_type};
+    }
+  } else {
+    const seq=nextSeq(type);
+    const id=`SHIP/${TODAY.replace(/-/g,'/')}/${String(seq).padStart(3,'0')}`;
+    shipments.push({...rec,id,seq,import_type:type==='import'?detectImportType(rec):undefined});
+  }
+  save(); getModal().hide(); renderAll();
+  toast('✓ บันทึกแล้ว','success',2000);
+}
+
+function deleteShipment() {
+  if (!editingId) return;
+  const s=shipments.find(x=>x.id===editingId); if(!s) return;
+  if (!confirm(`ลบ "${s.po_so||s.id}" ออก?\n(Odoo record จะ re-sync ครั้งหน้า)`)) return;
+  shipments=shipments.filter(x=>x.id!==editingId);
+  save(); getModal().hide(); renderAll();
+  toast('ลบแล้ว','',2000);
+}
+
+// ════════════════════════════════════════════════════════
+// VENDOR PICKER
+// ════════════════════════════════════════════════════════
+function openVendorPicker() {
+  document.getElementById('vpSearch').value='';
+  renderVendorList('');
+  document.getElementById('vendorOverlay').classList.add('open');
+  setTimeout(()=>document.getElementById('vpSearch').focus(),80);
+}
+function closeVendorPicker() { document.getElementById('vendorOverlay').classList.remove('open'); }
+function renderVendorList(q) {
+  const list=document.getElementById('vp-list');
+  const items=q ? vendors.filter(v=>strVal(v.name).toLowerCase().includes(q.toLowerCase())||(v.country||'').toLowerCase().includes(q.toLowerCase())) : vendors;
+  if (!items.length) { list.innerHTML='<div class="text-center text-muted py-4 small">ไม่พบ vendor</div>'; return; }
+  list.innerHTML=items.slice(0,120).map(v=>`
+    <div class="vp-item" data-name="${esc(strVal(v.name))}">
+      <div class="vp-name">${esc(strVal(v.name))}</div>
+      ${v.country?`<span class="vp-country"><i class="bi bi-geo-alt" style="font-size:10px"></i> ${esc(strVal(v.country))}</span>`:''}
+      ${v.po_count?`<span class="vp-badge">${v.po_count} POs</span>`:''}
+    </div>`).join('');
+}
+function filterVendors() { renderVendorList(document.getElementById('vpSearch').value); }
+function selectVendor(name) { document.getElementById('f-party').value=name; closeVendorPicker(); }
+
+document.getElementById('vp-list').addEventListener('click', e=>{
+  const item=e.target.closest('.vp-item');
+  if (item&&item.dataset.name) selectVendor(item.dataset.name);
+});
+document.getElementById('vendorOverlay').addEventListener('click', e=>{
+  e.stopPropagation();
+  if (e.target===document.getElementById('vendorOverlay')) closeVendorPicker();
+});
+
+// ════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════
+async function init() {
+  load();
+  renderAll();
+  pingDb();
+  if (shipments.length === 0) {
+    await syncOdoo();
+  } else {
+    loadVendors();
+    toast(`โหลดข้อมูล ${shipments.length} รายการจาก localStorage`, '', 2500);
+  }
+}
+
+init();
+</script>
+</body>
+</html>
