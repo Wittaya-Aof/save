@@ -9,9 +9,12 @@ const fs   = require('fs');
 const path = require('path');
 
 // ─── Config ──────────────────────────────────────────────────────────────────
+// Runtime files all live in __dirname (logistics-api). OneDrive is no longer
+// in the runtime path — it was unreliable (spaces+comma in path, plus sync
+// conflicts could remove files while the server was running).
 const NODE     = process.execPath;                          // same node.exe that runs this
-const API      = 'C:\\Users\\User\\OneDrive - Kiss of Beauty Co.,Ltd\\My Claude\\api-server.js';
-const WORK_DIR = path.dirname(API);
+const API      = path.join(__dirname, 'api-server.js');    // local copy, no OneDrive
+const WORK_DIR = __dirname;
 const LOG_FILE = path.join(__dirname, 'watchdog.log');      // C:\Users\User\logistics-api\watchdog.log
 const RESTART_DELAY_MS = 5000;
 const LOG_MAX_BYTES    = 1 * 1024 * 1024;                  // 1 MB rotate
