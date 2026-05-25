@@ -890,7 +890,7 @@ code { font-size: 12px; }
                 <label class="form-label">Supplier / Customer</label>
                 <div class="input-group input-group-sm">
                   <input class="form-control" id="f-party" placeholder="ชื่อ supplier / customer">
-                  <button class="btn btn-outline-secondary" type="button" onclick="openVendorPicker()" id="btnPickVendor">
+                  <button class="btn btn-outline-secondary" type="button" onclick="openVendorPicker('f-party')" id="btnPickVendor">
                     <i class="bi bi-search"></i>
                   </button>
                 </div>
@@ -908,7 +908,12 @@ code { font-size: 12px; }
               </div>
               <div class="col-6">
                 <label class="form-label">Forwarder</label>
-                <input class="form-control form-control-sm" id="f-forwarder">
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="f-forwarder" placeholder="ชื่อ forwarder">
+                  <button class="btn btn-outline-secondary" type="button" onclick="openVendorPicker('f-forwarder')" id="btnPickForwarder">
+                    <i class="bi bi-search"></i>
+                  </button>
+                </div>
               </div>
               <div class="col-6">
                 <label class="form-label">สกุลเงิน</label>
@@ -1817,10 +1822,16 @@ function deleteShipment() {
 }
 
 // ════════════════════════════════════════════════════════
-// VENDOR PICKER
+// VENDOR PICKER  (shared — used for Supplier/Customer AND Forwarder)
 // ════════════════════════════════════════════════════════
-function openVendorPicker() {
+let pickerTarget = 'f-party';   // field id that will receive the picked name
+
+function openVendorPicker(targetFieldId) {
+  pickerTarget = targetFieldId || 'f-party';
+  const isForwarder = pickerTarget === 'f-forwarder';
   document.getElementById('vpSearch').value='';
+  document.querySelector('.vp-header-title').textContent =
+    isForwarder ? 'เลือก Forwarder' : 'เลือก Vendor / Supplier';
   renderVendorList('');
   document.getElementById('vendorOverlay').classList.add('open');
   setTimeout(()=>document.getElementById('vpSearch').focus(),80);
@@ -1838,7 +1849,7 @@ function renderVendorList(q) {
     </div>`).join('');
 }
 function filterVendors() { renderVendorList(document.getElementById('vpSearch').value); }
-function selectVendor(name) { document.getElementById('f-party').value=name; closeVendorPicker(); }
+function selectVendor(name) { document.getElementById(pickerTarget).value=name; closeVendorPicker(); }
 
 document.getElementById('vp-list').addEventListener('click', e=>{
   const item=e.target.closest('.vp-item');
