@@ -2,3 +2,6 @@ node_modules/
 *.log
 tracking_data.json
 .env
+# Runtime state files (not source)
+watchdog.pid
+watchdog.heartbeat
