@@ -372,6 +372,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Lightweight liveness probe — does NOT touch the DB. Used by watchdog
+    // health checks so a slow/unreachable database never triggers a restart.
+    if (reqUrl === '/api/alive' && method === 'GET') {
+      jsonOk(res, { ok: true, ts: new Date().toISOString() });
+      return;
+    }
+
     if (reqUrl === '/api/cache/clear' && method === 'GET') {
       cache.data = {}; cache.ts = {};
       jsonOk(res, { ok: true, message: 'Cache cleared' });

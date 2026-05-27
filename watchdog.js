@@ -24,7 +24,10 @@ const HB_FILE  = path.join(__dirname, 'watchdog.heartbeat'); // updated every 30
 const RESTART_DELAY_MS = 5000;
 const LOG_MAX_BYTES    = 1 * 1024 * 1024;                  // 1 MB rotate
 const HEALTH_PORT = 3000;
-const HEALTH_INTERVAL_MS = 30 * 1000;   // check api-server every 30 s
+const HEALTH_PATH = '/api/alive';        // lightweight — does NOT touch the DB
+const HEALTH_INTERVAL_MS = 60 * 1000;   // check api-server every 60 s
+const HEALTH_TIMEOUT_MS  = 10 * 1000;   // generous — avoid false positives
+const HEALTH_MAX_STRIKES = 3;           // kill only after 3 consecutive failures
 const HEARTBEAT_INTERVAL_MS = 30 * 1000; // touch heartbeat file every 30 s
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
@@ -68,26 +71,30 @@ function start() {
   });
 }
 
-// ─── Health probe (catches hung api-server that won't exit) ──────────────────
+// ─── Health probe (catches a truly hung api-server that won't exit) ──────────
+// Conservative: probes a DB-free endpoint, tolerates transient failures, and
+// only restarts after HEALTH_MAX_STRIKES consecutive misses. This avoids the
+// restart storm caused by an earlier probe that hit a DB-backed endpoint.
+let healthStrikes = 0;
+
+function onProbeFail(reason) {
+  healthStrikes++;
+  log(`[watchdog] health probe miss ${healthStrikes}/${HEALTH_MAX_STRIKES} (${reason})`);
+  if (healthStrikes >= HEALTH_MAX_STRIKES && currentChild) {
+    log(`[watchdog] ${HEALTH_MAX_STRIKES} consecutive misses; killing api-server PID ${currentChild.pid}`);
+    try { currentChild.kill('SIGKILL'); } catch (_) {}
+    healthStrikes = 0;
+  }
+}
+
 function healthProbe() {
-  const req = http.get({ host: '127.0.0.1', port: HEALTH_PORT, path: '/api/ping', timeout: 5000 }, (res) => {
-    // Any HTTP response means the server's event loop is alive
+  const req = http.get({ host: '127.0.0.1', port: HEALTH_PORT, path: HEALTH_PATH, timeout: HEALTH_TIMEOUT_MS }, (res) => {
+    // Any HTTP response means the server's event loop is alive — reset strikes
     res.resume();
+    res.on('end', () => { healthStrikes = 0; });
   });
-  req.on('error', (err) => {
-    // No connection — port not listening or socket refused
-    if (currentChild) {
-      log(`[watchdog] health probe failed (${err.code || err.message}); killing api-server PID ${currentChild.pid}`);
-      try { currentChild.kill('SIGKILL'); } catch (_) {}
-    }
-  });
-  req.on('timeout', () => {
-    req.destroy();
-    if (currentChild) {
-      log(`[watchdog] health probe timed out; killing api-server PID ${currentChild.pid}`);
-      try { currentChild.kill('SIGKILL'); } catch (_) {}
-    }
-  });
+  req.on('error', (err) => onProbeFail(err.code || err.message));
+  req.on('timeout', () => { req.destroy(); onProbeFail('timeout'); });
 }
 
 // ─── Heartbeat file (so external scripts can detect a dead watchdog) ─────────
