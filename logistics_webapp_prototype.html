@@ -666,9 +666,6 @@ code { font-size: 12px; }
         <div class="type-group" id="impTypeTabs">
           <button class="type-pill active" onclick="setImpType('all',this)">All</button>
           <button class="type-pill" onclick="setImpType('oversea',this)">🌐 Oversea</button>
-          <button class="type-pill" onclick="setImpType('domestic',this)">🏠 Domestic</button>
-          <button class="type-pill" onclick="setImpType('pk',this)">📦 PK</button>
-          <button class="type-pill" onclick="setImpType('fg',this)">🏭 FG</button>
         </div>
       </div>
 
@@ -682,14 +679,15 @@ code { font-size: 12px; }
         </select>
         <select class="filter-select" id="impStateFilter" onchange="renderImport()">
           <option value="">สถานะ: ทั้งหมด</option>
-          <option value="draft">Draft</option>
-          <option value="supplier_ready">PO Issued</option>
+          <option value="draft">Purchase Order</option>
           <option value="booking_confirmed">Booking</option>
-          <option value="etd">Shipped</option>
-          <option value="eta">Arrived</option>
+          <option value="etd">ETD</option>
+          <option value="atd">ATD</option>
+          <option value="eta">ETA</option>
+          <option value="ata">ATA</option>
           <option value="customs_clearance">Customs</option>
-          <option value="duty_payment">Duty Payment</option>
           <option value="goods_received">Delivered</option>
+          <option value="duty_payment">Duty Payment</option>
         </select>
         <div class="toolbar-sep"></div>
         <!-- Search pill -->
@@ -934,14 +932,15 @@ code { font-size: 12px; }
                 <label class="form-label">สถานะ</label>
                 <select class="form-select form-select-sm" id="f-state">
                   <optgroup label="Import" id="grp-import">
-                    <option value="draft">Draft</option>
-                    <option value="supplier_ready">PO Issued</option>
+                    <option value="draft">Purchase Order</option>
                     <option value="booking_confirmed">Booking</option>
-                    <option value="etd">Shipped (ETD)</option>
-                    <option value="eta">Arrived (ETA)</option>
+                    <option value="etd">ETD (Estimate Time of Departure)</option>
+                    <option value="atd">ATD (Actual Time of Departure)</option>
+                    <option value="eta">ETA (Estimate Time of Arrival)</option>
+                    <option value="ata">ATA (Actual Time of Arrival)</option>
                     <option value="customs_clearance">Customs Clearance</option>
-                    <option value="duty_payment">Duty Payment</option>
                     <option value="goods_received">Delivered</option>
+                    <option value="duty_payment">Duty Payment</option>
                   </optgroup>
                   <optgroup label="Export" id="grp-export">
                     <option value="order_confirmed">SO Confirmed</option>
@@ -1050,14 +1049,15 @@ const STORAGE_KEY = 'kisb_logistics_v4';
 const TODAY = new Date().toISOString().slice(0,10);
 
 const IMP_STATES = [
-  {id:'draft',             label:'Draft',        color:'#6c757d'},
-  {id:'supplier_ready',    label:'PO Issued',    color:'#2563eb'},
-  {id:'booking_confirmed', label:'Booking',      color:'#7c3aed'},
-  {id:'etd',               label:'Shipped',      color:'#ea580c'},
-  {id:'eta',               label:'Arrived',      color:'#0891b2'},
-  {id:'customs_clearance', label:'Customs',      color:'#dc2626'},
-  {id:'duty_payment',      label:'Duty Payment', color:'#be185d'},
-  {id:'goods_received',    label:'Delivered',    color:'#16a34a'},
+  {id:'draft',             label:'Purchase Order', color:'#6c757d'},
+  {id:'booking_confirmed', label:'Booking',        color:'#7c3aed'},
+  {id:'etd',               label:'ETD',            color:'#ea580c', desc:'Estimate Time of Departure'},
+  {id:'atd',               label:'ATD',            color:'#f59e0b', desc:'Actual Time of Departure'},
+  {id:'eta',               label:'ETA',            color:'#0891b2', desc:'Estimate Time of Arrival'},
+  {id:'ata',               label:'ATA',            color:'#0ea5e9', desc:'Actual Time of Arrival'},
+  {id:'customs_clearance', label:'Customs',        color:'#dc2626'},
+  {id:'goods_received',    label:'Delivered',      color:'#16a34a'},
+  {id:'duty_payment',      label:'Duty Payment',   color:'#be185d'},
 ];
 const EXP_STATES = [
   {id:'draft',             label:'Draft',       color:'#6c757d'},
@@ -1128,6 +1128,8 @@ function setSyncStatus(msg) {
 function load() {
   try { shipments = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]'); }
   catch(e) { shipments = []; console.warn('localStorage parse error', e); }
+  // Import board is Oversea-only — drop any cached Domestic / PK / FG import records
+  shipments = shipments.filter(s => s.type !== 'import' || s.import_type === 'oversea');
 }
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(shipments)); }
@@ -1204,6 +1206,7 @@ async function syncOdoo() {
           state: 'draft',
         };
         rec.import_type = detectImportType(rec);
+        if (rec.import_type !== 'oversea') return;  // Oversea-only — skip Domestic / PK / FG
         upsert(rec);
         impCount++;
       });
@@ -1373,7 +1376,7 @@ function buildImpKanban(rows) {
     IMP_STATES.map(st => {
       const cards = rows.filter(s=>s.state===st.id);
       return `<div class="kanban-col" style="--col-color:${st.color}">
-        <div class="kanban-col-header">
+        <div class="kanban-col-header"${st.desc?` title="${esc(st.desc)}"`:''}>
           <span class="kanban-col-title">${esc(st.label)}</span>
           <span class="kanban-count">${cards.length}</span>
         </div>
@@ -1466,7 +1469,7 @@ function buildExpKanban(rows) {
     EXP_STATES.map(st => {
       const cards = rows.filter(s=>s.state===st.id);
       return `<div class="kanban-col" style="--col-color:${st.color}">
-        <div class="kanban-col-header">
+        <div class="kanban-col-header"${st.desc?` title="${esc(st.desc)}"`:''}>
           <span class="kanban-col-title">${esc(st.label)}</span>
           <span class="kanban-count">${cards.length}</span>
         </div>
