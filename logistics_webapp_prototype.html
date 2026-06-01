@@ -1114,61 +1114,66 @@ code { font-size: 12px; }
               <div class="col-7">
                 <label class="form-label">Freight Charges — Expense PO</label>
                 <div class="input-group input-group-sm">
-                  <input class="form-control" id="f-freight-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <input class="form-control" id="f-freight-po" placeholder="เลือก / พิมพ์เลขที่ PO"
+                         onblur="autoFillExpenseAmount('f-freight-po',false)">
                   <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-freight-po')"><i class="bi bi-search"></i></button>
                 </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Freight Amount (THB)</label>
-                <input class="form-control form-control-sm" id="f-freight-thb" type="number" placeholder="0">
+                <input class="form-control form-control-sm" id="f-freight-thb" type="number" placeholder="0" oninput="this.style.borderColor='';this.title=''">
               </div>
               <!-- 2. Customs Clearance Fees -->
               <div class="col-7">
                 <label class="form-label">Customs Clearance — Expense PO</label>
                 <div class="input-group input-group-sm">
-                  <input class="form-control" id="f-customs-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <input class="form-control" id="f-customs-po" placeholder="เลือก / พิมพ์เลขที่ PO"
+                         onblur="autoFillExpenseAmount('f-customs-po',false)">
                   <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-customs-po')"><i class="bi bi-search"></i></button>
                 </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Customs Fees (THB)</label>
-                <input class="form-control form-control-sm" id="f-customs-thb" type="number" placeholder="0">
+                <input class="form-control form-control-sm" id="f-customs-thb" type="number" placeholder="0" oninput="this.style.borderColor='';this.title=''">
               </div>
               <!-- 3. Insurance -->
               <div class="col-7">
                 <label class="form-label">Insurance — Expense PO</label>
                 <div class="input-group input-group-sm">
-                  <input class="form-control" id="f-insurance-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <input class="form-control" id="f-insurance-po" placeholder="เลือก / พิมพ์เลขที่ PO"
+                         onblur="autoFillExpenseAmount('f-insurance-po',false)">
                   <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-insurance-po')"><i class="bi bi-search"></i></button>
                 </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Insurance Amount (THB)</label>
-                <input class="form-control form-control-sm" id="f-insurance" type="number" placeholder="0">
+                <input class="form-control form-control-sm" id="f-insurance" type="number" placeholder="0" oninput="this.style.borderColor='';this.title=''">
               </div>
               <!-- 4. Import Duty & Tax -->
               <div class="col-7">
                 <label class="form-label">Import Duty &amp; Tax — Expense PO</label>
                 <div class="input-group input-group-sm">
-                  <input class="form-control" id="f-duty-tax-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <input class="form-control" id="f-duty-tax-po" placeholder="เลือก / พิมพ์เลขที่ PO"
+                         onblur="autoFillExpenseAmount('f-duty-tax-po',false)">
                   <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-duty-tax-po')"><i class="bi bi-search"></i></button>
                 </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Duty &amp; Tax Amount (THB)</label>
-                <input class="form-control form-control-sm" id="f-duty" type="number" placeholder="0">
+                <input class="form-control form-control-sm" id="f-duty" type="number" placeholder="0" oninput="this.style.borderColor='';this.title=''">
               </div>
               <!-- 5. Other Fees -->
               <div class="col-7">
                 <label class="form-label">Other Fees — Expense PO</label>
                 <div class="input-group input-group-sm">
-                  <input class="form-control" id="f-other-fees-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <input class="form-control" id="f-other-fees-po" placeholder="เลือก / พิมพ์เลขที่ PO"
+                         onblur="autoFillExpenseAmount('f-other-fees-po',false)">
                   <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-other-fees-po')"><i class="bi bi-search"></i></button>
                 </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Other Fees (THB)</label>
-                <input class="form-control form-control-sm" id="f-fees" type="number" placeholder="0">
+                <input class="form-control form-control-sm" id="f-fees" type="number" placeholder="0" oninput="this.style.borderColor='';this.title=''">
               </div>
               <div class="col-12">
                 <label class="form-label">Notes</label>
@@ -2223,6 +2228,39 @@ const EP_LABELS = {
   'f-duty-tax-po':   'Import Duty & Tax — Expense PO',
   'f-other-fees-po': 'Other Fees — Expense PO',
 };
+// Maps each PO reference field to its corresponding amount field
+const EP_AMOUNT_MAP = {
+  'f-freight-po':    'f-freight-thb',
+  'f-customs-po':    'f-customs-thb',
+  'f-insurance-po':  'f-insurance',
+  'f-duty-tax-po':   'f-duty',
+  'f-other-fees-po': 'f-fees',
+};
+
+// Auto-fill amount from expensePOs array when a PO is selected / typed.
+// forceOverwrite=true  → always fill (used by picker selection)
+// forceOverwrite=false → fill only if amount is currently 0 (used by onblur)
+function autoFillExpenseAmount(poFieldId, forceOverwrite) {
+  const poNum = (document.getElementById(poFieldId)?.value||'').trim();
+  const amtFieldId = EP_AMOUNT_MAP[poFieldId];
+  if (!poNum || !amtFieldId) return;
+  const po = expensePOs.find(p => p.po_number === poNum);
+  if (!po) return;
+  const amtEl = document.getElementById(amtFieldId);
+  if (!amtEl) return;
+  const current = parseFloat(amtEl.value) || 0;
+  if (forceOverwrite || current === 0) {
+    amtEl.value = po.amount_total != null ? po.amount_total : 0;
+    // Amber border hint if the PO currency is not THB (amount needs manual THB conversion)
+    if (po.currency && po.currency !== 'THB') {
+      amtEl.style.borderColor = '#f59e0b';
+      amtEl.title = `ดึงจาก ${po.po_number} (${po.currency} ${fmt(po.amount_total)}) — กรุณาแปลงเป็น THB`;
+    } else {
+      amtEl.style.borderColor = '';
+      amtEl.title = '';
+    }
+  }
+}
 
 function openExpensePicker(targetFieldId) {
   epPickerTarget = targetFieldId;
@@ -2271,6 +2309,7 @@ function filterExpensePOs() {
 function selectExpensePO(poNumber) {
   const el = document.getElementById(epPickerTarget);
   if (el) el.value = poNumber;
+  autoFillExpenseAmount(epPickerTarget, true);  // force fill amount on picker selection
   closeExpensePicker();
 }
 
