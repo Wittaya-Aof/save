@@ -992,7 +992,16 @@ code { font-size: 12px; }
               </div>
               <div class="col-6">
                 <label class="form-label">สกุลเงิน</label>
-                <input class="form-control form-control-sm" id="f-currency" placeholder="USD">
+                <select class="form-select form-select-sm" id="f-currency">
+                  <option value="">— เลือก —</option>
+                  <option value="CNY">CNY — Chinese Yuan</option>
+                  <option value="THB">THB — Thai Baht</option>
+                  <option value="USD">USD — US Dollar</option>
+                  <option value="EUR">EUR — Euro</option>
+                  <option value="KRW">KRW — Korean Won</option>
+                  <option value="JPY">JPY — Japanese Yen</option>
+                  <option value="SGD">SGD — Singapore Dollar</option>
+                </select>
               </div>
               <div class="col-6">
                 <label class="form-label">มูลค่า</label>
@@ -1068,11 +1077,27 @@ code { font-size: 12px; }
               </div>
               <div class="col-6">
                 <label class="form-label" id="lbl-origin">Port of Origin</label>
-                <input class="form-control form-control-sm" id="f-origin">
+                <input class="form-control form-control-sm" id="f-origin" list="port-origin-list" autocomplete="off">
               </div>
               <div class="col-6">
                 <label class="form-label" id="lbl-dest">Port of Dest.</label>
-                <input class="form-control form-control-sm" id="f-dest">
+                <input class="form-control form-control-sm" id="f-dest" list="port-dest-list" autocomplete="off">
+              </div>
+              <!-- Ship By (Sea mode only) -->
+              <div class="col-12" id="fg-shipby" style="display:none">
+                <label class="form-label">Ship By</label>
+                <div class="d-flex gap-2 align-items-center">
+                  <select class="form-select form-select-sm" id="f-shipby" onchange="applyShipByLayout(this.value)" style="flex:1">
+                    <option value="lcl">LCL</option>
+                    <option value="fcl20">FCL 20'GP</option>
+                    <option value="fcl40">FCL 40'HQ</option>
+                  </select>
+                  <div id="fg-container-qty" style="display:none;flex-shrink:0">
+                    <input class="form-control form-control-sm" id="f-container-qty" type="number" min="1" value="1"
+                           style="width:85px" placeholder="จำนวนตู้" title="จำนวนตู้">
+                  </div>
+                  <span id="lbl-container-qty" style="display:none;font-size:12px;color:var(--text-2);white-space:nowrap">ตู้</span>
+                </div>
               </div>
               <div class="col-6">
                 <label class="form-label">ETD</label>
@@ -1082,68 +1107,86 @@ code { font-size: 12px; }
                 <label class="form-label">ETA</label>
                 <input class="form-control form-control-sm" id="f-eta" type="date">
               </div>
-              <div class="form-section-label mt-2">Cost Allocation (฿ THB)</div>
-              <!-- Freight -->
+              <!-- ── Expense PO Tracking ─────────────────────────── -->
+              <div class="form-section-label mt-2">Expense PO Tracking</div>
+              <!-- 1. Freight Charges -->
               <div class="col-7">
-                <label class="form-label">Freight Expense PO</label>
+                <label class="form-label">Freight Charges — Expense PO</label>
                 <select class="form-control form-control-sm" id="f-freight-po">
-                  <option value="">— เลือก Expense PO ค่าระวาง —</option>
+                  <option value="">— เลือก Expense PO —</option>
                 </select>
               </div>
               <div class="col-5">
-                <label class="form-label">Freight (THB)</label>
-                <input class="form-control form-control-sm" id="f-freight-thb" type="number" placeholder="0" oninput="autoCalcCosts()">
+                <label class="form-label">Freight Amount (THB)</label>
+                <input class="form-control form-control-sm" id="f-freight-thb" type="number" placeholder="0">
               </div>
-              <!-- Insurance + Exchange Rate -->
-              <div class="col-4">
-                <label class="form-label">Insurance (THB)</label>
-                <input class="form-control form-control-sm" id="f-insurance" type="number" placeholder="0" oninput="autoCalcCosts()">
+              <!-- 2. Customs Clearance Fees -->
+              <div class="col-7">
+                <label class="form-label">Customs Clearance — Expense PO</label>
+                <select class="form-control form-control-sm" id="f-customs-po">
+                  <option value="">— เลือก Expense PO —</option>
+                </select>
               </div>
-              <div class="col-4" id="fg-exrate">
-                <label class="form-label">Exchange Rate</label>
-                <input class="form-control form-control-sm" id="f-exrate" type="number" placeholder="1" step="0.0001" oninput="autoCalcCosts()">
+              <div class="col-5">
+                <label class="form-label">Customs Fees (THB)</label>
+                <input class="form-control form-control-sm" id="f-customs-thb" type="number" placeholder="0">
               </div>
-              <div class="col-4">
-                <label class="form-label">Invoice (THB)</label>
-                <input class="form-control form-control-sm" id="f-invoice-thb" type="number" placeholder="คำนวณอัตโนมัติ" oninput="autoCalcCosts()" title="Invoice value in THB. Auto-filled from amount × rate.">
+              <!-- 3. Insurance -->
+              <div class="col-7">
+                <label class="form-label">Insurance — Expense PO</label>
+                <select class="form-control form-control-sm" id="f-insurance-po">
+                  <option value="">— เลือก Expense PO —</option>
+                </select>
               </div>
-              <!-- CIF + separator -->
-              <div class="col-12">
-                <div class="cost-calc-row">
-                  <div class="d-flex align-items-center justify-content-between mb-1">
-                    <span class="cost-calc-label">CIF Value = Invoice + Freight + Insurance</span>
-                    <button type="button" class="btn btn-sm" style="font-size:11px;padding:2px 10px;background:var(--primary);color:#fff;border-radius:6px;border:none" onclick="autoCalcCosts(true)">
-                      🔄 คำนวณ
-                    </button>
-                  </div>
-                  <input class="form-control form-control-sm" id="f-cif" type="number" placeholder="CIF Value (฿)" oninput="autoCalcCosts()" title="CIF = Invoice THB + Freight + Insurance. Editable for manual override.">
-                </div>
+              <div class="col-5">
+                <label class="form-label">Insurance Amount (THB)</label>
+                <input class="form-control form-control-sm" id="f-insurance" type="number" placeholder="0">
               </div>
-              <!-- Duty -->
-              <div class="col-4">
-                <label class="form-label">Duty Rate (%)</label>
-                <input class="form-control form-control-sm" id="f-duty-rate" type="number" placeholder="0" step="0.01" oninput="autoCalcCosts()">
+              <!-- 4. Import Duty & Tax -->
+              <div class="col-7">
+                <label class="form-label">Import Duty &amp; Tax — Expense PO</label>
+                <select class="form-control form-control-sm" id="f-duty-tax-po">
+                  <option value="">— เลือก Expense PO —</option>
+                </select>
               </div>
-              <div class="col-8">
-                <label class="form-label">Duty <span class="text-muted" style="font-size:10px">CIF × Rate (แก้ไขได้)</span></label>
+              <div class="col-5">
+                <label class="form-label">Duty &amp; Tax Amount (THB)</label>
                 <input class="form-control form-control-sm" id="f-duty" type="number" placeholder="0">
               </div>
-              <!-- VAT + Other Fees -->
-              <div class="col-6">
-                <label class="form-label">VAT 7% <span class="text-muted" style="font-size:10px">(CIF+Duty)×7% (แก้ไขได้)</span></label>
-                <input class="form-control form-control-sm" id="f-vat" type="number" placeholder="0">
+              <!-- 5. Other Fees -->
+              <div class="col-7">
+                <label class="form-label">Other Fees — Expense PO</label>
+                <select class="form-control form-control-sm" id="f-other-fees-po">
+                  <option value="">— เลือก Expense PO —</option>
+                </select>
               </div>
-              <div class="col-6">
+              <div class="col-5">
                 <label class="form-label">Other Fees (THB)</label>
                 <input class="form-control form-control-sm" id="f-fees" type="number" placeholder="0">
               </div>
-              <!-- Other Fees PO -->
-              <div class="col-12">
-                <label class="form-label">Other Fees Expense PO <span class="text-muted" style="font-size:10px">(CBroker, THC, ฯลฯ)</span></label>
-                <select class="form-control form-control-sm" id="f-other-fees-po">
-                  <option value="">— เลือก Expense PO ค่าใช้จ่ายอื่น —</option>
-                </select>
+              <!-- ── Customs Declaration Reference ──────────────── -->
+              <div class="form-section-label mt-2">Customs Declaration</div>
+              <div class="col-4">
+                <label class="form-label">Exchange Rate</label>
+                <input class="form-control form-control-sm" id="f-exrate" type="number" placeholder="1" step="0.0001">
               </div>
+              <div class="col-4">
+                <label class="form-label">Invoice Value (THB)</label>
+                <input class="form-control form-control-sm" id="f-invoice-thb" type="number" placeholder="0">
+              </div>
+              <div class="col-4">
+                <label class="form-label">CIF Value (THB)</label>
+                <input class="form-control form-control-sm" id="f-cif" type="number" placeholder="0">
+              </div>
+              <div class="col-4">
+                <label class="form-label">Duty Rate (%)</label>
+                <input class="form-control form-control-sm" id="f-duty-rate" type="number" placeholder="0" step="0.01">
+              </div>
+              <div class="col-4">
+                <label class="form-label">VAT (THB)</label>
+                <input class="form-control form-control-sm" id="f-vat" type="number" placeholder="0">
+              </div>
+              <div class="col-4"></div>
               <div class="col-12">
                 <label class="form-label">Notes</label>
                 <textarea class="form-control form-control-sm" id="f-notes" rows="2" style="resize:vertical"></textarea>
@@ -1163,6 +1206,23 @@ code { font-size: 12px; }
       </div>
     </div>
   </div>
+  <!-- Port datalists -->
+  <datalist id="port-origin-list">
+    <option value="PUSAN, KOREA">
+    <option value="NINGBO, CHINA">
+    <option value="SHENZHEN (SHEKOU), CHINA">
+    <option value="SHANGHAI, CHINA">
+    <option value="NANSHA, CHINA">
+    <option value="ZHUHAI, CHINA">
+    <option value="QINGDAO, CHINA">
+    <option value="SHANTOU, CHINA">
+  </datalist>
+  <datalist id="port-dest-list">
+    <option value="BANGKOK PAT, THAILAND">
+    <option value="BANGKOK UNITHAI, THAILAND">
+    <option value="LAEM CHABANG, THAILAND">
+  </datalist>
+
   <!-- Vendor picker overlay -->
   <div class="vp-overlay" id="vendorOverlay">
     <div class="vp-box">
@@ -1901,8 +1961,14 @@ const FORM_IDS = ['f-poso','f-party','f-goods','f-forwarder','f-currency','f-amo
   'f-order-date','f-blawb','f-container','f-vessel','f-voyage','f-origin','f-dest',
   'f-etd','f-eta',
   'f-parent-po','f-shipment-num','f-shipment-of',
-  'f-freight-po','f-freight-thb','f-insurance','f-exrate','f-invoice-thb',
-  'f-cif','f-duty-rate','f-duty','f-vat','f-fees','f-other-fees-po','f-notes'];
+  'f-shipby','f-container-qty',
+  'f-freight-po','f-freight-thb',
+  'f-customs-po','f-customs-thb',
+  'f-insurance-po','f-insurance',
+  'f-duty-tax-po','f-duty',
+  'f-other-fees-po','f-fees',
+  'f-exrate','f-invoice-thb','f-cif','f-duty-rate','f-vat',
+  'f-notes'];
 
 function resetForm() {
   FORM_IDS.forEach(id=>{
@@ -1916,12 +1982,12 @@ function resetForm() {
   document.getElementById('modalBadges').innerHTML='';
   document.getElementById('btnDelete').style.display='none';
   document.getElementById('btnPickVendor').style.display='';
-  // Defaults for split fields
-  const snum = document.getElementById('f-shipment-num');
-  const sof  = document.getElementById('f-shipment-of');
-  if (snum) snum.value='1'; if (sof) sof.value='1';
-  const exr = document.getElementById('f-exrate'); if (exr) exr.value='1';
-  const dr  = document.getElementById('f-duty-rate'); if (dr) dr.value='';
+  // Defaults for new fields
+  const setVal=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v; };
+  setVal('f-shipment-num','1'); setVal('f-shipment-of','1');
+  setVal('f-shipby','lcl'); setVal('f-container-qty','1');
+  setVal('f-exrate','1'); setVal('f-duty-rate','');
+  applyShipByLayout('lcl');
   populateExpensePoDropdowns();
 }
 function showStateGroups(type) {
@@ -1932,27 +1998,40 @@ function showStateGroups(type) {
 // Adapt the Shipping Details fields to the selected transport mode.
 function applyModeLayout(mode) {
   const containerWrap = document.getElementById('fg-container');
+  const shipByWrap    = document.getElementById('fg-shipby');
   const set = (id,txt)=>{ const el=document.getElementById(id); if(el) el.textContent=txt; };
 
-  // Defaults — Sea / Land (ocean/overland freight)
+  // Defaults — Sea / Land
   containerWrap.style.display = '';
+  if (shipByWrap) shipByWrap.style.display = 'none';
   set('lbl-blawb','BL / AWB'); set('lbl-vessel','Vessel'); set('lbl-voyage','Voyage');
   set('lbl-origin','Port of Origin'); set('lbl-dest','Port of Dest.');
 
-  if (mode === 'air') {
-    containerWrap.style.display = 'none';          // no containers for air freight
+  if (mode === 'sea') {
+    if (shipByWrap) { shipByWrap.style.display = ''; }
+    applyShipByLayout(document.getElementById('f-shipby')?.value||'lcl');
+  } else if (mode === 'air') {
+    containerWrap.style.display = 'none';
     document.getElementById('f-container').value = '';
-    set('lbl-vessel','Flight');                    // Vessel -> Flight
-    set('lbl-voyage','Flight No.');                // Voyage -> Flight No.
+    set('lbl-vessel','Flight');
+    set('lbl-voyage','Flight No.');
   } else if (mode === 'courier') {
-    containerWrap.style.display = 'none';           // express parcels — no container
+    containerWrap.style.display = 'none';
     document.getElementById('f-container').value = '';
-    set('lbl-blawb','Tracking No.');               // BL/AWB -> Tracking No.
-    set('lbl-vessel','Courier');                   // Vessel -> Courier (DHL/FedEx/UPS)
-    set('lbl-voyage','Service Type');              // Voyage -> Service Type (Express/Economy)
-    set('lbl-origin','Origin');                    // city, not port
+    set('lbl-blawb','Tracking No.');
+    set('lbl-vessel','Courier');
+    set('lbl-voyage','Service Type');
+    set('lbl-origin','Origin');
     set('lbl-dest','Destination');
   }
+}
+
+function applyShipByLayout(val) {
+  const qtyWrap  = document.getElementById('fg-container-qty');
+  const qtyLabel = document.getElementById('lbl-container-qty');
+  const isFcl    = val === 'fcl20' || val === 'fcl40';
+  if (qtyWrap)  qtyWrap.style.display  = isFcl ? '' : 'none';
+  if (qtyLabel) qtyLabel.style.display = isFcl ? '' : 'none';
 }
 function getModal() {
   if (!modalInst) modalInst=new bootstrap.Modal(document.getElementById('shipModal'));
@@ -1986,23 +2065,35 @@ function openEdit(id) {
   set('f-blawb',s.bl_awb); set('f-container',s.container); set('f-vessel',s.vessel);
   set('f-voyage',s.voyage); set('f-origin',s.origin); set('f-dest',s.dest);
   set('f-etd',s.etd); set('f-eta',s.eta);
-  // Split & cost allocation fields
-  set('f-parent-po', s.parent_po||s.po_so);
+  // Shipment split + mode
+  set('f-parent-po',    s.parent_po||s.po_so);
   set('f-shipment-num', s.shipment_num||1);
   set('f-shipment-of',  s.shipment_of||1);
-  set('f-freight-po',   s.freight_po||'');
+  set('f-shipby',       s.shipby||'lcl');
+  set('f-container-qty',s.container_qty||1);
+  applyShipByLayout(s.shipby||'lcl');
+  // Cost allocation — expense POs + amounts
   set('f-freight-thb',  s.freight_thb||'');
+  set('f-customs-thb',  s.customs_thb||'');
   set('f-insurance',    s.insurance_thb||'');
+  set('f-duty',         s.duty||'');
+  set('f-fees',         s.fees||'');
+  // Customs declaration
   set('f-exrate',       s.exrate||1);
   set('f-invoice-thb',  s.invoice_thb||'');
   set('f-cif',          s.cif_value||'');
   set('f-duty-rate',    s.duty_rate||'');
-  set('f-duty',  s.duty); set('f-vat',s.vat); set('f-fees',s.fees);
-  set('f-other-fees-po', s.other_fees_po||'');
+  set('f-vat',          s.vat||'');
   set('f-notes',s.notes);
-  // Populate expense dropdowns then select saved values
+  // Populate expense dropdowns, then restore saved PO selections
   populateExpensePoDropdowns(s.company);
-  setTimeout(()=>{ set('f-freight-po',s.freight_po||''); set('f-other-fees-po',s.other_fees_po||''); },50);
+  setTimeout(()=>{
+    set('f-freight-po',   s.freight_po||'');
+    set('f-customs-po',   s.customs_po||'');
+    set('f-insurance-po', s.insurance_po||'');
+    set('f-duty-tax-po',  s.duty_tax_po||'');
+    set('f-other-fees-po',s.other_fees_po||'');
+  },50);
   document.getElementById('f-state').value=s.state||'draft';
   document.getElementById('f-company').value=s.company||'KOB';
   document.getElementById('f-mode').value=s.mode||'sea';
@@ -2031,18 +2122,26 @@ function saveShipment() {
     dest:v('f-dest').trim(), etd:v('f-etd'), eta:v('f-eta'),
     duty:parseFloat(v('f-duty'))||0, vat:parseFloat(v('f-vat'))||0, fees:parseFloat(v('f-fees'))||0,
     notes:v('f-notes').trim(), state:v('f-state'),
-    // Shipment split + cost allocation
+    // Shipment split
     parent_po:     v('f-parent-po').trim()||v('f-poso').trim(),
     shipment_num:  parseInt(v('f-shipment-num'))||1,
     shipment_of:   parseInt(v('f-shipment-of'))||1,
+    shipby:        v('f-shipby')||'lcl',
+    container_qty: parseInt(v('f-container-qty'))||1,
+    // Expense PO tracking (5 pairs)
     freight_po:    v('f-freight-po'),
     freight_thb:   parseFloat(v('f-freight-thb'))||0,
+    customs_po:    v('f-customs-po'),
+    customs_thb:   parseFloat(v('f-customs-thb'))||0,
+    insurance_po:  v('f-insurance-po'),
     insurance_thb: parseFloat(v('f-insurance'))||0,
+    duty_tax_po:   v('f-duty-tax-po'),
+    other_fees_po: v('f-other-fees-po'),
+    // Customs declaration
     exrate:        parseFloat(v('f-exrate'))||1,
     invoice_thb:   parseFloat(v('f-invoice-thb'))||0,
     cif_value:     parseFloat(v('f-cif'))||0,
     duty_rate:     parseFloat(v('f-duty-rate'))||0,
-    other_fees_po: v('f-other-fees-po'),
   };
   if (editingId) {
     const idx=shipments.findIndex(s=>s.id===editingId);
@@ -2127,39 +2226,12 @@ function populateExpensePoDropdowns(company) {
   const opts = ['<option value="">— เลือก Expense PO —</option>',
     ...pool.map(p=>`<option value="${esc(p.po_number)}">${esc(p.po_number)} | ${esc(p.supplier||'—')} | ${p.currency||''} ${fmt(p.amount_total||0)}</option>`)
   ].join('');
-  ['f-freight-po','f-other-fees-po'].forEach(id=>{
+  ['f-freight-po','f-customs-po','f-insurance-po','f-duty-tax-po','f-other-fees-po'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.innerHTML=opts;
   });
 }
 
-// ════════════════════════════════════════════════════════
-// AUTO CALCULATE COSTS (CIF → Duty → VAT)
-// ════════════════════════════════════════════════════════
-function autoCalcCosts(forceAll) {
-  const g = id=>parseFloat(document.getElementById(id)?.value)||0;
-  const s = (id,val)=>{ const el=document.getElementById(id); if(el) el.value=Math.round(val)||0; };
-
-  // Step 1: invoice in THB
-  const amt     = parseFloat(document.getElementById('f-amount')?.value)||0;
-  const rate    = g('f-exrate')||1;
-  const invThb  = g('f-invoice-thb') || (amt * rate);
-  if (!g('f-invoice-thb') && amt) s('f-invoice-thb', amt * rate);
-
-  // Step 2: CIF
-  const freight = g('f-freight-thb');
-  const insur   = g('f-insurance');
-  const cif     = invThb + freight + insur;
-  if (forceAll || !g('f-cif')) s('f-cif', cif);
-  const cifActual = g('f-cif') || cif;
-
-  // Step 3: Duty
-  const dutyRate = g('f-duty-rate');
-  if (forceAll || !g('f-duty')) s('f-duty', cifActual * dutyRate / 100);
-  const dutyActual = g('f-duty');
-
-  // Step 4: VAT = (CIF + Duty) × 7%
-  if (forceAll || !g('f-vat')) s('f-vat', (cifActual + dutyActual) * 0.07);
-}
+// autoCalcCosts removed — all cost fields are manual entry only
 
 // ════════════════════════════════════════════════════════
 // CLONE SHIPMENT
