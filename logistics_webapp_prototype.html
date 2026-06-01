@@ -1379,11 +1379,36 @@ function setSyncStatus(msg) {
 function load() {
   try { shipments = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]'); }
   catch(e) { shipments = []; console.warn('localStorage parse error', e); }
+
   // Import board shows actual imported goods only (PK / FG / Raw Materials).
   // Drop cached Odoo import records of any other type (Expense/Domestic/oversea);
   // keep all exports and manually-created imports (no odoo_id).
   shipments = shipments.filter(s =>
     s.type !== 'import' || !s.odoo_id || ['pk','fg','raw'].includes(s.import_type));
+
+  // ── One-time migration (v1) ─────────────────────────────────────────────────
+  // Before the Duplicate fix (commit ff3d31b), cloneShipment used ...s spread so
+  // ALL expense PO refs and amounts were silently copied to split records.
+  // This migration runs ONCE per record (guarded by _migrated_v1) and clears all
+  // Expense PO Tracking fields on any non-Odoo split shipment (shipment_num > 1).
+  // After migration sets the flag, the record is never touched again — so expense
+  // data the user fills in after migration is preserved across reloads.
+  let _dirty = false;
+  shipments.forEach(s => {
+    if (s.type === 'import' && !s.odoo_id &&
+        (s.shipment_num || 0) > 1 && !s._migrated_v1) {
+      // Blank every Expense PO Tracking field
+      s.freight_po = '';    s.freight_thb   = 0;
+      s.customs_po = '';    s.customs_thb   = 0;
+      s.insurance_po = '';  s.insurance_thb = 0;
+      s.duty_tax_po = '';   s.duty          = 0;
+      s.customs_vat_po = '';s.customs_vat   = 0;
+      s.other_fees_po = ''; s.fees          = 0;
+      s._migrated_v1 = true;
+      _dirty = true;
+    }
+  });
+  if (_dirty) save();   // persist the cleaned records immediately
 }
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(shipments)); }
@@ -2433,6 +2458,8 @@ function cloneShipment(id) {
     duty_tax_po:'',   duty:0,
     customs_vat_po:'',customs_vat:0,
     other_fees_po:'', fees:0,
+    // Flag: this record was created correctly (no migration needed)
+    _migrated_v1: true,
   };
   shipments.push(clone);
   // Update original — bump its shipment_of to match
