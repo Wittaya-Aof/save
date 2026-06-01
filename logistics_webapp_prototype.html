@@ -2414,18 +2414,25 @@ function cloneShipment(id) {
   // New shipment number
   const sNum = (s.shipment_num||1) + 1;
   const sOf  = Math.max(s.shipment_of||1, sNum);
-  // Clone all fields, reset shipping details + costs
+  // Clone general info (company, supplier, goods, mode, forwarder, ports, currency, amount)
+  // but blank out ALL Shipment Details and ALL Expense PO Tracking fields.
   const clone = {
     ...s,
-    id: newId, seq, odoo_id: undefined,   // break Odoo link
+    id: newId, seq, odoo_id: undefined,  // new record — break Odoo link so sync won't overwrite
     parent_po:    s.parent_po || s.po_so,
     shipment_num: sNum, shipment_of: sOf,
-    state:   'draft',
+    state: 'draft',
+    // ── Shipment Details (blank) ──────────────────────────────────
     bl_awb:'', container:'', vessel:'', voyage:'',
+    shipby:'lcl', container_qty:1,
     etd:'', eta:'', atd:'', ata:'',
-    freight_thb:0, insurance_thb:0, invoice_thb:0,
-    cif_value:0, duty:0, vat:0, fees:0,
-    freight_po:'', other_fees_po:'',
+    // ── Expense PO Tracking — all 6 pairs cleared ─────────────────
+    freight_po:'',    freight_thb:0,
+    customs_po:'',    customs_thb:0,
+    insurance_po:'',  insurance_thb:0,
+    duty_tax_po:'',   duty:0,
+    customs_vat_po:'',customs_vat:0,
+    other_fees_po:'', fees:0,
   };
   shipments.push(clone);
   // Update original — bump its shipment_of to match
