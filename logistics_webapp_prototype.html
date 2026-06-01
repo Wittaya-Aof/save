@@ -397,6 +397,27 @@ code { font-size: 12px; }
   background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;
   font-size: 10px; font-weight: 700;
 }
+.badge-shipment.clickable {
+  cursor: pointer; transition: all .15s;
+}
+.badge-shipment.clickable:hover {
+  background: #15803d; color: #fff; border-color: #15803d;
+}
+/* Parent PO active filter bar */
+.parent-po-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px; margin-bottom: 12px;
+  background: #f0fdf4; border: 1.5px solid #bbf7d0; border-radius: 8px;
+  font-size: 13px;
+}
+.parent-po-bar strong { color: #15803d; }
+.btn-clear-ppo {
+  margin-left: auto; display: flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 6px; border: 1px solid #bbf7d0;
+  background: #fff; color: #15803d; font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all .15s;
+}
+.btn-clear-ppo:hover { background: #15803d; color: #fff; border-color: #15803d; }
 /* Cost section inside modal */
 .cost-row { display: grid; gap: 8px; }
 .cost-calc-row { background: var(--primary-lt); border: 1px solid #fbcfe8; border-radius: 8px; padding: 10px 12px; }
@@ -778,6 +799,15 @@ code { font-size: 12px; }
     </div><!-- /toolbar -->
 
     <div class="summary-line" id="impSummary"></div>
+    <!-- Parent PO filter bar — shown only when filtering by a specific PO -->
+    <div class="parent-po-bar" id="parentPoBar" style="display:none">
+      <i class="bi bi-diagram-2" style="color:#15803d"></i>
+      <span>กำลังดู shipments ของ PO: <strong id="parentPoBarLabel">—</strong></span>
+      <span id="parentPoBarCount" style="color:var(--text-3);font-size:12px"></span>
+      <button class="btn-clear-ppo" onclick="clearParentPoFilter()">
+        <i class="bi bi-x"></i> ดูทั้งหมด
+      </button>
+    </div>
     <div id="impKanban"></div>
     <div id="impTable" style="display:none"></div>
   </div>
@@ -1303,6 +1333,7 @@ let currentTab = 'import';
 let impView = 'kanban';
 let expView = 'kanban';
 let impTypeFilter = 'all';
+let parentPoFilter = '';      // when set, import board shows only this parent PO's shipments
 let sfType = 'all', sfPeriod = 'year', sfDate = '', searchQuery = '';
 let modalInst = null;
 let charts = {};
@@ -1544,6 +1575,7 @@ function getImp() {
     && (!co || s.company===co)
     && (!st || s.state===st)
     && (impTypeFilter==='all' || s.import_type===impTypeFilter)
+    && (!parentPoFilter || (s.parent_po||s.po_so)===parentPoFilter)
     && matchSearch(s));
   // Sort by PO date (created = YYYY-MM-DD, so string compare = chronological).
   // Blank dates sort to the end either way.
@@ -1589,7 +1621,17 @@ function typeBadge(t) {
 function renderImport() {
   try {
     const rows = getImp();
-    document.getElementById('impSummary').textContent = `แสดง ${rows.length} รายการ จากทั้งหมด ${shipments.filter(s=>s.type==='import').length} Import`;
+    const totalImp = shipments.filter(s=>s.type==='import').length;
+    document.getElementById('impSummary').textContent = `แสดง ${rows.length} รายการ จากทั้งหมด ${totalImp} Import`;
+    // Parent PO filter bar
+    const bar = document.getElementById('parentPoBar');
+    if (parentPoFilter) {
+      document.getElementById('parentPoBarLabel').textContent = parentPoFilter;
+      document.getElementById('parentPoBarCount').textContent = `(${rows.length} shipment)`;
+      bar.style.display = '';
+    } else {
+      bar.style.display = 'none';
+    }
     document.getElementById('impBadge').textContent = rows.length||'';
 
     if (impView==='kanban') {
@@ -1635,8 +1677,12 @@ function buildImpKanban(rows) {
 
 function impCard(s) {
   const hasMeta = s.eta || s.amount_total;
+  const parentPo = s.parent_po || s.po_so || '';
   const shipBadge = (s.shipment_num && s.shipment_of && s.shipment_of > 1)
-    ? `<span class="badge-shipment ms-1">${s.shipment_num}/${s.shipment_of}</span>` : '';
+    ? `<span class="badge-shipment clickable ms-1"
+           title="คลิกเพื่อดูทุก shipment ของ ${esc(parentPo)}"
+           onclick="event.stopPropagation();filterByParentPo('${esc(parentPo)}')"
+         >${s.shipment_num}/${s.shipment_of}</span>` : '';
   const totalCost = (s.freight_thb||0)+(s.customs_thb||0)+(s.insurance_thb||0)+(s.duty||0)+(s.customs_vat||0)+(s.fees||0);
   return `<div class="kanban-card" onclick="openEdit('${esc(s.id)}')">
     <div class="kanban-card-id">${esc(s.po_so||s.id)}${shipBadge}</div>
@@ -1923,6 +1969,20 @@ function setImpType(t, el) {
   document.querySelectorAll('#impTypeTabs .type-pill').forEach(b=>{
     b.classList.toggle('active', b===el);
   });
+  renderImport();
+}
+
+// Filter Import Board to show only shipments belonging to a specific Parent PO.
+// Triggered by clicking the "2/3" badge on any kanban card.
+function filterByParentPo(parentPo) {
+  parentPoFilter = parentPo;
+  renderImport();
+  // Scroll to top of board so the filter bar is visible
+  document.getElementById('parentPoBar')?.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+function clearParentPoFilter() {
+  parentPoFilter = '';
   renderImport();
 }
 
@@ -2404,7 +2464,7 @@ function renderPoSummary() {
   document.getElementById('dashPoBody').innerHTML = rows.map(g=>{
     const total = g.freight+g.customs+g.insurance+g.duty+g.cvat+g.fees;
     const hasCosts = total > 0;
-    return `<tr style="cursor:pointer" onclick="setImpType('all',null);document.querySelector('[data-bs-target=\\'#tab-import\\']')?.click()">
+    return `<tr style="cursor:pointer" onclick="setImpType('all',null);filterByParentPo('${esc(g.key)}');document.querySelector('[data-bs-target=\\'#tab-import\\']')?.click()">
       <td><span class="kanban-card-id">${esc(g.key)}</span>
         ${g.shipments.length>1?`<span class="badge-shipment ms-1">${g.shipments.length} SH</span>`:''}
       </td>
