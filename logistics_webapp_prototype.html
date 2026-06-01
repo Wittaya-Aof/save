@@ -379,6 +379,41 @@ code { font-size: 12px; }
   margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border);
 }
 .kanban-card-amount { font-size: 11px; font-weight: 700; color: var(--text-1); }
+/* Clone button inside kanban card */
+.kanban-card-actions {
+  display: flex; align-items: center; justify-content: flex-end;
+  margin-top: 5px; gap: 4px;
+}
+.btn-clone-card {
+  display: flex; align-items: center; gap: 3px;
+  padding: 2px 7px; border-radius: 5px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-3);
+  font-size: 10.5px; cursor: pointer; transition: all .15s;
+}
+.btn-clone-card:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-lt); }
+/* Shipment badge (e.g. "2/3") on card */
+.badge-shipment {
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;
+  font-size: 10px; font-weight: 700;
+}
+/* Cost section inside modal */
+.cost-row { display: grid; gap: 8px; }
+.cost-calc-row { background: var(--primary-lt); border: 1px solid #fbcfe8; border-radius: 8px; padding: 10px 12px; }
+.cost-calc-label { font-size: 11px; color: var(--text-2); margin-bottom: 2px; }
+.cost-calc-val { font-size: 15px; font-weight: 700; color: var(--text-1); }
+.calc-divider { width: 100%; height: 1px; background: var(--border); margin: 8px 0; }
+/* PO Cost Summary table */
+.po-summary-tbl { font-size: 12.5px; width: 100%; border-collapse: separate; border-spacing: 0; }
+.po-summary-tbl thead th {
+  background: var(--bg); color: var(--text-2);
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  padding: 8px 12px; border-bottom: 1.5px solid var(--border);
+}
+.po-summary-tbl tbody td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.po-summary-tbl tbody tr:hover { background: var(--bg); }
+.po-summary-tbl tfoot td { padding: 8px 12px; font-weight: 700; background: var(--bg); border-top: 2px solid var(--border); }
+.po-summary-total { font-size: 13px; font-weight: 700; color: var(--text-1); }
 .kanban-empty {
   font-size: 12px; color: var(--text-3); text-align: center;
   padding: 18px 0 10px; letter-spacing: .2px;
@@ -859,6 +894,42 @@ code { font-size: 12px; }
       </div>
     </div>
 
+    <!-- Row 3: PO Cost Summary -->
+    <div class="chart-card" style="margin-bottom:16px">
+      <div class="chart-card-header">
+        <div class="chart-card-title">Import Cost Summary by PO</div>
+        <div class="chart-card-sub" id="dashCostSub">รวมทุก shipment ต่อ Parent PO</div>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="po-summary-tbl" id="dashPoTable">
+          <thead>
+            <tr>
+              <th>Parent PO</th><th>Supplier</th><th>Type</th>
+              <th>Shipments</th><th class="text-end">Invoice</th>
+              <th class="text-end">Freight (฿)</th><th class="text-end">CIF (฿)</th>
+              <th class="text-end">Duty (฿)</th><th class="text-end">VAT (฿)</th>
+              <th class="text-end">Fees (฿)</th><th class="text-end">Total Cost (฿)</th>
+            </tr>
+          </thead>
+          <tbody id="dashPoBody">
+            <tr><td colspan="11" class="text-center text-muted py-3">ยังไม่มีข้อมูล — กด Sync Odoo</td></tr>
+          </tbody>
+          <tfoot>
+            <tr id="dashPoFoot">
+              <td colspan="4">Grand Total</td>
+              <td class="text-end" id="dashPoTotalInv">—</td>
+              <td class="text-end" id="dashPoTotalFreight">—</td>
+              <td class="text-end" id="dashPoTotalCif">—</td>
+              <td class="text-end" id="dashPoTotalDuty">—</td>
+              <td class="text-end" id="dashPoTotalVat">—</td>
+              <td class="text-end" id="dashPoTotalFees">—</td>
+              <td class="text-end po-summary-total" id="dashPoTotalAll">—</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
   </div>
 
 </div><!-- /app-main -->
@@ -934,6 +1005,22 @@ code { font-size: 12px; }
                 </label>
                 <input class="form-control form-control-sm" id="f-order-date" type="date">
               </div>
+              <!-- Shipment Split Info -->
+              <div class="col-12 mt-1">
+                <div class="form-section-label" style="margin-bottom:6px">Shipment Split</div>
+              </div>
+              <div class="col-6">
+                <label class="form-label">Parent PO <span class="text-muted" style="font-size:10px">(ต้นฉบับ)</span></label>
+                <input class="form-control form-control-sm" id="f-parent-po" placeholder="เลขที่ PO หลัก">
+              </div>
+              <div class="col-3">
+                <label class="form-label">Shipment</label>
+                <input class="form-control form-control-sm" id="f-shipment-num" type="number" min="1" value="1" placeholder="1">
+              </div>
+              <div class="col-3">
+                <label class="form-label">of Total</label>
+                <input class="form-control form-control-sm" id="f-shipment-of" type="number" min="1" value="1" placeholder="1">
+              </div>
               <div class="col-6">
                 <label class="form-label">สถานะ</label>
                 <select class="form-select form-select-sm" id="f-state">
@@ -995,22 +1082,71 @@ code { font-size: 12px; }
                 <label class="form-label">ETA</label>
                 <input class="form-control form-control-sm" id="f-eta" type="date">
               </div>
-              <div class="form-section-label mt-2">ค่าใช้จ่าย (฿)</div>
+              <div class="form-section-label mt-2">Cost Allocation (฿ THB)</div>
+              <!-- Freight -->
+              <div class="col-7">
+                <label class="form-label">Freight Expense PO</label>
+                <select class="form-control form-control-sm" id="f-freight-po">
+                  <option value="">— เลือก Expense PO ค่าระวาง —</option>
+                </select>
+              </div>
+              <div class="col-5">
+                <label class="form-label">Freight (THB)</label>
+                <input class="form-control form-control-sm" id="f-freight-thb" type="number" placeholder="0" oninput="autoCalcCosts()">
+              </div>
+              <!-- Insurance + Exchange Rate -->
               <div class="col-4">
-                <label class="form-label">Duty</label>
+                <label class="form-label">Insurance (THB)</label>
+                <input class="form-control form-control-sm" id="f-insurance" type="number" placeholder="0" oninput="autoCalcCosts()">
+              </div>
+              <div class="col-4" id="fg-exrate">
+                <label class="form-label">Exchange Rate</label>
+                <input class="form-control form-control-sm" id="f-exrate" type="number" placeholder="1" step="0.0001" oninput="autoCalcCosts()">
+              </div>
+              <div class="col-4">
+                <label class="form-label">Invoice (THB)</label>
+                <input class="form-control form-control-sm" id="f-invoice-thb" type="number" placeholder="คำนวณอัตโนมัติ" oninput="autoCalcCosts()" title="Invoice value in THB. Auto-filled from amount × rate.">
+              </div>
+              <!-- CIF + separator -->
+              <div class="col-12">
+                <div class="cost-calc-row">
+                  <div class="d-flex align-items-center justify-content-between mb-1">
+                    <span class="cost-calc-label">CIF Value = Invoice + Freight + Insurance</span>
+                    <button type="button" class="btn btn-sm" style="font-size:11px;padding:2px 10px;background:var(--primary);color:#fff;border-radius:6px;border:none" onclick="autoCalcCosts(true)">
+                      🔄 คำนวณ
+                    </button>
+                  </div>
+                  <input class="form-control form-control-sm" id="f-cif" type="number" placeholder="CIF Value (฿)" oninput="autoCalcCosts()" title="CIF = Invoice THB + Freight + Insurance. Editable for manual override.">
+                </div>
+              </div>
+              <!-- Duty -->
+              <div class="col-4">
+                <label class="form-label">Duty Rate (%)</label>
+                <input class="form-control form-control-sm" id="f-duty-rate" type="number" placeholder="0" step="0.01" oninput="autoCalcCosts()">
+              </div>
+              <div class="col-8">
+                <label class="form-label">Duty <span class="text-muted" style="font-size:10px">CIF × Rate (แก้ไขได้)</span></label>
                 <input class="form-control form-control-sm" id="f-duty" type="number" placeholder="0">
               </div>
-              <div class="col-4">
-                <label class="form-label">VAT</label>
+              <!-- VAT + Other Fees -->
+              <div class="col-6">
+                <label class="form-label">VAT 7% <span class="text-muted" style="font-size:10px">(CIF+Duty)×7% (แก้ไขได้)</span></label>
                 <input class="form-control form-control-sm" id="f-vat" type="number" placeholder="0">
               </div>
-              <div class="col-4">
-                <label class="form-label">Fees</label>
+              <div class="col-6">
+                <label class="form-label">Other Fees (THB)</label>
                 <input class="form-control form-control-sm" id="f-fees" type="number" placeholder="0">
+              </div>
+              <!-- Other Fees PO -->
+              <div class="col-12">
+                <label class="form-label">Other Fees Expense PO <span class="text-muted" style="font-size:10px">(CBroker, THC, ฯลฯ)</span></label>
+                <select class="form-control form-control-sm" id="f-other-fees-po">
+                  <option value="">— เลือก Expense PO ค่าใช้จ่ายอื่น —</option>
+                </select>
               </div>
               <div class="col-12">
                 <label class="form-label">Notes</label>
-                <textarea class="form-control form-control-sm" id="f-notes" rows="3" style="resize:vertical"></textarea>
+                <textarea class="form-control form-control-sm" id="f-notes" rows="2" style="resize:vertical"></textarea>
               </div>
             </div>
           </div>
@@ -1253,6 +1389,8 @@ async function syncOdoo() {
     }
 
     save();
+    loadVendors();
+    loadExpensePOs();
     const ts = new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
     setSyncStatus(`Synced ${ts} · Import ${impCount} · Export ${expCount}`);
     toast(`✓ Sync สำเร็จ — Import ${impCount}, Export ${expCount}`, 'success');
@@ -1419,8 +1557,11 @@ function buildImpKanban(rows) {
 
 function impCard(s) {
   const hasMeta = s.eta || s.amount_total;
+  const shipBadge = (s.shipment_num && s.shipment_of && s.shipment_of > 1)
+    ? `<span class="badge-shipment ms-1">${s.shipment_num}/${s.shipment_of}</span>` : '';
+  const totalCost = (s.duty||0)+(s.vat||0)+(s.fees||0);
   return `<div class="kanban-card" onclick="openEdit('${esc(s.id)}')">
-    <div class="kanban-card-id">${esc(s.po_so||s.id)}</div>
+    <div class="kanban-card-id">${esc(s.po_so||s.id)}${shipBadge}</div>
     <div class="kanban-card-party">${esc(strVal(s.party)||'—')}</div>
     <div class="kanban-card-badges">
       ${coBadge(s.company)}${typeBadge(s.import_type||'oversea')}
@@ -1429,6 +1570,15 @@ function impCard(s) {
       <span>${s.eta ? `<i class="bi bi-calendar2-check" style="margin-right:3px"></i>${s.eta}` : ''}</span>
       <span class="kanban-card-amount">${s.amount_total ? `${s.currency||''} ${fmt(s.amount_total)}` : ''}</span>
     </div>` : ''}
+    ${totalCost ? `<div class="kanban-card-meta" style="margin-top:3px">
+      <span style="font-size:10px;color:var(--text-3)">ค่าใช้จ่าย</span>
+      <span class="kanban-card-amount" style="color:#be185d">฿ ${fmt(totalCost)}</span>
+    </div>` : ''}
+    <div class="kanban-card-actions" onclick="event.stopPropagation()">
+      <button class="btn-clone-card" title="Clone เป็น shipment ใหม่" onclick="cloneShipment('${esc(s.id)}')">
+        <i class="bi bi-copy" style="font-size:9px"></i> Clone
+      </button>
+    </div>
   </div>`;
 }
 
@@ -1611,6 +1761,7 @@ function renderDashboard() {
     // ── Company split
     document.getElementById('dashCompSplit').innerHTML =
       buildCompSplit(imp.length, exp.length, kobImp, btvImp, kobExp, btvExp);
+      renderPoSummary();
 
   } catch(e) { console.error('[renderDashboard]', e); }
 }
@@ -1748,7 +1899,10 @@ document.addEventListener('click', e=>{
 // ════════════════════════════════════════════════════════
 const FORM_IDS = ['f-poso','f-party','f-goods','f-forwarder','f-currency','f-amount',
   'f-order-date','f-blawb','f-container','f-vessel','f-voyage','f-origin','f-dest',
-  'f-etd','f-eta','f-duty','f-vat','f-fees','f-notes'];
+  'f-etd','f-eta',
+  'f-parent-po','f-shipment-num','f-shipment-of',
+  'f-freight-po','f-freight-thb','f-insurance','f-exrate','f-invoice-thb',
+  'f-cif','f-duty-rate','f-duty','f-vat','f-fees','f-other-fees-po','f-notes'];
 
 function resetForm() {
   FORM_IDS.forEach(id=>{
@@ -1762,6 +1916,13 @@ function resetForm() {
   document.getElementById('modalBadges').innerHTML='';
   document.getElementById('btnDelete').style.display='none';
   document.getElementById('btnPickVendor').style.display='';
+  // Defaults for split fields
+  const snum = document.getElementById('f-shipment-num');
+  const sof  = document.getElementById('f-shipment-of');
+  if (snum) snum.value='1'; if (sof) sof.value='1';
+  const exr = document.getElementById('f-exrate'); if (exr) exr.value='1';
+  const dr  = document.getElementById('f-duty-rate'); if (dr) dr.value='';
+  populateExpensePoDropdowns();
 }
 function showStateGroups(type) {
   document.getElementById('grp-import').style.display=type==='import'?'':'none';
@@ -1825,7 +1986,23 @@ function openEdit(id) {
   set('f-blawb',s.bl_awb); set('f-container',s.container); set('f-vessel',s.vessel);
   set('f-voyage',s.voyage); set('f-origin',s.origin); set('f-dest',s.dest);
   set('f-etd',s.etd); set('f-eta',s.eta);
-  set('f-duty',s.duty); set('f-vat',s.vat); set('f-fees',s.fees); set('f-notes',s.notes);
+  // Split & cost allocation fields
+  set('f-parent-po', s.parent_po||s.po_so);
+  set('f-shipment-num', s.shipment_num||1);
+  set('f-shipment-of',  s.shipment_of||1);
+  set('f-freight-po',   s.freight_po||'');
+  set('f-freight-thb',  s.freight_thb||'');
+  set('f-insurance',    s.insurance_thb||'');
+  set('f-exrate',       s.exrate||1);
+  set('f-invoice-thb',  s.invoice_thb||'');
+  set('f-cif',          s.cif_value||'');
+  set('f-duty-rate',    s.duty_rate||'');
+  set('f-duty',  s.duty); set('f-vat',s.vat); set('f-fees',s.fees);
+  set('f-other-fees-po', s.other_fees_po||'');
+  set('f-notes',s.notes);
+  // Populate expense dropdowns then select saved values
+  populateExpensePoDropdowns(s.company);
+  setTimeout(()=>{ set('f-freight-po',s.freight_po||''); set('f-other-fees-po',s.other_fees_po||''); },50);
   document.getElementById('f-state').value=s.state||'draft';
   document.getElementById('f-company').value=s.company||'KOB';
   document.getElementById('f-mode').value=s.mode||'sea';
@@ -1854,6 +2031,18 @@ function saveShipment() {
     dest:v('f-dest').trim(), etd:v('f-etd'), eta:v('f-eta'),
     duty:parseFloat(v('f-duty'))||0, vat:parseFloat(v('f-vat'))||0, fees:parseFloat(v('f-fees'))||0,
     notes:v('f-notes').trim(), state:v('f-state'),
+    // Shipment split + cost allocation
+    parent_po:     v('f-parent-po').trim()||v('f-poso').trim(),
+    shipment_num:  parseInt(v('f-shipment-num'))||1,
+    shipment_of:   parseInt(v('f-shipment-of'))||1,
+    freight_po:    v('f-freight-po'),
+    freight_thb:   parseFloat(v('f-freight-thb'))||0,
+    insurance_thb: parseFloat(v('f-insurance'))||0,
+    exrate:        parseFloat(v('f-exrate'))||1,
+    invoice_thb:   parseFloat(v('f-invoice-thb'))||0,
+    cif_value:     parseFloat(v('f-cif'))||0,
+    duty_rate:     parseFloat(v('f-duty-rate'))||0,
+    other_fees_po: v('f-other-fees-po'),
   };
   if (editingId) {
     const idx=shipments.findIndex(s=>s.id===editingId);
@@ -1920,6 +2109,152 @@ document.getElementById('vendorOverlay').addEventListener('click', e=>{
 });
 
 // ════════════════════════════════════════════════════════
+// EXPENSE PO DROPDOWN
+// ════════════════════════════════════════════════════════
+let expensePOs = [];
+
+async function loadExpensePOs() {
+  try {
+    const r = await fetch('/api/expense-pos').then(x=>x.json());
+    if (r.ok) expensePOs = r.rows;
+  } catch(e) { console.warn('[ExpensePOs]', e); }
+}
+
+function populateExpensePoDropdowns(company) {
+  const pool = company
+    ? expensePOs.filter(p=>p.company_code===company)
+    : expensePOs;
+  const opts = ['<option value="">— เลือก Expense PO —</option>',
+    ...pool.map(p=>`<option value="${esc(p.po_number)}">${esc(p.po_number)} | ${esc(p.supplier||'—')} | ${p.currency||''} ${fmt(p.amount_total||0)}</option>`)
+  ].join('');
+  ['f-freight-po','f-other-fees-po'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.innerHTML=opts;
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// AUTO CALCULATE COSTS (CIF → Duty → VAT)
+// ════════════════════════════════════════════════════════
+function autoCalcCosts(forceAll) {
+  const g = id=>parseFloat(document.getElementById(id)?.value)||0;
+  const s = (id,val)=>{ const el=document.getElementById(id); if(el) el.value=Math.round(val)||0; };
+
+  // Step 1: invoice in THB
+  const amt     = parseFloat(document.getElementById('f-amount')?.value)||0;
+  const rate    = g('f-exrate')||1;
+  const invThb  = g('f-invoice-thb') || (amt * rate);
+  if (!g('f-invoice-thb') && amt) s('f-invoice-thb', amt * rate);
+
+  // Step 2: CIF
+  const freight = g('f-freight-thb');
+  const insur   = g('f-insurance');
+  const cif     = invThb + freight + insur;
+  if (forceAll || !g('f-cif')) s('f-cif', cif);
+  const cifActual = g('f-cif') || cif;
+
+  // Step 3: Duty
+  const dutyRate = g('f-duty-rate');
+  if (forceAll || !g('f-duty')) s('f-duty', cifActual * dutyRate / 100);
+  const dutyActual = g('f-duty');
+
+  // Step 4: VAT = (CIF + Duty) × 7%
+  if (forceAll || !g('f-vat')) s('f-vat', (cifActual + dutyActual) * 0.07);
+}
+
+// ════════════════════════════════════════════════════════
+// CLONE SHIPMENT
+// ════════════════════════════════════════════════════════
+function cloneShipment(id) {
+  const s = shipments.find(x=>x.id===id); if(!s) return;
+  const seq   = nextSeq('import');
+  const newId = `SHIP/${TODAY.replace(/-/g,'/')}/${String(seq).padStart(3,'0')}`;
+  // New shipment number
+  const sNum = (s.shipment_num||1) + 1;
+  const sOf  = Math.max(s.shipment_of||1, sNum);
+  // Clone all fields, reset shipping details + costs
+  const clone = {
+    ...s,
+    id: newId, seq, odoo_id: undefined,   // break Odoo link
+    parent_po:    s.parent_po || s.po_so,
+    shipment_num: sNum, shipment_of: sOf,
+    state:   'draft',
+    bl_awb:'', container:'', vessel:'', voyage:'',
+    etd:'', eta:'', atd:'', ata:'',
+    freight_thb:0, insurance_thb:0, invoice_thb:0,
+    cif_value:0, duty:0, vat:0, fees:0,
+    freight_po:'', other_fees_po:'',
+  };
+  shipments.push(clone);
+  // Update original — bump its shipment_of to match
+  const orig = shipments.find(x=>x.id===id);
+  if (orig) orig.shipment_of = sOf;
+  save(); renderAll();
+  toast(`✓ Clone สร้าง shipment ${sNum}/${sOf} แล้ว — กรอก BL/AWB และค่าใช้จ่าย`, 'success', 3500);
+}
+
+// ════════════════════════════════════════════════════════
+// PO COST SUMMARY (Dashboard Row 3)
+// ════════════════════════════════════════════════════════
+function renderPoSummary() {
+  const imp = shipments.filter(s=>s.type==='import');
+  // Group by parent_po (fallback to po_so)
+  const groups = {};
+  imp.forEach(s=>{
+    const key = s.parent_po||s.po_so||s.id;
+    if (!groups[key]) groups[key] = { key, supplier:strVal(s.party), type:s.import_type,
+      shipments:[], invoice:0, freight:0, cif:0, duty:0, vat:0, fees:0 };
+    const g = groups[key];
+    g.shipments.push(s);
+    g.invoice  += s.invoice_thb||0;
+    g.freight  += s.freight_thb||0;
+    g.cif      += s.cif_value||0;
+    g.duty     += s.duty||0;
+    g.vat      += s.vat||0;
+    g.fees     += s.fees||0;
+  });
+  const rows = Object.values(groups).sort((a,b)=>a.key.localeCompare(b.key));
+  if (!rows.length) {
+    document.getElementById('dashPoBody').innerHTML =
+      '<tr><td colspan="11" class="text-center text-muted py-3">ยังไม่มีข้อมูล — กด Sync Odoo</td></tr>';
+    return;
+  }
+  const fmtB = n=>n?'฿ '+fmt(n):'—';
+  document.getElementById('dashPoBody').innerHTML = rows.map(g=>{
+    const total = g.duty+g.vat+g.fees+g.freight;
+    const hasCosts = total > 0;
+    return `<tr style="cursor:pointer" onclick="setImpType('all',null);document.querySelector('[data-bs-target=\\'#tab-import\\']')?.click()">
+      <td><span class="kanban-card-id">${esc(g.key)}</span>
+        ${g.shipments.length>1?`<span class="badge-shipment ms-1">${g.shipments.length} SH</span>`:''}
+      </td>
+      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.supplier||'—')}</td>
+      <td>${typeBadge(g.type)}</td>
+      <td class="text-center">${g.shipments.length}</td>
+      <td class="text-end">${g.invoice?'฿ '+fmt(g.invoice):'—'}</td>
+      <td class="text-end">${fmtB(g.freight)}</td>
+      <td class="text-end">${fmtB(g.cif)}</td>
+      <td class="text-end">${fmtB(g.duty)}</td>
+      <td class="text-end">${fmtB(g.vat)}</td>
+      <td class="text-end">${fmtB(g.fees)}</td>
+      <td class="text-end fw-semibold" ${hasCosts?'style="color:#be185d"':''}>${hasCosts?'฿ '+fmt(total):'—'}</td>
+    </tr>`;
+  }).join('');
+  // Footer totals
+  const T = rows.reduce((a,g)=>({
+    invoice:a.invoice+g.invoice, freight:a.freight+g.freight, cif:a.cif+g.cif,
+    duty:a.duty+g.duty, vat:a.vat+g.vat, fees:a.fees+g.fees
+  }),{invoice:0,freight:0,cif:0,duty:0,vat:0,fees:0});
+  const Ttotal = T.duty+T.vat+T.fees+T.freight;
+  document.getElementById('dashPoTotalInv').textContent    = T.invoice?'฿ '+fmt(T.invoice):'—';
+  document.getElementById('dashPoTotalFreight').textContent= T.freight?'฿ '+fmt(T.freight):'—';
+  document.getElementById('dashPoTotalCif').textContent    = T.cif?'฿ '+fmt(T.cif):'—';
+  document.getElementById('dashPoTotalDuty').textContent   = T.duty?'฿ '+fmt(T.duty):'—';
+  document.getElementById('dashPoTotalVat').textContent    = T.vat?'฿ '+fmt(T.vat):'—';
+  document.getElementById('dashPoTotalFees').textContent   = T.fees?'฿ '+fmt(T.fees):'—';
+  document.getElementById('dashPoTotalAll').textContent    = Ttotal?'฿ '+fmt(Ttotal):'—';
+  document.getElementById('dashCostSub').textContent       = `${rows.length} PO · ${imp.length} shipments`;
+}
+
+// ════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════
 async function init() {
@@ -1930,6 +2265,7 @@ async function init() {
     await syncOdoo();
   } else {
     loadVendors();
+    loadExpensePOs();
     toast(`โหลดข้อมูล ${shipments.length} รายการจาก localStorage`, '', 2500);
   }
 }
