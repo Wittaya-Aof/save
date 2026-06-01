@@ -136,6 +136,8 @@ code { font-size: 12px; }
 }
 .btn-nav-primary { background: var(--primary); color: #fff; }
 .btn-nav-primary:hover { background: #a50f44; }
+.btn-plan { background: rgba(255,255,255,.08); color: #a3e635; border: 1px solid rgba(163,230,53,.25); font-size:12.5px; }
+.btn-plan:hover { background: rgba(163,230,53,.15); color: #bef264; }
 .btn-nav-ghost  { background: rgba(255,255,255,.07); color: #94a3b8; }
 .btn-nav-ghost:hover  { background: rgba(255,255,255,.12); color: #e2e8f0; }
 
@@ -751,6 +753,9 @@ code { font-size: 12px; }
           <option value="date_asc">PO Date: เก่า → ใหม่</option>
           <option value="date_desc">PO Date: ใหม่ → เก่า</option>
         </select>
+        <button class="btn-nav btn-plan" id="btnMatchPlan" onclick="runPlanMatch()" title="จับคู่ข้อมูลจาก Plan Order Excel อัตโนมัติ">
+          <i class="bi bi-file-earmark-spreadsheet"></i> Match Plan
+        </button>
         <div class="toolbar-sep"></div>
         <!-- Search pill -->
         <div class="sf-wrap">
@@ -2009,6 +2014,140 @@ function filterByParentPo(parentPo) {
 function clearParentPoFilter() {
   parentPoFilter = '';
   renderImport();
+}
+
+// ════════════════════════════════════════════════════════
+// PLAN ORDER EXCEL MATCHING
+// Reads "Plan Order 2025 By AOF" via /api/import-plan and
+// auto-populates shipping details + expense PO fields.
+// ════════════════════════════════════════════════════════
+
+// Port-name normalisation: Excel short name → app datalist full name
+const PLAN_PORT = {
+  'HONG KONG':'HONG KONG, CHINA', 'HK':'HONG KONG, CHINA',
+  'NINGBO':'NINGBO, CHINA', 'NINGBO, CHINA':'NINGBO, CHINA',
+  'GUANGZHOU':'GUANGZHOU, CHINA', 'GUANGZHOU (NANSHA)':'NANSHA, CHINA',
+  'NANSHA':'NANSHA, CHINA', 'SHEKOU':'SHENZHEN (SHEKOU), CHINA',
+  'SHENZHEN':'SHENZHEN (SHEKOU), CHINA', 'SHENZHEN (SHEKOU)':'SHENZHEN (SHEKOU), CHINA',
+  'SHANGHAI':'SHANGHAI, CHINA', 'QINGDAO':'QINGDAO, CHINA',
+  'PUSAN':'PUSAN, KOREA', 'BUSAN':'PUSAN, KOREA',
+  'ZHUHAI':'ZHUHAI, CHINA', 'SHANTOU':'SHANTOU, CHINA',
+  'SINGAPORE':'SINGAPORE', 'GUANGZHOU, CHINA':'GUANGZHOU, CHINA',
+};
+const PLAN_MODE = {
+  'SEA FREIGHT':'sea','SEA':'sea','AIR FREIGHT':'air','AIR':'air',
+  'LAND':'land','COURIER':'courier','DHL':'courier',
+};
+const PLAN_SHIPBY = {
+  'LCL':'lcl', "FCL 20'":'fcl20', "FCL 20'GP":'fcl20', "20'":'fcl20',
+  "40'HQ":'fcl40', "FCL 40'HQ":'fcl40', "40'":'fcl40', "FCL 40'":'fcl40',
+};
+
+function normPlanPort(p) { return PLAN_PORT[(p||'').toUpperCase().trim()] || p || ''; }
+function normPlanMode(m) { return PLAN_MODE[(m||'').toUpperCase().trim()] || 'sea'; }
+function normPlanShipBy(s) { return PLAN_SHIPBY[(s||'').trim()] || 'lcl'; }
+
+// Find the plan row that best matches a shipment record.
+// Priority: exact po_so match → po_so + shipment suffix → parent_po match
+function findPlanRow(planRows, s) {
+  const po = s.po_so || '';
+  const num = s.shipment_num || 1;
+  const parent = s.parent_po || po;
+
+  // 1. Exact match on po_so
+  if (planRows[po]) return planRows[po];
+  // 2. po_so with split suffix "(N)"
+  if (planRows[`${po} (${num})`]) return planRows[`${po} (${num})`];
+  // 3. parent_po exact
+  if (parent !== po && planRows[parent]) return planRows[parent];
+  // 4. parent_po with split suffix
+  if (parent !== po && planRows[`${parent} (${num})`]) return planRows[`${parent} (${num})`];
+  // 5. Any plan key whose base PO (after stripping suffix) matches po_so or parent_po
+  for (const key of Object.keys(planRows)) {
+    const base = key.replace(/\s*\(\d+\)\s*$/, '').trim();
+    if (base === po || base === parent) {
+      const suffixMatch = key.match(/\((\d+)\)$/);
+      if (!suffixMatch || parseInt(suffixMatch[1]) === num) return planRows[key];
+    }
+  }
+  return null;
+}
+
+async function runPlanMatch() {
+  const btn = document.getElementById('btnMatchPlan');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> กำลังโหลด...';
+  setSyncBar(true);
+  try {
+    const r = await fetch('/api/import-plan').then(x => x.json());
+    if (!r.ok) throw new Error(r.error || 'import-plan failed');
+
+    const planRows = r.rows;
+    const imp = shipments.filter(s => s.type === 'import');
+    const preview = [];
+
+    imp.forEach(s => {
+      const plan = findPlanRow(planRows, s);
+      if (!plan) return;
+      const fields = [];
+
+      // Text fields: apply if plan value non-empty
+      const tryText = (key, planVal, transform) => {
+        const v = transform ? transform(planVal) : planVal;
+        if (v && s[key] !== v) fields.push({ key, val: v });
+      };
+      tryText('forwarder',  plan.forwarder);
+      tryText('bl_awb',     plan.bl_awb);
+      tryText('origin',     plan.origin, normPlanPort);
+      tryText('etd',        plan.etd);
+      tryText('eta',        plan.eta);
+      tryText('atd',        plan.atd);
+      if (plan.mode)   fields.push({ key:'mode',   val: normPlanMode(plan.mode) });
+      if (plan.shipby) fields.push({ key:'shipby', val: normPlanShipBy(plan.shipby) });
+      // Expense amounts (apply if plan has value and current is 0)
+      if (plan.freight_thb && !s.freight_thb) fields.push({ key:'freight_thb',  val: plan.freight_thb });
+      if (plan.customs_vat && !s.customs_vat) fields.push({ key:'customs_vat',   val: plan.customs_vat });
+      if (plan.duty        && !s.duty)        fields.push({ key:'duty',          val: plan.duty });
+      // Expense PO refs (apply if plan has value)
+      tryText('freight_po',    plan.freight_po);
+      tryText('customs_po',    plan.customs_po);
+      tryText('duty_tax_po',   plan.duty_tax_po);
+      tryText('insurance_po',  plan.insurance_po);
+
+      if (fields.length) preview.push({ id: s.id, po_so: s.po_so, fields });
+    });
+
+    if (!preview.length) {
+      toast('ไม่พบ PO ที่ตรงกับ Plan Order — ตรวจสอบรูปแบบ PO Number', '', 4000);
+      return;
+    }
+
+    // Summarise what will change
+    const fieldSet = {};
+    preview.forEach(p => p.fields.forEach(f => { fieldSet[f.key] = (fieldSet[f.key]||0)+1; }));
+    const fieldSummary = Object.entries(fieldSet).map(([k,n])=>`${k}(${n})`).join(', ');
+    const msg = `พบ ${preview.length} PO ที่ตรงกับข้อมูลใน Plan Order\n\nฟิลด์ที่จะอัปเดต:\n${fieldSummary}\n\nยืนยันอัปเดตอัตโนมัติ?`;
+
+    if (!confirm(msg)) return;
+
+    // Apply
+    preview.forEach(({ id, fields }) => {
+      const s = shipments.find(x => x.id === id);
+      if (!s) return;
+      fields.forEach(({ key, val }) => { s[key] = val; });
+    });
+    save();
+    renderAll();
+    toast(`✓ Match Plan: อัปเดต ${preview.length} PO สำเร็จ`, 'success', 4000);
+
+  } catch(e) {
+    console.error('[Plan Match]', e);
+    toast('Match Plan ล้มเหลว: ' + e.message, 'error', 5000);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-file-earmark-spreadsheet"></i> Match Plan';
+    setSyncBar(false);
+  }
 }
 
 // ════════════════════════════════════════════════════════

@@ -8,6 +8,7 @@ const http  = require('http');
 const { Pool } = require('pg');
 const fs    = require('fs');
 const path  = require('path');
+const XLSX  = require('xlsx');
 
 const PORT = 3000;
 const ROOT = __dirname;
@@ -422,6 +423,91 @@ const server = http.createServer(async (req, res) => {
         jsonOk(res, { ok: true, count: rows.length, rows });
       } catch (e) {
         console.error('[API] expense-pos:', e.message);
+        jsonErr(res, 500, e.message);
+      }
+      return;
+    }
+
+    // ── Import Plan (Excel) ──────────────────────────────────────────
+    if (reqUrl === '/api/import-plan' && method === 'GET') {
+      const PLAN_FILE = 'D:\\Aof\\Plan Order 2025 By AOF (Optimized).xlsx';
+      try {
+        if (!fs.existsSync(PLAN_FILE)) {
+          jsonErr(res, 404, `ไม่พบไฟล์: ${PLAN_FILE}`); return;
+        }
+        const wb = XLSX.readFile(PLAN_FILE, { cellDates: true, dense: false });
+
+        // helper: Excel Date → YYYY-MM-DD string
+        function xlDate(v) {
+          if (!v) return '';
+          if (v instanceof Date) {
+            const y = v.getFullYear();
+            const m = String(v.getMonth()+1).padStart(2,'0');
+            const d = String(v.getDate()).padStart(2,'0');
+            return `${y}-${m}-${d}`;
+          }
+          if (typeof v === 'string') { const m = v.match(/(\d{4}-\d{2}-\d{2})/); return m?m[1]:''; }
+          return '';
+        }
+
+        // helper: blank / dash → ''
+        const clean = v => {
+          const s = v != null ? String(v).trim() : '';
+          return s === '-' || s === 'nan' ? '' : s;
+        };
+
+        const result = {};  // keyed by full PO number from Excel (may include " (N)" suffix)
+
+        for (const sheetName of ['Import 2025', 'Import 2026']) {
+          if (!wb.SheetNames.includes(sheetName)) continue;
+          const ws = wb.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+          if (rows.length < 2) continue;
+
+          const H = {};  // column name → index
+          rows[0].forEach((h, i) => { H[String(h).trim()] = i; });
+
+          for (let ri = 1; ri < rows.length; ri++) {
+            const r = rows[ri];
+            const poFull = clean(r[H['PO Number']]);
+            if (!poFull) continue;
+
+            if (!result[poFull]) {
+              result[poFull] = {
+                forwarder:'', bl_awb:'', origin:'', etd:'', eta:'', atd:'',
+                mode:'', shipby:'',
+                freight_thb:0, customs_vat:0, duty:0,
+                freight_po:'', customs_po:'', duty_tax_po:'', insurance_po:'',
+              };
+            }
+            const e = result[poFull];
+
+            if (!e.forwarder)   e.forwarder   = clean(r[H['Forwarder']]);
+            if (!e.bl_awb)      e.bl_awb      = clean(r[H['HBL/AWB No.']]);
+            if (!e.origin)      e.origin      = clean(r[H['Port of Loading']]);
+            if (!e.etd)         e.etd         = xlDate(r[H['ETD']]);
+            if (!e.eta)         e.eta         = xlDate(r[H['ETA']]);
+            if (!e.atd)         e.atd         = xlDate(r[H['Loading Date']]);
+            if (!e.mode)        e.mode        = clean(r[H['Transport Mode']]);
+            if (!e.shipby)      e.shipby      = clean(r[H['Loading Type']]);
+            // Amounts: only appear on Line 1 — take first non-zero
+            const fc = parseFloat(r[H['Freight Cost (THB)']]) || 0;
+            const vt = parseFloat(r[H['VAT (THB)']]) || 0;
+            const dt = parseFloat(r[H['Import Duty (THB)']]) || 0;
+            if (!e.freight_thb  && fc) e.freight_thb  = fc;
+            if (!e.customs_vat  && vt) e.customs_vat  = vt;
+            if (!e.duty         && dt) e.duty         = dt;
+            // PO refs
+            if (!e.freight_po)   e.freight_po   = clean(r[H['PO - Freight Ref']]);
+            if (!e.customs_po)   e.customs_po   = clean(r[H['PO - Customs Ref']]);
+            if (!e.duty_tax_po)  e.duty_tax_po  = clean(r[H['PO - Duty/Customs Ref']]);
+            if (!e.insurance_po) e.insurance_po = clean(r[H['PO - Insurance Ref']]);
+          }
+        }
+
+        jsonOk(res, { ok: true, count: Object.keys(result).length, rows: result });
+      } catch(e) {
+        console.error('[API] import-plan:', e.message);
         jsonErr(res, 500, e.message);
       }
       return;
