@@ -904,24 +904,25 @@ code { font-size: 12px; }
         <table class="po-summary-tbl" id="dashPoTable">
           <thead>
             <tr>
-              <th>Parent PO</th><th>Supplier</th><th>Type</th>
-              <th>Shipments</th><th class="text-end">Invoice</th>
-              <th class="text-end">Freight (฿)</th><th class="text-end">CIF (฿)</th>
-              <th class="text-end">Duty (฿)</th><th class="text-end">VAT (฿)</th>
-              <th class="text-end">Fees (฿)</th><th class="text-end">Total Cost (฿)</th>
+              <th>Parent PO</th><th>Supplier</th><th>Type</th><th>SH</th>
+              <th class="text-end">Freight (฿)</th>
+              <th class="text-end">Customs (฿)</th>
+              <th class="text-end">Insurance (฿)</th>
+              <th class="text-end">Duty &amp; Tax (฿)</th>
+              <th class="text-end">Other Fees (฿)</th>
+              <th class="text-end">Total Cost (฿)</th>
             </tr>
           </thead>
           <tbody id="dashPoBody">
-            <tr><td colspan="11" class="text-center text-muted py-3">ยังไม่มีข้อมูล — กด Sync Odoo</td></tr>
+            <tr><td colspan="10" class="text-center text-muted py-3">ยังไม่มีข้อมูล — กด Sync Odoo</td></tr>
           </tbody>
           <tfoot>
             <tr id="dashPoFoot">
               <td colspan="4">Grand Total</td>
-              <td class="text-end" id="dashPoTotalInv">—</td>
               <td class="text-end" id="dashPoTotalFreight">—</td>
-              <td class="text-end" id="dashPoTotalCif">—</td>
+              <td class="text-end" id="dashPoTotalCustoms">—</td>
+              <td class="text-end" id="dashPoTotalInsurance">—</td>
               <td class="text-end" id="dashPoTotalDuty">—</td>
-              <td class="text-end" id="dashPoTotalVat">—</td>
               <td class="text-end" id="dashPoTotalFees">—</td>
               <td class="text-end po-summary-total" id="dashPoTotalAll">—</td>
             </tr>
@@ -1112,9 +1113,10 @@ code { font-size: 12px; }
               <!-- 1. Freight Charges -->
               <div class="col-7">
                 <label class="form-label">Freight Charges — Expense PO</label>
-                <select class="form-control form-control-sm" id="f-freight-po">
-                  <option value="">— เลือก Expense PO —</option>
-                </select>
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="f-freight-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-freight-po')"><i class="bi bi-search"></i></button>
+                </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Freight Amount (THB)</label>
@@ -1123,9 +1125,10 @@ code { font-size: 12px; }
               <!-- 2. Customs Clearance Fees -->
               <div class="col-7">
                 <label class="form-label">Customs Clearance — Expense PO</label>
-                <select class="form-control form-control-sm" id="f-customs-po">
-                  <option value="">— เลือก Expense PO —</option>
-                </select>
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="f-customs-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-customs-po')"><i class="bi bi-search"></i></button>
+                </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Customs Fees (THB)</label>
@@ -1134,9 +1137,10 @@ code { font-size: 12px; }
               <!-- 3. Insurance -->
               <div class="col-7">
                 <label class="form-label">Insurance — Expense PO</label>
-                <select class="form-control form-control-sm" id="f-insurance-po">
-                  <option value="">— เลือก Expense PO —</option>
-                </select>
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="f-insurance-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-insurance-po')"><i class="bi bi-search"></i></button>
+                </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Insurance Amount (THB)</label>
@@ -1145,9 +1149,10 @@ code { font-size: 12px; }
               <!-- 4. Import Duty & Tax -->
               <div class="col-7">
                 <label class="form-label">Import Duty &amp; Tax — Expense PO</label>
-                <select class="form-control form-control-sm" id="f-duty-tax-po">
-                  <option value="">— เลือก Expense PO —</option>
-                </select>
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="f-duty-tax-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-duty-tax-po')"><i class="bi bi-search"></i></button>
+                </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Duty &amp; Tax Amount (THB)</label>
@@ -1156,37 +1161,15 @@ code { font-size: 12px; }
               <!-- 5. Other Fees -->
               <div class="col-7">
                 <label class="form-label">Other Fees — Expense PO</label>
-                <select class="form-control form-control-sm" id="f-other-fees-po">
-                  <option value="">— เลือก Expense PO —</option>
-                </select>
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="f-other-fees-po" placeholder="เลือก / พิมพ์เลขที่ PO">
+                  <button class="btn btn-outline-secondary" type="button" onclick="openExpensePicker('f-other-fees-po')"><i class="bi bi-search"></i></button>
+                </div>
               </div>
               <div class="col-5">
                 <label class="form-label">Other Fees (THB)</label>
                 <input class="form-control form-control-sm" id="f-fees" type="number" placeholder="0">
               </div>
-              <!-- ── Customs Declaration Reference ──────────────── -->
-              <div class="form-section-label mt-2">Customs Declaration</div>
-              <div class="col-4">
-                <label class="form-label">Exchange Rate</label>
-                <input class="form-control form-control-sm" id="f-exrate" type="number" placeholder="1" step="0.0001">
-              </div>
-              <div class="col-4">
-                <label class="form-label">Invoice Value (THB)</label>
-                <input class="form-control form-control-sm" id="f-invoice-thb" type="number" placeholder="0">
-              </div>
-              <div class="col-4">
-                <label class="form-label">CIF Value (THB)</label>
-                <input class="form-control form-control-sm" id="f-cif" type="number" placeholder="0">
-              </div>
-              <div class="col-4">
-                <label class="form-label">Duty Rate (%)</label>
-                <input class="form-control form-control-sm" id="f-duty-rate" type="number" placeholder="0" step="0.01">
-              </div>
-              <div class="col-4">
-                <label class="form-label">VAT (THB)</label>
-                <input class="form-control form-control-sm" id="f-vat" type="number" placeholder="0">
-              </div>
-              <div class="col-4"></div>
               <div class="col-12">
                 <label class="form-label">Notes</label>
                 <textarea class="form-control form-control-sm" id="f-notes" rows="2" style="resize:vertical"></textarea>
@@ -1206,6 +1189,21 @@ code { font-size: 12px; }
       </div>
     </div>
   </div>
+  <!-- Expense PO picker overlay -->
+  <div class="vp-overlay" id="expensePoOverlay">
+    <div class="vp-box" style="max-width:640px">
+      <div class="vp-header">
+        <i class="bi bi-receipt text-secondary"></i>
+        <span class="vp-header-title" id="epPickerTitle">เลือก Expense PO</span>
+        <input type="text" class="vp-search ms-2" id="epSearch" placeholder="ค้นหา PO / supplier..." oninput="filterExpensePOs()">
+        <button class="btn-close ms-2" onclick="closeExpensePicker()"></button>
+      </div>
+      <div class="vp-list" id="ep-list">
+        <div class="text-center text-muted py-4 small">กำลังโหลด...</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Port datalists -->
   <datalist id="port-origin-list">
     <option value="PUSAN, KOREA">
@@ -1619,7 +1617,7 @@ function impCard(s) {
   const hasMeta = s.eta || s.amount_total;
   const shipBadge = (s.shipment_num && s.shipment_of && s.shipment_of > 1)
     ? `<span class="badge-shipment ms-1">${s.shipment_num}/${s.shipment_of}</span>` : '';
-  const totalCost = (s.duty||0)+(s.vat||0)+(s.fees||0);
+  const totalCost = (s.freight_thb||0)+(s.customs_thb||0)+(s.insurance_thb||0)+(s.duty||0)+(s.fees||0);
   return `<div class="kanban-card" onclick="openEdit('${esc(s.id)}')">
     <div class="kanban-card-id">${esc(s.po_so||s.id)}${shipBadge}</div>
     <div class="kanban-card-party">${esc(strVal(s.party)||'—')}</div>
@@ -1967,7 +1965,6 @@ const FORM_IDS = ['f-poso','f-party','f-goods','f-forwarder','f-currency','f-amo
   'f-insurance-po','f-insurance',
   'f-duty-tax-po','f-duty',
   'f-other-fees-po','f-fees',
-  'f-exrate','f-invoice-thb','f-cif','f-duty-rate','f-vat',
   'f-notes'];
 
 function resetForm() {
@@ -1988,7 +1985,6 @@ function resetForm() {
   setVal('f-shipby','lcl'); setVal('f-container-qty','1');
   setVal('f-exrate','1'); setVal('f-duty-rate','');
   applyShipByLayout('lcl');
-  populateExpensePoDropdowns();
 }
 function showStateGroups(type) {
   document.getElementById('grp-import').style.display=type==='import'?'':'none';
@@ -2078,22 +2074,13 @@ function openEdit(id) {
   set('f-insurance',    s.insurance_thb||'');
   set('f-duty',         s.duty||'');
   set('f-fees',         s.fees||'');
-  // Customs declaration
-  set('f-exrate',       s.exrate||1);
-  set('f-invoice-thb',  s.invoice_thb||'');
-  set('f-cif',          s.cif_value||'');
-  set('f-duty-rate',    s.duty_rate||'');
-  set('f-vat',          s.vat||'');
   set('f-notes',s.notes);
-  // Populate expense dropdowns, then restore saved PO selections
-  populateExpensePoDropdowns(s.company);
-  setTimeout(()=>{
-    set('f-freight-po',   s.freight_po||'');
-    set('f-customs-po',   s.customs_po||'');
-    set('f-insurance-po', s.insurance_po||'');
-    set('f-duty-tax-po',  s.duty_tax_po||'');
-    set('f-other-fees-po',s.other_fees_po||'');
-  },50);
+  // Restore saved expense PO references (text inputs — no dropdown to populate)
+  set('f-freight-po',   s.freight_po||'');
+  set('f-customs-po',   s.customs_po||'');
+  set('f-insurance-po', s.insurance_po||'');
+  set('f-duty-tax-po',  s.duty_tax_po||'');
+  set('f-other-fees-po',s.other_fees_po||'');
   document.getElementById('f-state').value=s.state||'draft';
   document.getElementById('f-company').value=s.company||'KOB';
   document.getElementById('f-mode').value=s.mode||'sea';
@@ -2137,11 +2124,6 @@ function saveShipment() {
     insurance_thb: parseFloat(v('f-insurance'))||0,
     duty_tax_po:   v('f-duty-tax-po'),
     other_fees_po: v('f-other-fees-po'),
-    // Customs declaration
-    exrate:        parseFloat(v('f-exrate'))||1,
-    invoice_thb:   parseFloat(v('f-invoice-thb'))||0,
-    cif_value:     parseFloat(v('f-cif'))||0,
-    duty_rate:     parseFloat(v('f-duty-rate'))||0,
   };
   if (editingId) {
     const idx=shipments.findIndex(s=>s.id===editingId);
@@ -2219,19 +2201,80 @@ async function loadExpensePOs() {
   } catch(e) { console.warn('[ExpensePOs]', e); }
 }
 
-function populateExpensePoDropdowns(company) {
-  const pool = company
-    ? expensePOs.filter(p=>p.company_code===company)
-    : expensePOs;
-  const opts = ['<option value="">— เลือก Expense PO —</option>',
-    ...pool.map(p=>`<option value="${esc(p.po_number)}">${esc(p.po_number)} | ${esc(p.supplier||'—')} | ${p.currency||''} ${fmt(p.amount_total||0)}</option>`)
-  ].join('');
-  ['f-freight-po','f-customs-po','f-insurance-po','f-duty-tax-po','f-other-fees-po'].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.innerHTML=opts;
-  });
-}
+// populateExpensePoDropdowns removed — fields are now text inputs backed by the expense PO picker overlay
 
 // autoCalcCosts removed — all cost fields are manual entry only
+
+// ════════════════════════════════════════════════════════
+// EXPENSE PO PICKER (searchable overlay — handles 10k+ rows)
+// ════════════════════════════════════════════════════════
+let epPickerTarget = '';
+const EP_LABELS = {
+  'f-freight-po':    'Freight Charges — Expense PO',
+  'f-customs-po':    'Customs Clearance — Expense PO',
+  'f-insurance-po':  'Insurance — Expense PO',
+  'f-duty-tax-po':   'Import Duty & Tax — Expense PO',
+  'f-other-fees-po': 'Other Fees — Expense PO',
+};
+
+function openExpensePicker(targetFieldId) {
+  epPickerTarget = targetFieldId;
+  document.getElementById('epPickerTitle').textContent = EP_LABELS[targetFieldId] || 'เลือก Expense PO';
+  document.getElementById('epSearch').value = '';
+  // Pre-filter by company if the modal is open
+  const company = document.getElementById('f-company')?.value || '';
+  renderExpensePoList('', company);
+  document.getElementById('expensePoOverlay').classList.add('open');
+  setTimeout(()=>document.getElementById('epSearch').focus(), 80);
+}
+function closeExpensePicker() {
+  document.getElementById('expensePoOverlay').classList.remove('open');
+}
+function renderExpensePoList(q, company) {
+  const list = document.getElementById('ep-list');
+  let pool = company ? expensePOs.filter(p=>p.company_code===company) : expensePOs;
+  if (q) {
+    const lq = q.toLowerCase();
+    pool = pool.filter(p=>
+      (p.po_number||'').toLowerCase().includes(lq) ||
+      (p.supplier||'').toLowerCase().includes(lq)
+    );
+  }
+  if (!pool.length) {
+    list.innerHTML = '<div class="text-center text-muted py-4 small">ไม่พบ Expense PO</div>';
+    return;
+  }
+  // Show max 200 rows — user should search to narrow down
+  list.innerHTML = pool.slice(0,200).map(p=>`
+    <div class="vp-item" data-po="${esc(p.po_number)}">
+      <div class="vp-name">${esc(p.po_number)}</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--text-2)">${esc(p.supplier||'—')}</span>
+        <span class="vp-badge">${p.currency||''} ${fmt(p.amount_total||0)}</span>
+        <span style="font-size:10.5px;color:var(--text-3)">${(p.date_order||'').slice(0,10)}</span>
+      </div>
+    </div>`).join('') +
+    (pool.length > 200 ? `<div class="text-center text-muted py-2 small">แสดง 200 / ${pool.length} รายการ — พิมพ์เพื่อค้นหาเพิ่ม</div>` : '');
+}
+function filterExpensePOs() {
+  const q = document.getElementById('epSearch').value;
+  const company = document.getElementById('f-company')?.value || '';
+  renderExpensePoList(q, company);
+}
+function selectExpensePO(poNumber) {
+  const el = document.getElementById(epPickerTarget);
+  if (el) el.value = poNumber;
+  closeExpensePicker();
+}
+
+document.getElementById('ep-list').addEventListener('click', e=>{
+  const item = e.target.closest('.vp-item');
+  if (item && item.dataset.po) selectExpensePO(item.dataset.po);
+});
+document.getElementById('expensePoOverlay').addEventListener('click', e=>{
+  e.stopPropagation();
+  if (e.target === document.getElementById('expensePoOverlay')) closeExpensePicker();
+});
 
 // ════════════════════════════════════════════════════════
 // CLONE SHIPMENT
@@ -2269,30 +2312,28 @@ function cloneShipment(id) {
 // ════════════════════════════════════════════════════════
 function renderPoSummary() {
   const imp = shipments.filter(s=>s.type==='import');
-  // Group by parent_po (fallback to po_so)
   const groups = {};
   imp.forEach(s=>{
     const key = s.parent_po||s.po_so||s.id;
     if (!groups[key]) groups[key] = { key, supplier:strVal(s.party), type:s.import_type,
-      shipments:[], invoice:0, freight:0, cif:0, duty:0, vat:0, fees:0 };
+      shipments:[], freight:0, customs:0, insurance:0, duty:0, fees:0 };
     const g = groups[key];
     g.shipments.push(s);
-    g.invoice  += s.invoice_thb||0;
-    g.freight  += s.freight_thb||0;
-    g.cif      += s.cif_value||0;
-    g.duty     += s.duty||0;
-    g.vat      += s.vat||0;
-    g.fees     += s.fees||0;
+    g.freight   += s.freight_thb||0;
+    g.customs   += s.customs_thb||0;
+    g.insurance += s.insurance_thb||0;
+    g.duty      += s.duty||0;
+    g.fees      += s.fees||0;
   });
   const rows = Object.values(groups).sort((a,b)=>a.key.localeCompare(b.key));
   if (!rows.length) {
     document.getElementById('dashPoBody').innerHTML =
-      '<tr><td colspan="11" class="text-center text-muted py-3">ยังไม่มีข้อมูล — กด Sync Odoo</td></tr>';
+      '<tr><td colspan="10" class="text-center text-muted py-3">ยังไม่มีข้อมูล — กด Sync Odoo</td></tr>';
     return;
   }
   const fmtB = n=>n?'฿ '+fmt(n):'—';
   document.getElementById('dashPoBody').innerHTML = rows.map(g=>{
-    const total = g.duty+g.vat+g.fees+g.freight;
+    const total = g.freight+g.customs+g.insurance+g.duty+g.fees;
     const hasCosts = total > 0;
     return `<tr style="cursor:pointer" onclick="setImpType('all',null);document.querySelector('[data-bs-target=\\'#tab-import\\']')?.click()">
       <td><span class="kanban-card-id">${esc(g.key)}</span>
@@ -2301,29 +2342,26 @@ function renderPoSummary() {
       <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.supplier||'—')}</td>
       <td>${typeBadge(g.type)}</td>
       <td class="text-center">${g.shipments.length}</td>
-      <td class="text-end">${g.invoice?'฿ '+fmt(g.invoice):'—'}</td>
       <td class="text-end">${fmtB(g.freight)}</td>
-      <td class="text-end">${fmtB(g.cif)}</td>
+      <td class="text-end">${fmtB(g.customs)}</td>
+      <td class="text-end">${fmtB(g.insurance)}</td>
       <td class="text-end">${fmtB(g.duty)}</td>
-      <td class="text-end">${fmtB(g.vat)}</td>
       <td class="text-end">${fmtB(g.fees)}</td>
       <td class="text-end fw-semibold" ${hasCosts?'style="color:#be185d"':''}>${hasCosts?'฿ '+fmt(total):'—'}</td>
     </tr>`;
   }).join('');
-  // Footer totals
   const T = rows.reduce((a,g)=>({
-    invoice:a.invoice+g.invoice, freight:a.freight+g.freight, cif:a.cif+g.cif,
-    duty:a.duty+g.duty, vat:a.vat+g.vat, fees:a.fees+g.fees
-  }),{invoice:0,freight:0,cif:0,duty:0,vat:0,fees:0});
-  const Ttotal = T.duty+T.vat+T.fees+T.freight;
-  document.getElementById('dashPoTotalInv').textContent    = T.invoice?'฿ '+fmt(T.invoice):'—';
-  document.getElementById('dashPoTotalFreight').textContent= T.freight?'฿ '+fmt(T.freight):'—';
-  document.getElementById('dashPoTotalCif').textContent    = T.cif?'฿ '+fmt(T.cif):'—';
-  document.getElementById('dashPoTotalDuty').textContent   = T.duty?'฿ '+fmt(T.duty):'—';
-  document.getElementById('dashPoTotalVat').textContent    = T.vat?'฿ '+fmt(T.vat):'—';
-  document.getElementById('dashPoTotalFees').textContent   = T.fees?'฿ '+fmt(T.fees):'—';
-  document.getElementById('dashPoTotalAll').textContent    = Ttotal?'฿ '+fmt(Ttotal):'—';
-  document.getElementById('dashCostSub').textContent       = `${rows.length} PO · ${imp.length} shipments`;
+    freight:a.freight+g.freight, customs:a.customs+g.customs,
+    insurance:a.insurance+g.insurance, duty:a.duty+g.duty, fees:a.fees+g.fees
+  }),{freight:0,customs:0,insurance:0,duty:0,fees:0});
+  const Ttotal = T.freight+T.customs+T.insurance+T.duty+T.fees;
+  document.getElementById('dashPoTotalFreight').textContent  = T.freight?'฿ '+fmt(T.freight):'—';
+  document.getElementById('dashPoTotalCustoms').textContent  = T.customs?'฿ '+fmt(T.customs):'—';
+  document.getElementById('dashPoTotalInsurance').textContent= T.insurance?'฿ '+fmt(T.insurance):'—';
+  document.getElementById('dashPoTotalDuty').textContent     = T.duty?'฿ '+fmt(T.duty):'—';
+  document.getElementById('dashPoTotalFees').textContent     = T.fees?'฿ '+fmt(T.fees):'—';
+  document.getElementById('dashPoTotalAll').textContent      = Ttotal?'฿ '+fmt(Ttotal):'—';
+  document.getElementById('dashCostSub').textContent         = `${rows.length} PO · ${imp.length} shipments`;
 }
 
 // ════════════════════════════════════════════════════════

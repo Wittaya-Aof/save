@@ -382,41 +382,46 @@ const server = http.createServer(async (req, res) => {
       const co = new URL('http://x'+reqUrl+
         (req.url.includes('?')?req.url.slice(req.url.indexOf('?')):'')
         ).searchParams.get('company');
+      // Build company filter so the DB does the filtering (avoids loading all 10k rows
+      // when only one company is needed).
+      const coFilter = co === 'KOB' ? 'AND po.company_id = 1'
+                     : co === 'BTV' ? 'AND po.company_id = 2'
+                     : '';
       try {
-        const rows = await cachedQuery('expense-pos', `
+        const cacheKey = co ? `expense-pos-${co}` : 'expense-pos-all';
+        const rows = await cachedQuery(cacheKey, `
           SELECT
             po.id,
-            po.name::text                                       AS po_number,
+            po.name::text  AS po_number,
             CASE po.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
-            rp.name::text                                       AS supplier,
+            rp.name::text  AS supplier,
             po.amount_total,
-            cu.name::text                                       AS currency,
-            split_part(pc.complete_name, ' / ', 1)             AS top_cat,
-            pc.complete_name::text                              AS category,
+            cu.name::text  AS currency,
             po.date_order,
-            po.state                                            AS odoo_state
-          FROM  purchase_order      po
-          JOIN  res_company         rc  ON rc.id  = po.company_id
-          JOIN  res_partner         rp  ON rp.id  = po.partner_id
-          JOIN  res_currency        cu  ON cu.id  = po.currency_id
-          LEFT JOIN LATERAL (
-            SELECT pt.categ_id
-            FROM purchase_order_line pol
-            JOIN product_product  pp ON pp.id = pol.product_id
-            JOIN product_template pt ON pt.id = pp.product_tmpl_id
-            WHERE pol.order_id = po.id
-            LIMIT 1
-          ) pol ON true
-          LEFT JOIN product_category pc ON pc.id = pol.categ_id
+            po.state       AS odoo_state
+          FROM  purchase_order po
+          JOIN  res_partner    rp ON rp.id = po.partner_id
+          JOIN  res_currency   cu ON cu.id = po.currency_id
           WHERE po.company_id IN (1, 2)
+            ${coFilter}
             AND po.state NOT IN ('cancel')
             AND po.date_order >= NOW() - INTERVAL '2 years'
-            AND split_part(pc.complete_name, ' / ', 1) = 'Expense'
+            -- Include PO if ANY of its lines belongs to the Expense category tree.
+            -- Uses EXISTS so every line is checked (the old LATERAL+LIMIT 1 approach
+            -- only checked the first line and silently excluded ~90 % of expense POs.)
+            AND EXISTS (
+              SELECT 1
+              FROM  purchase_order_line pol
+              JOIN  product_product  pp ON pp.id = pol.product_id
+              JOIN  product_template pt ON pt.id = pp.product_tmpl_id
+              JOIN  product_category pc ON pc.id = pt.categ_id
+              WHERE pol.order_id = po.id
+                AND split_part(pc.complete_name, ' / ', 1) = 'Expense'
+            )
           ORDER BY po.date_order DESC
-          LIMIT 1000
+          LIMIT 6000
         `);
-        const filtered = co ? rows.filter(r=>r.company_code===co) : rows;
-        jsonOk(res, { ok: true, count: filtered.length, rows: filtered });
+        jsonOk(res, { ok: true, count: rows.length, rows });
       } catch (e) {
         console.error('[API] expense-pos:', e.message);
         jsonErr(res, 500, e.message);
