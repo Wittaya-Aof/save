@@ -430,6 +430,7 @@ code { font-size: 12px; }
 .badge-domestic { background: #dcfce7; color: #15803d; }
 .badge-pk       { background: #ffedd5; color: #c2410c; }
 .badge-fg       { background: #ede9fe; color: #6d28d9; }
+.badge-raw      { background: #cffafe; color: #0e7490; }
 .badge-odoo     { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 20px; background: #dbeafe; color: #1d4ed8; font-weight: 600; }
 
 /* ── Stat cards ────────────────────────────────────────── */
@@ -665,9 +666,9 @@ code { font-size: 12px; }
       <div class="toolbar-left">
         <div class="type-group" id="impTypeTabs">
           <button class="type-pill active" onclick="setImpType('all',this)">All</button>
-          <button class="type-pill" onclick="setImpType('oversea',this)">🌐 Oversea</button>
           <button class="type-pill" onclick="setImpType('pk',this)">📦 PK</button>
           <button class="type-pill" onclick="setImpType('fg',this)">🏭 FG</button>
+          <button class="type-pill" onclick="setImpType('raw',this)">🧪 Raw Materials</button>
         </div>
       </div>
 
@@ -901,7 +902,7 @@ code { font-size: 12px; }
               </div>
               <div class="col-6">
                 <label class="form-label">Mode</label>
-                <select class="form-select form-select-sm" id="f-mode">
+                <select class="form-select form-select-sm" id="f-mode" onchange="applyModeLayout(this.value)">
                   <option value="sea">Sea</option><option value="air">Air</option>
                   <option value="land">Land</option><option value="courier">Courier</option>
                 </select>
@@ -960,27 +961,27 @@ code { font-size: 12px; }
             <div class="form-section-label">Shipping Details</div>
             <div class="row g-2">
               <div class="col-12">
-                <label class="form-label">BL / AWB</label>
+                <label class="form-label" id="lbl-blawb">BL / AWB</label>
                 <input class="form-control form-control-sm" id="f-blawb">
               </div>
-              <div class="col-12">
+              <div class="col-12" id="fg-container">
                 <label class="form-label">Container No.</label>
                 <input class="form-control form-control-sm" id="f-container">
               </div>
               <div class="col-6">
-                <label class="form-label">Vessel</label>
+                <label class="form-label" id="lbl-vessel">Vessel</label>
                 <input class="form-control form-control-sm" id="f-vessel">
               </div>
               <div class="col-6">
-                <label class="form-label">Voyage</label>
+                <label class="form-label" id="lbl-voyage">Voyage</label>
                 <input class="form-control form-control-sm" id="f-voyage">
               </div>
               <div class="col-6">
-                <label class="form-label">Port of Origin</label>
+                <label class="form-label" id="lbl-origin">Port of Origin</label>
                 <input class="form-control form-control-sm" id="f-origin">
               </div>
               <div class="col-6">
-                <label class="form-label">Port of Dest.</label>
+                <label class="form-label" id="lbl-dest">Port of Dest.</label>
                 <input class="form-control form-control-sm" id="f-dest">
               </div>
               <div class="col-6">
@@ -1071,7 +1072,7 @@ const EXP_STATES = [
   {id:'eta_arrived',       label:'Arrived',     color:'#059669'},
   {id:'closed',            label:'Closed',      color:'#16a34a'},
 ];
-const IMP_TYPE_LABELS = {oversea:'🌐 Oversea', domestic:'🏠 Domestic', pk:'📦 PK', fg:'🏭 FG'};
+const IMP_TYPE_LABELS = {pk:'📦 PK', fg:'🏭 FG', raw:'🧪 Raw Materials', oversea:'🌐 Oversea', domestic:'🏠 Domestic'};
 const PK_KW = ['pack','packaging','bottle','jar','label','pump','cap','tube','กระปุก','ขวด','แพ็ก','บรรจุ'];
 const FG_KW = ['finished','finish','cosmetic','cream','serum','oem','odm','product','ผลิตภัณฑ์'];
 
@@ -1130,8 +1131,11 @@ function setSyncStatus(msg) {
 function load() {
   try { shipments = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]'); }
   catch(e) { shipments = []; console.warn('localStorage parse error', e); }
-  // Drop cached Domestic import records (Domestic board was removed); keep Oversea/PK/FG
-  shipments = shipments.filter(s => s.type !== 'import' || s.import_type !== 'domestic');
+  // Import board shows actual imported goods only (PK / FG / Raw Materials).
+  // Drop cached Odoo import records of any other type (Expense/Domestic/oversea);
+  // keep all exports and manually-created imports (no odoo_id).
+  shipments = shipments.filter(s =>
+    s.type !== 'import' || !s.odoo_id || ['pk','fg','raw'].includes(s.import_type));
 }
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(shipments)); }
@@ -1150,7 +1154,8 @@ function detectImportType(row) {
   const cat = (row.goods_category||'').toLowerCase();
   if (cat === 'packaging')      return 'pk';
   if (cat === 'finished goods') return 'fg';
-  if (cat)                       return 'oversea';   // any other category (Expense, Semi-Finished, KOL…) = general oversea
+  if (cat === 'raw materials')  return 'raw';
+  if (cat)                       return 'oversea';   // any other category (kept only as a safety net)
   // Legacy fallback (no category data — e.g. manually-created records)
   const combo = [(strVal(row.notes)||''), (row.goods||''), (strVal(row.party)||strVal(row.supplier)||'')].join(' ').toLowerCase();
   if (PK_KW.some(k=>combo.includes(k))) return 'pk';
@@ -1344,7 +1349,7 @@ function coBadge(c) {
   return `<span class="co-badge badge-${(c||'').toLowerCase()}">${esc(c)}</span>`;
 }
 function typeBadge(t) {
-  const cls={oversea:'badge-oversea',domestic:'badge-domestic',pk:'badge-pk',fg:'badge-fg'}[t]||'';
+  const cls={oversea:'badge-oversea',domestic:'badge-domestic',pk:'badge-pk',fg:'badge-fg',raw:'badge-raw'}[t]||'';
   return `<span class="co-badge ${cls}">${esc(IMP_TYPE_LABELS[t]||t)}</span>`;
 }
 
@@ -1748,6 +1753,32 @@ function showStateGroups(type) {
   document.getElementById('grp-import').style.display=type==='import'?'':'none';
   document.getElementById('grp-export').style.display=type==='export'?'':'none';
 }
+
+// Adapt the Shipping Details fields to the selected transport mode.
+function applyModeLayout(mode) {
+  const containerWrap = document.getElementById('fg-container');
+  const set = (id,txt)=>{ const el=document.getElementById(id); if(el) el.textContent=txt; };
+
+  // Defaults — Sea / Land (ocean/overland freight)
+  containerWrap.style.display = '';
+  set('lbl-blawb','BL / AWB'); set('lbl-vessel','Vessel'); set('lbl-voyage','Voyage');
+  set('lbl-origin','Port of Origin'); set('lbl-dest','Port of Dest.');
+
+  if (mode === 'air') {
+    containerWrap.style.display = 'none';          // no containers for air freight
+    document.getElementById('f-container').value = '';
+    set('lbl-vessel','Flight');                    // Vessel -> Flight
+    set('lbl-voyage','Flight No.');                // Voyage -> Flight No.
+  } else if (mode === 'courier') {
+    containerWrap.style.display = 'none';           // express parcels — no container
+    document.getElementById('f-container').value = '';
+    set('lbl-blawb','Tracking No.');               // BL/AWB -> Tracking No.
+    set('lbl-vessel','Courier');                   // Vessel -> Courier (DHL/FedEx/UPS)
+    set('lbl-voyage','Service Type');              // Voyage -> Service Type (Express/Economy)
+    set('lbl-origin','Origin');                    // city, not port
+    set('lbl-dest','Destination');
+  }
+}
 function getModal() {
   if (!modalInst) modalInst=new bootstrap.Modal(document.getElementById('shipModal'));
   return modalInst;
@@ -1762,6 +1793,7 @@ function openCreate(type, state) {
   if (state) document.getElementById('f-state').value=state;
   document.getElementById('shipModal').dataset.type=type;
   document.getElementById('btnPickVendor').style.display=type==='export'?'none':'';
+  applyModeLayout(document.getElementById('f-mode').value);
   getModal().show();
 }
 
@@ -1783,6 +1815,7 @@ function openEdit(id) {
   document.getElementById('f-state').value=s.state||'draft';
   document.getElementById('f-company').value=s.company||'KOB';
   document.getElementById('f-mode').value=s.mode||'sea';
+  applyModeLayout(s.mode||'sea');
 
   const odooSynced=!!s.odoo_id;
   const dateEl=document.getElementById('f-order-date');

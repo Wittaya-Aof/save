@@ -159,6 +159,9 @@ const SQL_IMPORT = `
       rco.code IS NOT NULL AND rco.code != 'TH'
       OR (rco.code IS NULL AND cu.name NOT IN ('THB'))
     )
+    -- Actual imported goods only — Packaging / Finished Goods / Raw Materials.
+    -- Excludes Expense, KOL, POSM, Semi-Finished, CMN-EXP and category-less POs.
+    AND cat.top_cat IN ('Packaging', 'Finished Goods', 'Raw Materials')
   ORDER BY po.date_order DESC
   LIMIT 2000
 `;
