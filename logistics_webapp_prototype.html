@@ -310,12 +310,12 @@ code { font-size: 12px; }
 
 /* ── Kanban ────────────────────────────────────────────── */
 .kanban-wrap {
-  display: flex; gap: 12px; overflow-x: auto;
+  display: flex; gap: 8px; overflow-x: auto;
   padding-bottom: 20px; min-height: 220px;
   scrollbar-width: thin;
 }
 .kanban-col {
-  min-width: 218px; max-width: 234px; flex-shrink: 0;
+  flex: 1 1 0; min-width: 138px; max-width: none;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 0 0 8px 0;
@@ -324,16 +324,16 @@ code { font-size: 12px; }
 }
 /* Colored header band */
 .kanban-col-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px 9px;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 10px 10px 9px;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: color-mix(in srgb, var(--col-color) 8%, white);
   border-bottom: 1px solid color-mix(in srgb, var(--col-color) 20%, transparent);
   margin-bottom: 8px;
 }
 .kanban-col-title {
-  font-size: 11px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .7px; color: var(--col-color);
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .3px; color: var(--col-color); line-height: 1.25;
 }
 .kanban-count {
   font-size: 10.5px; font-weight: 700; min-width: 20px; text-align: center;
@@ -668,7 +668,6 @@ code { font-size: 12px; }
           <button class="type-pill active" onclick="setImpType('all',this)">All</button>
           <button class="type-pill" onclick="setImpType('pk',this)">📦 PK</button>
           <button class="type-pill" onclick="setImpType('fg',this)">🏭 FG</button>
-          <button class="type-pill" onclick="setImpType('raw',this)">🧪 Raw Materials</button>
         </div>
       </div>
 
@@ -691,6 +690,10 @@ code { font-size: 12px; }
           <option value="customs_clearance">Customs Clearance</option>
           <option value="goods_received">Delivered</option>
           <option value="duty_payment">Duty Payment</option>
+        </select>
+        <select class="filter-select" id="impSort" onchange="renderImport()" title="เรียงตามวันที่ PO">
+          <option value="date_asc">PO Date: เก่า → ใหม่</option>
+          <option value="date_desc">PO Date: ใหม่ → เก่า</option>
         </select>
         <div class="toolbar-sep"></div>
         <!-- Search pill -->
@@ -1320,11 +1323,22 @@ function matchSearch(s) {
 function getImp() {
   const co = document.getElementById('impCompanyFilter').value;
   const st = document.getElementById('impStateFilter').value;
-  return shipments.filter(s => s.type==='import'
+  const sortBy = document.getElementById('impSort')?.value || 'date_asc';
+  const rows = shipments.filter(s => s.type==='import'
     && (!co || s.company===co)
     && (!st || s.state===st)
     && (impTypeFilter==='all' || s.import_type===impTypeFilter)
     && matchSearch(s));
+  // Sort by PO date (created = YYYY-MM-DD, so string compare = chronological).
+  // Blank dates sort to the end either way.
+  rows.sort((a,b)=>{
+    const da=a.created||'', db=b.created||'';
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    return sortBy==='date_desc' ? db.localeCompare(da) : da.localeCompare(db);
+  });
+  return rows;
 }
 function getExp() {
   const co = document.getElementById('expCompanyFilter').value;
