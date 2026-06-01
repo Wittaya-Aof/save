@@ -405,10 +405,8 @@ const server = http.createServer(async (req, res) => {
           WHERE po.company_id IN (1, 2)
             ${coFilter}
             AND po.state NOT IN ('cancel')
-            AND po.date_order >= NOW() - INTERVAL '2 years'
+            AND po.date_order >= '2025-01-01'
             -- Include PO if ANY of its lines belongs to the Expense category tree.
-            -- Uses EXISTS so every line is checked (the old LATERAL+LIMIT 1 approach
-            -- only checked the first line and silently excluded ~90 % of expense POs.)
             AND EXISTS (
               SELECT 1
               FROM  purchase_order_line pol
@@ -419,7 +417,7 @@ const server = http.createServer(async (req, res) => {
                 AND split_part(pc.complete_name, ' / ', 1) = 'Expense'
             )
           ORDER BY po.date_order DESC
-          LIMIT 6000
+          LIMIT 8000
         `);
         jsonOk(res, { ok: true, count: rows.length, rows });
       } catch (e) {

@@ -1633,8 +1633,8 @@ function impCard(s) {
       <span class="kanban-card-amount" style="color:#be185d">฿ ${fmt(totalCost)}</span>
     </div>` : ''}
     <div class="kanban-card-actions" onclick="event.stopPropagation()">
-      <button class="btn-clone-card" title="Clone เป็น shipment ใหม่" onclick="cloneShipment('${esc(s.id)}')">
-        <i class="bi bi-copy" style="font-size:9px"></i> Clone
+      <button class="btn-clone-card" title="Duplicate เป็น shipment ใหม่" onclick="cloneShipment('${esc(s.id)}')">
+        <i class="bi bi-copy" style="font-size:9px"></i> Duplicate
       </button>
     </div>
   </div>`;
@@ -2196,8 +2196,15 @@ let expensePOs = [];
 
 async function loadExpensePOs() {
   try {
-    const r = await fetch('/api/expense-pos').then(x=>x.json());
-    if (r.ok) expensePOs = r.rows;
+    // Load each company separately so KOB's large volume never crowds out BTV POs
+    const [kobR, btvR] = await Promise.all([
+      fetch('/api/expense-pos?company=KOB').then(x=>x.json()),
+      fetch('/api/expense-pos?company=BTV').then(x=>x.json()),
+    ]);
+    expensePOs = [
+      ...(kobR.ok ? kobR.rows : []),
+      ...(btvR.ok ? btvR.rows : []),
+    ];
   } catch(e) { console.warn('[ExpensePOs]', e); }
 }
 
@@ -2304,7 +2311,7 @@ function cloneShipment(id) {
   const orig = shipments.find(x=>x.id===id);
   if (orig) orig.shipment_of = sOf;
   save(); renderAll();
-  toast(`✓ Clone สร้าง shipment ${sNum}/${sOf} แล้ว — กรอก BL/AWB และค่าใช้จ่าย`, 'success', 3500);
+  toast(`✓ Duplicate สร้าง shipment ${sNum}/${sOf} แล้ว — กรอก BL/AWB และค่าใช้จ่าย`, 'success', 3500);
 }
 
 // ════════════════════════════════════════════════════════
