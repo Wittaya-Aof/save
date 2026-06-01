@@ -133,12 +133,25 @@ const SQL_IMPORT = `
     po.receipt_status,
     po.origin,
     po.notes,
-    'oversea'::text           AS source_type
+    'oversea'::text           AS source_type,
+    cat.top_cat               AS goods_category
   FROM  purchase_order po
   JOIN  res_company    rc  ON rc.id  = po.company_id
   JOIN  res_partner    rp  ON rp.id  = po.partner_id
   JOIN  res_currency   cu  ON cu.id  = po.currency_id
   LEFT JOIN res_country rco ON rco.id = rp.country_id
+  -- Dominant product-category (by line value) drives PK / FG / Oversea classification
+  LEFT JOIN LATERAL (
+    SELECT split_part(pc.complete_name, ' / ', 1) AS top_cat
+    FROM purchase_order_line pol
+    JOIN product_product  pp ON pp.id = pol.product_id
+    JOIN product_template pt ON pt.id = pp.product_tmpl_id
+    JOIN product_category pc ON pc.id = pt.categ_id
+    WHERE pol.order_id = po.id
+    GROUP BY 1
+    ORDER BY SUM(pol.price_subtotal) DESC NULLS LAST
+    LIMIT 1
+  ) cat ON true
   WHERE po.company_id IN (1, 2)
     AND po.state NOT IN ('cancel')
     AND po.date_order >= NOW() - INTERVAL '2 years'

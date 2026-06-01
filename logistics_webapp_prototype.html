@@ -666,6 +666,8 @@ code { font-size: 12px; }
         <div class="type-group" id="impTypeTabs">
           <button class="type-pill active" onclick="setImpType('all',this)">All</button>
           <button class="type-pill" onclick="setImpType('oversea',this)">🌐 Oversea</button>
+          <button class="type-pill" onclick="setImpType('pk',this)">📦 PK</button>
+          <button class="type-pill" onclick="setImpType('fg',this)">🏭 FG</button>
         </div>
       </div>
 
@@ -685,7 +687,7 @@ code { font-size: 12px; }
           <option value="atd">ATD</option>
           <option value="eta">ETA</option>
           <option value="ata">ATA</option>
-          <option value="customs_clearance">Customs</option>
+          <option value="customs_clearance">Customs Clearance</option>
           <option value="goods_received">Delivered</option>
           <option value="duty_payment">Duty Payment</option>
         </select>
@@ -1055,7 +1057,7 @@ const IMP_STATES = [
   {id:'atd',               label:'ATD',            color:'#f59e0b', desc:'Actual Time of Departure'},
   {id:'eta',               label:'ETA',            color:'#0891b2', desc:'Estimate Time of Arrival'},
   {id:'ata',               label:'ATA',            color:'#0ea5e9', desc:'Actual Time of Arrival'},
-  {id:'customs_clearance', label:'Customs',        color:'#dc2626'},
+  {id:'customs_clearance', label:'Customs Clearance', color:'#dc2626'},
   {id:'goods_received',    label:'Delivered',      color:'#16a34a'},
   {id:'duty_payment',      label:'Duty Payment',   color:'#be185d'},
 ];
@@ -1128,8 +1130,8 @@ function setSyncStatus(msg) {
 function load() {
   try { shipments = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]'); }
   catch(e) { shipments = []; console.warn('localStorage parse error', e); }
-  // Import board is Oversea-only — drop any cached Domestic / PK / FG import records
-  shipments = shipments.filter(s => s.type !== 'import' || s.import_type === 'oversea');
+  // Drop cached Domestic import records (Domestic board was removed); keep Oversea/PK/FG
+  shipments = shipments.filter(s => s.type !== 'import' || s.import_type !== 'domestic');
 }
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(shipments)); }
@@ -1143,10 +1145,16 @@ function nextSeq(type) {
 // CLASSIFICATION
 // ════════════════════════════════════════════════════════
 function detectImportType(row) {
+  // Accurate classification from Odoo product category (dominant line by value).
+  // Falls back to legacy keyword heuristics only if goods_category is absent.
+  const cat = (row.goods_category||'').toLowerCase();
+  if (cat === 'packaging')      return 'pk';
+  if (cat === 'finished goods') return 'fg';
+  if (cat)                       return 'oversea';   // any other category (Expense, Semi-Finished, KOL…) = general oversea
+  // Legacy fallback (no category data — e.g. manually-created records)
   const combo = [(strVal(row.notes)||''), (row.goods||''), (strVal(row.party)||strVal(row.supplier)||'')].join(' ').toLowerCase();
   if (PK_KW.some(k=>combo.includes(k))) return 'pk';
   if (FG_KW.some(k=>combo.includes(k))) return 'fg';
-  if (row.source_type==='domestic') return 'domestic';
   return 'oversea';
 }
 
@@ -1161,6 +1169,7 @@ function upsert(newRec) {
       amount_total:newRec.amount_total, odoo_state:newRec.odoo_state,
       company:newRec.company, source_type:newRec.source_type,
       import_type:newRec.import_type, created:newRec.created,
+      goods_category:newRec.goods_category,
     });
   } else {
     shipments.push(newRec);
@@ -1203,10 +1212,10 @@ async function syncOdoo() {
           notes: strVal(row.notes)||strVal(row.origin)||'',
           odoo_state: row.odoo_state,
           source_type: row.source_type,
+          goods_category: row.goods_category||'',
           state: 'draft',
         };
         rec.import_type = detectImportType(rec);
-        if (rec.import_type !== 'oversea') return;  // Oversea-only — skip Domestic / PK / FG
         upsert(rec);
         impCount++;
       });
