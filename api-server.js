@@ -546,8 +546,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Static Files ──
-  const ALIASES = ['/', '/logistics-tracking-app.html', '/index.html'];
-  let filePath = ALIASES.includes(reqUrl) ? '/logistics_webapp_prototype.html' : reqUrl;
+  const ALIASES = ['/', '/index.html'];
+  let filePath = ALIASES.includes(reqUrl) ? '/logistics-tracking-app.html' : reqUrl;
   filePath = path.join(ROOT, filePath);
   const ext = path.extname(filePath).toLowerCase();
 
