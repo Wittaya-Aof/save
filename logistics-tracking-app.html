@@ -96,8 +96,10 @@ function typeMeta(t){
 }
 function normType(t){t=(t||'').toLowerCase();if(t==='pk'||t==='fg'||t==='oversea')return t;return 'oversea';}
 function coBadgeSty(co){const kob=co==='KOB';return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:700,background:kob?'#fce7f3':'#ede9fe',color:kob?'#c91253':'#6d28d9'};}
-function billCatLabel(c){return ({freight:'ค่าขนส่ง',duty:'อากร',vat:'VAT'})[c]||'อื่นๆ';}
-function billCatSty(c){const m=({freight:{bg:'#dbeafe',fg:'#1d4ed8'},duty:{bg:'#ffedd5',fg:'#c2410c'},vat:{bg:'#dcfce7',fg:'#15803d'}})[c]||{bg:'#f3edf0',fg:'#7a818d'};return {display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:m.bg,color:m.fg};}
+function billCatLabel(c){return ({freight:'ค่าขนส่ง',clearance:'พิธีการ',insurance:'ประกันภัย',duty:'อากร',vat:'VAT'})[c]||'อื่นๆ';}
+function billCatSty(c){const m=({freight:{bg:'#dbeafe',fg:'#1d4ed8'},clearance:{bg:'#fae8ff',fg:'#a21caf'},insurance:{bg:'#ccfbf1',fg:'#0f766e'},duty:{bg:'#ffedd5',fg:'#c2410c'},vat:{bg:'#dcfce7',fg:'#15803d'}})[c]||{bg:'#f3edf0',fg:'#7a818d'};return {display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:m.bg,color:m.fg};}
+// ต้นทุนนำเข้ารวมของ shipment (ไม่รวมมูลค่าสินค้า)
+function costSum(s){return (s.freight||0)+(s.clearance||0)+(s.insurance||0)+(s.duty||0)+(s.vat||0);}
 function typeBadgeSty(t){const m=typeMeta(t);return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:600,background:m.bg,color:m.color};}
 function stageBadgeSty(tab,key){const m=stageMeta(tab,key);return {display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 9px',borderRadius:'99px',fontSize:'11px',fontWeight:600,background:m.color+'1a',color:m.color,whiteSpace:'nowrap'};}
 function stageDotSty(tab,key){return {width:'6px',height:'6px',borderRadius:'50%',background:stageMeta(tab,key).color,flexShrink:0};}
@@ -132,7 +134,7 @@ function sampleExports(){return [
 function defaultForm(board){
   return {board:board||'import',company:'KOB',poNo:'',party:'',type:'oversea',mode:'sea',
     cur:'CNY',amount:'',origin:'',dest:'LAEM CHABANG, THAILAND',
-    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',freight:'',duty:'',vat:''};
+    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',freight:'',clearance:'',insurance:'',duty:'',vat:''};
 }
 
 class App extends Component {
@@ -182,7 +184,7 @@ class App extends Component {
   applyOne(s,o){
     const m={...s};
     ['origin','dest','bl','container','vessel','forwarder','etd','eta'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
-    ['freight','duty','vat'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
+    ['freight','clearance','insurance','duty','vat'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
     if(Array.isArray(o.bills))m.bills=o.bills;
     if(o.stage){
       // Odoo ยืนยันรับของ/ส่งถึงแล้ว (terminal stage) → override เก่าห้ามดึงสถานะถอยหลัง
@@ -246,7 +248,7 @@ class App extends Component {
   mapPo(r,board){
     const stage=board==='export'?this.deriveExportStage(r):this.deriveImportStage(r);
     const rate=parseFloat(r.currency_rate)||0;
-    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',type:normType(''),mode:'sea',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),bl:'',container:'',vessel:'',forwarder:'',freight:0,duty:0,vat:0};
+    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',type:normType(''),mode:'sea',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0};
   }
   mapTracking(r){
     const board=r.type==='export'?'export':'import';
@@ -254,7 +256,7 @@ class App extends Component {
     const stageMap=board==='export'?{draft:'draft',sent:'draft',order_confirmed:'packing',production:'packing',packing:'packing',booking_confirmed:'booking',etd:'shipped',sale:'shipped',eta_arrived:'arrived',closed:'arrived',done:'arrived'}:{draft:'po',purchase:'po',sent:'po',booking_confirmed:'booking',etd:'transit',atd:'transit',eta:'arrived',ata:'arrived',customs_clearance:'customs',duty_payment:'customs',goods_received:'received',done:'received'};
     const stage=stageMap[wf]||(board==='export'?'draft':'po');
     const odooRate=parseFloat(r.rate)||0;
-    return {_board:board,id:r.id||r.odoo_id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:odooRate>0?1/odooRate:1,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0};
+    return {_board:board,id:r.id||r.odoo_id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:odooRate>0?1/odooRate:1,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0};
   }
 
   allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
@@ -276,10 +278,10 @@ class App extends Component {
     if(this.state.saving)return;
     const f=this.state.form;this.setState({saving:true});
     const rate=this.fxRate(f.cur);
-    const ns={_board:f.board,id:'new_'+Date.now(),poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    const ns={_board:f.board,id:'new_'+Date.now(),poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
     this.setState({shipments:[ns].concat(this.allShipments()),creating:false,tab:f.board,view:'kanban'});
     const ov={...this._overrides};
-    ov[ns.poNo]={po_so:ns.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:ns.stage,origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',freight:parseFloat(f.freight)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    ov[ns.poNo]={po_so:ns.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:ns.stage,origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
     this._overrides=ov;
     try{await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ov[ns.poNo])});this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');}
     catch(e){this.showToast('บันทึกออฟไลน์ชั่วคราว','info');}
@@ -288,7 +290,7 @@ class App extends Component {
 
   startEdit(){
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
-    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),freight:s.freight||'',duty:s.duty||'',vat:s.vat||'',bills:Array.isArray(s.bills)?s.bills:[]};
+    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',bills:Array.isArray(s.bills)?s.bills:[]};
     this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
@@ -317,21 +319,22 @@ class App extends Component {
   // ใช้บิลที่เลือก: รวม freight/duty/vat เติมลงช่อง + จำการจับคู่ไว้
   applySelectedBills(){
     const sel=Object.values(this.state.selBills||{});
-    let freight=0,duty=0,vat=0;
-    sel.forEach(b=>{freight+=b.freight||0;duty+=b.duty||0;vat+=b.vat||0;});
-    const meta=sel.map(b=>({id:b.id,bill:b.bill,partner:b.partner,amount:b.amount,category:b.category,freight:b.freight||0,duty:b.duty||0,vat:b.vat||0}));
+    let freight=0,clearance=0,insurance=0,duty=0,vat=0;
+    sel.forEach(b=>{freight+=b.freight||0;clearance+=b.clearance||0;insurance+=b.insurance||0;duty+=b.duty||0;vat+=b.vat||0;});
+    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,category:b.category,freight:b.freight||0,clearance:b.clearance||0,insurance:b.insurance||0,duty:b.duty||0,vat:b.vat||0}));
     this.setState(s=>({
-      editForm:{...s.editForm,freight:Math.round(freight),duty:Math.round(duty),vat:Math.round(vat),bills:meta},
+      editForm:{...s.editForm,freight:Math.round(freight),clearance:Math.round(clearance),insurance:Math.round(insurance),duty:Math.round(duty),vat:Math.round(vat),bills:meta},
       billPicker:false,
-      costSrc:sel.length?('✓ จับคู่ '+sel.length+' บิลจาก Odoo'):''
+      costSrc:sel.length?('✓ จับคู่ '+sel.length+' รายการจาก Odoo'):''
     }));
-    this.showToast(sel.length?('ใช้ '+sel.length+' บิล รวม ฿'+Math.round(freight+duty+vat).toLocaleString()):'ไม่ได้เลือกบิล',sel.length?'success':'info');
+    const total=freight+clearance+insurance+duty+vat;
+    this.showToast(sel.length?('ใช้ '+sel.length+' รายการ รวม ฿'+Math.round(total).toLocaleString()):'ไม่ได้เลือกบิล',sel.length?'success':'info');
   }
   async saveEdit(){
     const f=this.state.editForm;if(!f||this.state.savingEdit)return;
     this.setState({savingEdit:true});
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
-    const o={po_so:f.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:f.stage||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',freight:num(f.freight),duty:num(f.duty),vat:num(f.vat),bills:Array.isArray(f.bills)?f.bills:[]};
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:f.stage||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),bills:Array.isArray(f.bills)?f.bills:[]};
     const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
     this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
@@ -354,8 +357,9 @@ class App extends Component {
       'ประเภท':typeMeta(s.type).label,'สถานะ':stageMeta(tab,s.stage).label,
       'ขนส่ง':s.mode==='air'?'อากาศ':'เรือ','สกุลเงิน':s.cur,'มูลค่าสินค้า':s.amount,
       'มูลค่าสินค้า (฿)':Math.round(s.amount*s.rate),'ค่าขนส่ง (฿)':s.freight||0,
+      'ค่าเดินพิธีการ (฿)':s.clearance||0,'ค่าประกันภัย (฿)':s.insurance||0,
       'อากร (฿)':s.duty||0,'VAT (฿)':s.vat||0,
-      'ต้นทุนรวม (฿)':Math.round(s.amount*s.rate+(s.freight||0)+(s.duty||0)+(s.vat||0)),
+      'ต้นทุนรวม (฿)':Math.round(s.amount*s.rate+costSum(s)),
       'ต้นทาง':s.origin,'ปลายทาง':s.dest,'BL/AWB':s.bl,
       'ตู้':s.container,'เรือ/เที่ยว':s.vessel,'Forwarder':s.forwarder,
       'ETD':s.etd,'ETA':s.eta,
@@ -573,8 +577,8 @@ class App extends Component {
       {accent:'linear-gradient(90deg,#059669,#10b981)',icon:'check',iconBg:'#f0fdf4',iconColor:'#059669',value:pendingImp,label:'รอดำเนินการ',sub:'ศุลกากร / PO ใหม่',delta:'▼ 1',dc:'#b91c1c'}
     ];
     const pmax=Math.max(1,...IMP_STAGES.map(stg=>impAll.filter(s=>s.stage===stg.key).length));
-    const costSrc=impAll.filter(s=>s.freight>0).slice(0,7);
-    const tg=costSrc.reduce((a,s)=>a+s.amount*s.rate,0),tf=costSrc.reduce((a,s)=>a+s.freight,0),tt=costSrc.reduce((a,s)=>a+s.duty+s.vat,0);
+    const costSrc=impAll.filter(s=>costSum(s)>0).slice(0,7);
+    const tg=costSrc.reduce((a,s)=>a+s.amount*s.rate,0),tf=costSrc.reduce((a,s)=>a+(s.freight||0)+(s.clearance||0)+(s.insurance||0),0),tt=costSrc.reduce((a,s)=>a+(s.duty||0)+(s.vat||0),0);
     return <div style={{flex:1,overflowY:'auto',padding:'22px'}}>
       <div style={{maxWidth:'1240px',margin:'0 auto',display:'flex',flexDirection:'column',gap:'18px'}}>
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'repeat(2,1fr)':'repeat(4,1fr)',gap:isNarrow?'12px':'16px'}}>
@@ -632,15 +636,15 @@ class App extends Component {
           </div>
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:'720px'}}>
-              <thead><tr style={{background:'#faf6f8'}}>{['PO','ผู้ขาย','มูลค่าสินค้า','ค่าขนส่ง','ภาษี+อากร','รวม'].map((h,i)=>(
+              <thead><tr style={{background:'#faf6f8'}}>{['PO','ผู้ขาย','มูลค่าสินค้า','ขนส่ง+พิธีการ+ประกัน','ภาษี+อากร','รวม'].map((h,i)=>(
                 <th key={h} style={{textAlign:i>=2?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
               ))}</tr></thead>
-              <tbody>{costSrc.map(s=>{const goods=s.amount*s.rate,tax=s.duty+s.vat,total=goods+s.freight+tax;return(
+              <tbody>{costSrc.map(s=>{const goods=s.amount*s.rate,imp=(s.freight||0)+(s.clearance||0)+(s.insurance||0),tax=(s.duty||0)+(s.vat||0),total=goods+imp+tax;return(
                 <tr key={s.id} style={{borderTop:'1px solid #f0e9ed'}}>
                   <td style={{padding:'11px 14px'}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'#14181f'}}>{s.poNo}</span></td>
                   <td style={{padding:'11px 14px',fontSize:'12.5px',color:'#5b6371',maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(goods)}</td>
-                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(s.freight)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(imp)}</td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tax)}</td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(total)}</td>
                 </tr>
@@ -665,7 +669,7 @@ class App extends Component {
     if(!detailId)return null;
     const sel=this.allShipments().find(s=>s.id===detailId);if(!sel)return null;
     const tab=String(sel.id).startsWith('SO')?'export':'import';
-    const goods=sel.amount*sel.rate,total=goods+sel.freight+sel.duty+sel.vat;
+    const goods=sel.amount*sel.rate,total=goods+costSum(sel);
     const timeline=this.buildTimeline(sel,tab);
     const ef=editForm||{};
     const curStage=editing?(ef.stage||sel.stage):sel.stage;
@@ -702,7 +706,7 @@ class App extends Component {
             </div>
             <SectionTitle>ต้นทุน (บาท)</SectionTitle>
             <div style={{display:'flex',flexDirection:'column',gap:'10px',marginBottom:'8px'}}>
-              {[['มูลค่าสินค้า ('+sel.cur+' '+Math.round(sel.amount).toLocaleString()+')',fmtBaht(goods)],['ค่าขนส่ง',fmtBaht(sel.freight)],['อากรขาเข้า',fmtBaht(sel.duty)],['ภาษีมูลค่าเพิ่ม',fmtBaht(sel.vat)]].map(([l,v])=>(
+              {[['มูลค่าสินค้า ('+sel.cur+' '+Math.round(sel.amount).toLocaleString()+')',fmtBaht(goods)],['ค่าขนส่ง',fmtBaht(sel.freight)],['ค่าเดินพิธีการ',fmtBaht(sel.clearance)],['ค่าประกันภัย',fmtBaht(sel.insurance)],['อากรขาเข้า',fmtBaht(sel.duty)],['ภาษีมูลค่าเพิ่ม',fmtBaht(sel.vat)]].map(([l,v])=>(
                 <Row key={l} label={l} value={v}/>
               ))}
             </div>
@@ -766,7 +770,7 @@ class App extends Component {
               </div>)}
             </div>}
             <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
-              {[['ค่าขนส่ง (Freight)','freight'],['อากรขาเข้า (Import Duty)','duty'],['ภาษีมูลค่าเพิ่ม (VAT)','vat']].map(([l,k])=>(
+              {[['ค่าขนส่ง (Freight)','freight'],['ค่าเดินพิธีการ (Clearance)','clearance'],['ค่าประกันภัย (Insurance)','insurance'],['อากรขาเข้า (Import Duty)','duty'],['ภาษีมูลค่าเพิ่ม (VAT)','vat']].map(([l,k])=>(
                 <div key={k}><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>{l}</div><input value={ef[k]===''||ef[k]==null?'':ef[k]} onChange={e=>this.setEdit(k,e.target.value)} type="number" placeholder="0" style={INP}/></div>
               ))}
             </div>
@@ -805,9 +809,9 @@ class App extends Component {
     Object.keys(ovAll).forEach(k=>{if(k===curPo)return;((ovAll[k]&&ovAll[k].bills)||[]).forEach(b=>{if(b&&b.id!=null&&!usedBy[b.id])usedBy[b.id]=k;});});
     const sel=selBills||{};
     const selArr=Object.values(sel);
-    const sumF=selArr.reduce((a,b)=>a+(b.freight||0),0);
-    const sumD=selArr.reduce((a,b)=>a+(b.duty||0),0);
-    const sumV=selArr.reduce((a,b)=>a+(b.vat||0),0);
+    const sums={freight:0,clearance:0,insurance:0,duty:0,vat:0};
+    selArr.forEach(b=>{Object.keys(sums).forEach(k=>{sums[k]+=b[k]||0;});});
+    const sumAll=sums.freight+sums.clearance+sums.insurance+sums.duty+sums.vat;
     return <>
       <div onClick={()=>this.closeBillPicker()} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.45)',zIndex:70,animation:'kobFadeIn .2s ease'}}/>
       <div style={{position:'fixed',top:0,right:0,bottom:0,width:'520px',maxWidth:'96vw',background:'#fff',zIndex:71,boxShadow:'-12px 0 40px rgba(20,24,31,.18)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
@@ -834,6 +838,7 @@ class App extends Component {
                 <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</div>
                 <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'3px',flexWrap:'wrap'}}>
                   <span style={billCatSty(b.category)}>{billCatLabel(b.category)}</span>
+                  <span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:b.kind==='po'?'#f3edf0':'#dcfce7',color:b.kind==='po'?'#7a818d':'#15803d'}}>{b.kind==='po'?'PO รอบิล':'จ่ายจริง'}</span>
                   <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'10.5px',color:'#a99fa8'}}>{b.bill}</span>
                   <span style={{fontSize:'10.5px',color:'#a99fa8'}}>· {fmtDate(b.date)}</span>
                   {used&&<span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:'#fef3c7',color:'#b45309'}}>ใช้กับ {used} แล้ว</span>}
@@ -844,13 +849,15 @@ class App extends Component {
           })}
         </div>
         <div style={{padding:'12px 22px 14px',borderTop:'1px solid #e8dde4'}}>
-          <div style={{display:'flex',justifyContent:'space-between',fontSize:'11.5px',color:'#7a818d',marginBottom:'10px'}}>
-            <span>เลือก {selArr.length} บิล</span>
-            <span style={{fontVariantNumeric:'tabular-nums'}}>ขนส่ง ฿{Math.round(sumF).toLocaleString()} · อากร ฿{Math.round(sumD).toLocaleString()} · VAT ฿{Math.round(sumV).toLocaleString()}</span>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'10px',fontSize:'11px',color:'#7a818d',marginBottom:'10px',flexWrap:'wrap'}}>
+            <span style={{fontWeight:600}}>เลือก {selArr.length} รายการ</span>
+            <span style={{fontVariantNumeric:'tabular-nums',textAlign:'right'}}>
+              {['freight','clearance','insurance','duty','vat'].filter(k=>sums[k]>0).map(k=>billCatLabel(k)+' ฿'+Math.round(sums[k]).toLocaleString()).join(' · ')||'—'}
+            </span>
           </div>
           <div style={{display:'flex',gap:'10px'}}>
             <button onClick={()=>this.closeBillPicker()} style={{flex:1,height:'42px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-            <button onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้บิลที่เลือก (฿{Math.round(sumF+sumD+sumV).toLocaleString()})</button>
+            <button onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้รายการที่เลือก (฿{Math.round(sumAll).toLocaleString()})</button>
           </div>
         </div>
       </div>
@@ -946,6 +953,8 @@ class App extends Component {
             <FInput label="ETA (ถึงปลายทาง)" value={form.eta} type="date" onChange={e=>sf('eta',e.target.value)}/>
             <div style={{gridColumn:'1 / -1',height:'1px',background:'#f0e9ed',margin:'2px 0'}}/>
             <FInput label="ค่าขนส่ง (฿)" value={form.freight} type="number" placeholder="0" onChange={e=>sf('freight',e.target.value)}/>
+            <FInput label="ค่าเดินพิธีการ (฿)" value={form.clearance} type="number" placeholder="0" onChange={e=>sf('clearance',e.target.value)}/>
+            <FInput label="ค่าประกันภัย (฿)" value={form.insurance} type="number" placeholder="0" onChange={e=>sf('insurance',e.target.value)}/>
             <FInput label="อากรขาเข้า (฿)" value={form.duty} type="number" placeholder="0" onChange={e=>sf('duty',e.target.value)}/>
             <FInput label="ภาษีมูลค่าเพิ่ม (฿)" value={form.vat} type="number" placeholder="0" onChange={e=>sf('vat',e.target.value)}/>
           </div>

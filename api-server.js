@@ -660,24 +660,31 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ── รายการบิลขนส่ง/ศุลกากร ให้ผู้ใช้เลือกจับคู่กับ shipment ──
-    // คืนบิลจาก freight forwarder / customs broker พร้อมแยก freight/duty/vat ต่อใบ
+    // ── รายการค่าใช้จ่ายนำเข้า/ส่งออก ให้ผู้ใช้เลือกจับคู่กับ shipment ──
+    // 2 แหล่ง: (1) Vendor Bills = จ่ายจริง  (2) Expense POs = สั่งซื้อบริการแล้ว รอบิล
+    // PO ที่มีบิลอ้างถึงแล้วจะถูกตัดออก (บิล actual กว่า)
+    // จำแนก 5 ประเภท: freight / clearance / insurance / duty / vat
     // GET /api/logistics-bills?company=KOB&months=8&q=dhl
     if (reqUrl === '/api/logistics-bills' && method === 'GET') {
       const params = new URL('http://x' + req.url).searchParams;
       const co      = params.get('company') || '';
       const months  = Math.min(parseInt(params.get('months')) || 8, 24);
       const q       = (params.get('q') || '').trim();
-      const coFilter = co === 'KOB' ? 'AND am.company_id = 1'
-                     : co === 'BTV' ? 'AND am.company_id = 2' : '';
-      // partner ที่เป็นบริษัทขนส่ง/ศุลกากร (SQL regex)
-      const LOGI_PATTERN = 'dhl|kerry|pantos|yusen|sino.?trans|sitc|maersk|oocl|cma|evergreen|nippon|nyk|\\mups\\M|fedex|tnt|schenker|expeditors|ceva|dsv|geodis|panalpina|ขนส่ง|forwarder|freight|logistic|shipping|customs|ศุลกากร|broker|clearing|express|cargo';
+      const coFilter   = co === 'KOB' ? 'AND am.company_id = 1'
+                       : co === 'BTV' ? 'AND am.company_id = 2' : '';
+      const coFilterPo = co === 'KOB' ? 'AND po.company_id = 1'
+                       : co === 'BTV' ? 'AND po.company_id = 2' : '';
+      // partner บริษัทขนส่ง/ศุลกากร/ชิปปิ้ง/ประกันภัย (SQL regex)
+      const LOGI_PATTERN = 'dhl|kerry|pantos|yusen|sino.?trans|sitc|maersk|oocl|cma|evergreen|nippon|nyk|\\mups\\M|fedex|tnt|schenker|expeditors|ceva|dsv|geodis|panalpina|ขนส่ง|forwarder|freight|logistic|shipping|customs|ศุลกากร|broker|clearing|express|cargo|insurance|ประกันภัย|ชิปปิ้ง|marine|transport';
+      // product category ของค่าใช้จ่ายนำเข้าใน Odoo (Expense / ... / Import Expenses)
+      const IMPORT_CAT = '%Import Expens%';
       try {
         const args = [`%${q}%`];
-        const searchClause = q
-          ? `AND (rp.name ILIKE $1 OR am.ref::text ILIKE $1 OR (am.invoice_origin)::text ILIKE $1 OR am.name::text ILIKE $1)`
-          : '';
-        const rows = (await db.query(`
+        const billSearch = q ? `AND (rp.name ILIKE $1 OR am.ref::text ILIKE $1 OR (am.invoice_origin)::text ILIKE $1 OR am.name::text ILIKE $1)` : '';
+        const poSearch   = q ? `AND (rp.name ILIKE $1 OR po.name ILIKE $1 OR po.origin ILIKE $1)` : '';
+
+        // (1) Vendor Bills: partner เข้า pattern หรือ line เป็นสินค้าหมวด Import Expenses
+        const billRows = (await db.query(`
           SELECT
             am.id,
             am.name::text             AS bill_name,
@@ -687,7 +694,7 @@ const server = http.createServer(async (req, res) => {
             am.amount_tax,
             cu.name::text             AS currency,
             rp.name::text             AS partner,
-            am.invoice_date::text,
+            am.invoice_date::text     AS doc_date,
             COALESCE(aml_s.lines_json, '[]'::json) AS lines
           FROM account_move am
           JOIN res_currency cu ON cu.id = am.currency_id
@@ -703,45 +710,135 @@ const server = http.createServer(async (req, res) => {
             AND am.move_type = 'in_invoice'
             AND am.state = 'posted'
             AND am.invoice_date >= NOW() - INTERVAL '${months} months'
-            AND rp.name ~* '${LOGI_PATTERN}'
-            ${searchClause}
+            AND (
+              rp.name ~* '${LOGI_PATTERN}'
+              OR EXISTS (
+                SELECT 1 FROM account_move_line aml2
+                JOIN product_product  pp2 ON pp2.id = aml2.product_id
+                JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
+                JOIN product_category pc2 ON pc2.id = pt2.categ_id
+                WHERE aml2.move_id = am.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
+              )
+            )
+            ${billSearch}
           ORDER BY am.invoice_date DESC
           LIMIT 300
         `, q ? args : [])).rows;
 
-        // จำแนกประเภท "ทั้งบิล" จากชื่อ line + partner แล้วใช้ amount_total เป็นยอดจริง
-        //   (line price_subtotal ของบิลภาษีกรมศุลกากรมักหักล้างกัน เป็นฐานคำนวณ ไม่ใช่ยอดจ่าย)
+        // (2) Expense POs: หมวด Import Expenses หรือ partner โลจิสติกส์ — รอออกบิล
+        const poRows = (await db.query(`
+          SELECT
+            po.id,
+            po.name::text        AS po_number,
+            po.origin::text,
+            po.amount_total,
+            cu.name::text        AS currency,
+            rp.name::text        AS partner,
+            po.date_order::text  AS doc_date,
+            prod.main_product,
+            prod.cat_name
+          FROM purchase_order po
+          JOIN res_partner  rp ON rp.id = po.partner_id
+          JOIN res_currency cu ON cu.id = po.currency_id
+          LEFT JOIN LATERAL (
+            SELECT (pt.name)::text AS main_product, pc.complete_name::text AS cat_name
+            FROM purchase_order_line pol
+            JOIN product_product  pp ON pp.id = pol.product_id
+            JOIN product_template pt ON pt.id = pp.product_tmpl_id
+            JOIN product_category pc ON pc.id = pt.categ_id
+            WHERE pol.order_id = po.id
+            ORDER BY pol.price_subtotal DESC LIMIT 1
+          ) prod ON true
+          WHERE po.company_id IN (1,2)
+            ${coFilterPo}
+            AND po.state NOT IN ('cancel')
+            AND po.date_order >= NOW() - INTERVAL '${months} months'
+            AND (
+              rp.name ~* '${LOGI_PATTERN}'
+              OR EXISTS (
+                SELECT 1 FROM purchase_order_line pol2
+                JOIN product_product  pp2 ON pp2.id = pol2.product_id
+                JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
+                JOIN product_category pc2 ON pc2.id = pt2.categ_id
+                WHERE pol2.order_id = po.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
+              )
+            )
+            ${poSearch}
+          ORDER BY po.date_order DESC
+          LIMIT 300
+        `, q ? args : [])).rows;
+
+        // ── จำแนกประเภท ──
+        // บิลที่มีหลาย line ปนกัน (เช่น freight+insurance ใบเดียว) → แยกตามยอดของแต่ละ line
+        // บิลที่ line หักล้างกัน (ภาษีกรมศุลกากร: +ฐาน −ฐาน) → จำแนกทั้งใบ ยอดจริง = amount_tax/amount_total
+        const INS_RE   = /insurance|ประกันภัย|ประกัน/i;
         const VAT_RE   = /custom\s*\(?\s*vat|\bvat\b|ภาษีมูลค่าเพิ่ม|ภพ\.?\s*30|ภาษีนำเข้า/i;
         const DUTY_RE  = /custom\s*\(?\s*duty|\bduty\b|อากร|tariff|ภาษีขาเข้า|import\s*duty/i;
+        const CLR_RE   = /clearance|พิธีการ|เดินพิธี|ชิปปิ้ง|shipping\s*service|\bbroker|clearing|d\/o|delivery\s*order|เอกสารนำเข้า|customs\s*service/i;
+        const FRT_RE   = /freight|ขนส่ง|shipping|transport|cargo|courier|express|ระวาง/i;
+        function lineCat(name) {
+          const t = (name || '').toLowerCase();
+          if (INS_RE.test(t))  return 'insurance';
+          if (VAT_RE.test(t))  return 'vat';
+          if (DUTY_RE.test(t)) return 'duty';
+          if (CLR_RE.test(t))  return 'clearance';
+          return 'freight';
+        }
+        function wholeBillCat(text, partner, tax) {
+          const t = (text || '').toLowerCase(), p = (partner || '').toLowerCase();
+          if (INS_RE.test(t) || INS_RE.test(p)) return 'insurance';
+          if (VAT_RE.test(t))  return 'vat';
+          if (DUTY_RE.test(t)) return 'duty';
+          if (CLR_RE.test(t) || CLR_RE.test(p)) return 'clearance';
+          if (/กรมศุลกากร|customs|ศุลกากร/.test(p)) return tax > 0 ? 'vat' : 'duty';
+          return 'freight';
+        }
+        const zero5  = () => ({ freight: 0, clearance: 0, insurance: 0, duty: 0, vat: 0 });
+        const round5 = c => { Object.keys(c).forEach(k => { c[k] = Math.round(c[k]); }); return c; };
+        const argmax = c => Object.keys(c).reduce((a, b) => c[b] > c[a] ? b : a);
 
-        const bills = rows.map(r => {
-          const lines   = Array.isArray(r.lines) ? r.lines : [];
-          const total   = parseFloat(r.amount_total) || 0;
-          const tax     = parseFloat(r.amount_tax)   || 0;
-          const partner = (r.partner || '').toLowerCase();
-          const lineText = lines.map(l => l.name || '').join(' ').toLowerCase();
-
-          let freight = 0, duty = 0, vat = 0, category;
-          if (VAT_RE.test(lineText)) {
-            // บิล VAT ขาเข้า — เงินจริงคือ amount_tax (ถ้ามี) ไม่งั้น amount_total
-            vat = tax > 0 ? tax : total; category = 'vat';
-          } else if (DUTY_RE.test(lineText)) {
-            duty = total; category = 'duty';
-          } else if (/กรมศุลกากร|customs|broker|clearing|ศุลกากร/.test(partner)) {
-            // กรมศุลกากร/ชิปปิ้งที่ไม่ระบุ line ชัด → ถือเป็นอากร
-            duty = total; category = 'duty';
+        const out = [];
+        const billedPoNames = new Set();
+        billRows.forEach(r => {
+          const total = parseFloat(r.amount_total) || 0;
+          const tax   = parseFloat(r.amount_tax)   || 0;
+          const lines = Array.isArray(r.lines) ? r.lines : [];
+          const text  = lines.map(l => l.name || '').join(' ');
+          const c = zero5();
+          // ลองแยกตาม line ก่อน — ใช้ได้เมื่อยอด line บวกรวมแล้วเป็นยอดจริง (ไม่หักล้างกัน)
+          let lineTotal = 0;
+          const lineSums = zero5();
+          lines.forEach(l => { const a = parseFloat(l.amount) || 0; lineTotal += a; lineSums[lineCat(l.name)] += a; });
+          let cat;
+          if (lines.length && lineTotal > total * 0.5) {
+            // scale ยอด line (ก่อน VAT) ให้เท่ายอดจ่ายจริงทั้งใบ
+            const f = total / lineTotal;
+            Object.keys(lineSums).forEach(k => { c[k] = Math.max(0, lineSums[k] * f); });
+            cat = argmax(c);
           } else {
-            freight = total; category = 'freight'; // freight forwarder
+            cat = wholeBillCat(text, r.partner, tax);
+            if (cat === 'vat' && tax > 0) { c.vat = tax; c.duty = Math.max(0, total - tax); }
+            else c[cat] = total;
           }
-          return {
-            id: r.id, bill: r.bill_name, partner: r.partner,
-            ref: r.ref, origin: r.invoice_origin,
-            amount: total, currency: r.currency, date: r.invoice_date,
-            category,
-            freight: Math.round(freight), duty: Math.round(duty), vat: Math.round(vat),
-          };
+          [r.invoice_origin, r.ref].forEach(v => { if (v) billedPoNames.add(v.trim()); });
+          out.push({ id: r.id, kind: 'bill', bill: r.bill_name, partner: r.partner,
+            ref: r.ref, origin: r.invoice_origin, amount: total, currency: r.currency,
+            date: r.doc_date, category: cat, ...round5(c) });
         });
-        jsonOk(res, { ok: true, count: bills.length, months, bills });
+        poRows.forEach(r => {
+          // PO ที่มีบิลอ้างถึงแล้ว → ข้าม (ใช้ยอดจากบิลจริงแทน)
+          if (billedPoNames.has((r.po_number || '').trim())) return;
+          const total = parseFloat(r.amount_total) || 0;
+          const text  = (r.main_product || '') + ' ' + (r.cat_name || '');
+          const cat   = wholeBillCat(text, r.partner, 0);
+          const c = zero5(); c[cat] = total;
+          out.push({ id: 'po_' + r.id, kind: 'po', bill: r.po_number, partner: r.partner,
+            ref: r.origin, origin: r.origin, amount: total, currency: r.currency,
+            date: r.doc_date, category: cat, ...round5(c) });
+        });
+        out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+        jsonOk(res, { ok: true, count: out.length, months, bills: out });
       } catch(e) {
         console.error('[API] logistics-bills:', e.message);
         jsonErr(res, 500, e.message);
