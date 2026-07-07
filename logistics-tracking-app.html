@@ -184,7 +184,11 @@ class App extends Component {
     ['origin','dest','bl','container','vessel','forwarder','etd','eta'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
     ['freight','duty','vat'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
     if(Array.isArray(o.bills))m.bills=o.bills;
-    if(o.stage){m.stage=o.stage;m._stageManual=true;}
+    if(o.stage){
+      // Odoo ยืนยันรับของ/ส่งถึงแล้ว (terminal stage) → override เก่าห้ามดึงสถานะถอยหลัง
+      const terminal=s._board==='export'?'arrived':'received';
+      if(s.stage!==terminal||o.stage===terminal){m.stage=o.stage;m._stageManual=true;}
+    }
     m._edited=true; return m;
   }
   applyPlan(rows,plan){
@@ -383,6 +387,23 @@ class App extends Component {
       else if(days<=3)out.push({s,days,kind:'soon'});
     });
     return out.sort((a,b)=>a.days-b.days);
+  }
+  // ── จัดการด่วนจาก panel แจ้งเตือน ──
+  // "รับแล้ว": ปิดงานทันที (import→รับเข้าคลัง / export→ถึงปลายทาง) — บันทึกลง server เลย
+  async quickCloseAlert(s){
+    const stage=s._board==='export'?'arrived':'received';
+    const o={...(this._overrides[s.poNo]||{}),po_so:s.poNo,_board:s._board,_edited:true,_ts:Date.now(),stage};
+    this._overrides={...this._overrides,[s.poNo]:o};
+    const rows=this.allShipments().map(x=>x.poNo===s.poNo?{...x,stage,_stageManual:true,_edited:true}:x);
+    this.setState({shipments:rows});
+    try{
+      const r=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
+      this.showToast(r.ok?('ปิดงาน '+s.poNo+' — '+(s._board==='export'?'ถึงปลายทาง':'รับเข้าคลัง')+'แล้ว'):'บันทึกไม่สำเร็จ',r.ok?'success':'error');
+    }catch(e){this.showToast('ออฟไลน์ — บันทึกชั่วคราว','info');}
+  }
+  // "แก้ ETA": เปิด detail เข้าโหมดแก้ไขทันที (อัปเดตวันจริงจาก forwarder)
+  openAlertEdit(s){
+    this.setState({alertsOpen:false,tab:s._board,detailId:s.id,editing:false,editForm:null},()=>this.startEdit());
   }
 
   buildTimeline(s,tab){
@@ -851,19 +872,25 @@ class App extends Component {
           {al.length===0&&<div style={{textAlign:'center',color:'#bcb2ba',fontSize:'13px',padding:'40px 0'}}>ไม่มีรายการค้างติดตาม 🎉</div>}
           {al.map(({s,days,kind})=>{
             const tab=s._board==='export'?'export':'import';
-            return <div key={s.id} onClick={()=>this.setState({alertsOpen:false,tab:s._board,detailId:s.id,editing:false,editForm:null})} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 13px',marginBottom:'8px',border:'1px solid #ece3e8',borderLeft:'3px solid '+(kind==='late'?'#dc2626':'#d97706'),borderRadius:'0 10px 10px 0',background:'#fff',cursor:'pointer'}}>
-              <div style={{minWidth:0,flex:1}}>
-                <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'#14181f'}}>{s.poNo}</span>
-                  <span style={coBadgeSty(s.company)}>{s.company}</span>
+            return <div key={s.id} style={{padding:'11px 13px',marginBottom:'8px',border:'1px solid #ece3e8',borderLeft:'3px solid '+(kind==='late'?'#dc2626':'#d97706'),borderRadius:'0 10px 10px 0',background:'#fff'}}>
+              <div onClick={()=>this.setState({alertsOpen:false,tab:s._board,detailId:s.id,editing:false,editForm:null})} style={{display:'flex',alignItems:'center',gap:'11px',cursor:'pointer'}}>
+                <div style={{minWidth:0,flex:1}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'#14181f'}}>{s.poNo}</span>
+                    <span style={coBadgeSty(s.company)}>{s.company}</span>
+                  </div>
+                  <div style={{fontSize:'11.5px',color:'#7a818d',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.party}</div>
+                  <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'5px'}}>
+                    <span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{stageMeta(tab,s.stage).label}</span>
+                    <span style={{fontSize:'11px',color:'#a99fa8'}}>ETA {fmtDate(s.eta)}</span>
+                  </div>
                 </div>
-                <div style={{fontSize:'11.5px',color:'#7a818d',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.party}</div>
-                <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'5px'}}>
-                  <span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{stageMeta(tab,s.stage).label}</span>
-                  <span style={{fontSize:'11px',color:'#a99fa8'}}>ETA {fmtDate(s.eta)}</span>
-                </div>
+                <span style={{fontSize:'11.5px',fontWeight:700,color:kind==='late'?'#dc2626':'#d97706',whiteSpace:'nowrap',flexShrink:0}}>{days<0?('เลย '+Math.abs(days)+' วัน'):days===0?'ถึงวันนี้':('อีก '+days+' วัน')}</span>
               </div>
-              <span style={{fontSize:'11.5px',fontWeight:700,color:kind==='late'?'#dc2626':'#d97706',whiteSpace:'nowrap',flexShrink:0}}>{days<0?('เลย '+Math.abs(days)+' วัน'):days===0?'ถึงวันนี้':('อีก '+days+' วัน')}</span>
+              <div style={{display:'flex',gap:'7px',marginTop:'9px'}}>
+                <button onClick={e=>{e.stopPropagation();this.quickCloseAlert(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1.5px solid #bbf7d0',borderRadius:'8px',background:'#f0fdf4',color:'#15803d',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="check" size={13} sw={2.4}/>{s._board==='export'?'ถึงปลายทางแล้ว':'รับเข้าคลังแล้ว'}</button>
+                <button onClick={e=>{e.stopPropagation();this.openAlertEdit(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="cal" size={13} sw={1.8}/>แก้ ETA / สถานะ</button>
+              </div>
             </div>;
           })}
         </div>
