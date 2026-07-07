@@ -1,0 +1,10 @@
+node_modules/
+.env
+server.log
+watchdog.log
+watchdog.heartbeat
+backups/
+tracking_data.json
+tracking_audit.jsonl
+_temp_page.html
+_extracted_source.html

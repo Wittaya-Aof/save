@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logistics Tracking — KOB &amp; BTV</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<!-- ไลบรารีเก็บ local (vendor/) — เปิดแอปได้แม้อินเทอร์เน็ตล่ม -->
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script src="/vendor/babel.min.js"></script>
+<script src="/vendor/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;}
+html,body,#root{margin:0;padding:0;height:100%;}
+body{font-family:'IBM Plex Sans Thai',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;color:#14181f;}
+::-webkit-scrollbar{width:9px;height:9px;}
+::-webkit-scrollbar-thumb{background:#d9d0d6;border-radius:99px;border:2px solid transparent;background-clip:content-box;}
+::-webkit-scrollbar-thumb:hover{background:#c4b8c0;background-clip:content-box;}
+@keyframes kobSlideIn{from{transform:translateX(100%);}to{transform:translateX(0);}}
+@keyframes kobFadeIn{from{opacity:0;}to{opacity:1;}}
+@keyframes kobSpin{to{transform:rotate(360deg);}}
+input,select{box-sizing:border-box;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {Component} = React;
+
+const PORTS_ORIGIN = [
+  'PUSAN, KOREA','NINGBO, CHINA','SHENZHEN (SHEKOU), CHINA',
+  'SHANGHAI, CHINA','NANSHA, CHINA','ZHUHAI, CHINA',
+  'QINGDAO, CHINA','SHANTOU, CHINA'
+];
+const PORTS_DEST = [
+  'BANGKOK PAT, THAILAND','BANGKOK UNITHAI, THAILAND','LAEM CHABANG, THAILAND'
+];
+
+const IMP_STAGES = [
+  {key:'po',label:'Purchase Order',color:'#64748b'},
+  {key:'booking',label:'จองเรือ',color:'#2563eb'},
+  {key:'transit',label:'กำลังขนส่ง',color:'#4f46e5'},
+  {key:'arrived',label:'ถึงท่าเรือ',color:'#d97706'},
+  {key:'customs',label:'พิธีการศุลกากร',color:'#ea580c'},
+  {key:'received',label:'รับเข้าคลัง',color:'#16a34a'}
+];
+const EXP_STAGES = [
+  {key:'draft',label:'SO ตั้งต้น',color:'#64748b'},
+  {key:'packing',label:'ผลิต / แพ็ค',color:'#7c3aed'},
+  {key:'booking',label:'จองเรือ',color:'#2563eb'},
+  {key:'shipped',label:'จัดส่งแล้ว',color:'#4f46e5'},
+  {key:'arrived',label:'ถึงปลายทาง',color:'#16a34a'}
+];
+
+const PATHS = {
+  boxes:'M3.5 9.5l8.5-4.5 8.5 4.5-8.5 4.5z M3.5 9.5v5l8.5 4.5 8.5-4.5v-5 M12 14v5',
+  down:'M12 4v13 M6 11l6 6 6-6',up:'M12 20V7 M6 13l6-6 6 6',
+  chart:'M4 20V11 M10 20V5 M16 20v-7 M21 20H3',
+  sync:'M21 12a9 9 0 11-2.6-6.3 M21 4v4h-4',
+  search:'M21 21l-4.3-4.3 M16 10.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z',
+  plus:'M12 5v14 M5 12h14',kanban:'M4 4h5v16H4z M15 4h5v10h-5z',
+  table:'M3 5h18v14H3z M3 10h18 M9 5v14',
+  cal:'M5 5h14v15H5z M5 9h14 M9 3v3 M15 3v3',
+  ship:'M3 14l1.5 5h15L21 14 M5.5 14V8h13v6 M9 8V5h6v3 M12 14v5',
+  plane:'M21 15l-9-3-9 3v-2l7-4V4a1.5 1.5 0 013 0v5l7 4z',
+  arrow:'M5 12h14 M13 6l6 6-6 6',close:'M6 6l12 12 M18 6L6 18',
+  edit:'M4 20h4l10-10-4-4L4 16z M14 6l4 4',check:'M5 12.5l4.5 4.5L19 7',
+  bell:'M18 9a6 6 0 10-12 0c0 6.5-2.5 7.5-2.5 7.5h17S18 15.5 18 9 M10.3 20.5a2 2 0 003.4 0',
+  dl:'M12 3v11 M7 10l5 5 5-5 M4 20h16'
+};
+function Ico({name,size=18,sw=1.7}){
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+    <path d={PATHS[name]}/>
+  </svg>;
+}
+
+const MONTHS=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+function fmtDate(d){
+  if(!d) return '—';
+  const p=String(d).slice(0,10).split('-');
+  if(p.length<3||!p[1]) return '—';
+  return parseInt(p[2])+' '+MONTHS[parseInt(p[1])-1]+' '+(parseInt(p[0])+543-2500);
+}
+function fmtBaht(v){return '฿'+Math.round(v||0).toLocaleString('en-US');}
+function fmtAmt(v,cur){
+  const sym={CNY:'¥',USD:'$',THB:'฿',SGD:'S$'}[cur]||'';
+  return sym+Math.round(v||0).toLocaleString('en-US');
+}
+function rateGuess(cur){return ({CNY:4.77,USD:33.3,SGD:25.4,THB:1})[cur]||1;}
+function stageMeta(tab,key){const list=tab==='export'?EXP_STAGES:IMP_STAGES;return list.find(s=>s.key===key)||list[0];}
+function typeMeta(t){
+  return ({oversea:{label:'Oversea',bg:'#dbeafe',color:'#1d4ed8'},pk:{label:'Packaging',bg:'#ffedd5',color:'#c2410c'},fg:{label:'Finished',bg:'#ede9fe',color:'#6d28d9'}})[t]||{label:'Oversea',bg:'#dbeafe',color:'#1d4ed8'};
+}
+function normType(t){t=(t||'').toLowerCase();if(t==='pk'||t==='fg'||t==='oversea')return t;return 'oversea';}
+function coBadgeSty(co){const kob=co==='KOB';return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:700,background:kob?'#fce7f3':'#ede9fe',color:kob?'#c91253':'#6d28d9'};}
+function billCatLabel(c){return ({freight:'ค่าขนส่ง',duty:'อากร',vat:'VAT'})[c]||'อื่นๆ';}
+function billCatSty(c){const m=({freight:{bg:'#dbeafe',fg:'#1d4ed8'},duty:{bg:'#ffedd5',fg:'#c2410c'},vat:{bg:'#dcfce7',fg:'#15803d'}})[c]||{bg:'#f3edf0',fg:'#7a818d'};return {display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:m.bg,color:m.fg};}
+function typeBadgeSty(t){const m=typeMeta(t);return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:600,background:m.bg,color:m.color};}
+function stageBadgeSty(tab,key){const m=stageMeta(tab,key);return {display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 9px',borderRadius:'99px',fontSize:'11px',fontWeight:600,background:m.color+'1a',color:m.color,whiteSpace:'nowrap'};}
+function stageDotSty(tab,key){return {width:'6px',height:'6px',borderRadius:'50%',background:stageMeta(tab,key).color,flexShrink:0};}
+
+const INP={width:'100%',height:'38px',padding:'0 11px',border:'1.5px solid #e8dde4',borderRadius:'9px',fontFamily:'inherit',fontSize:'13px',color:'#14181f',outline:'none',background:'#fff'};
+const SEL={...INP,cursor:'pointer',padding:'0 9px'};
+
+function Field({label,children}){return <div><label style={{display:'block',fontSize:'11px',fontWeight:600,color:'#7a818d',marginBottom:'5px'}}>{label}</label>{children}</div>;}
+function FInput({label,...p}){return <Field label={label}><input style={INP} {...p}/></Field>;}
+function FSelect({label,value,onChange,children}){return <Field label={label}><select style={SEL} value={value} onChange={onChange}>{children}</select></Field>;}
+
+function sampleImports(){return [
+  {id:'PO_15433',poNo:'KOBPO2604-08194',company:'KOB',party:'SHI JIA ZHUANG GAOOU TRADE CO.,LTD',type:'oversea',mode:'sea',stage:'booking',cur:'CNY',amount:218640,rate:4.77,origin:'PUSAN, KOREA',dest:'LAEM CHABANG, THAILAND',etd:'2026-06-22',eta:'2026-07-08',bl:'COSU6391882',container:'TGHU5521430',vessel:'COSCO HARMONY',forwarder:'Sino-Trans',freight:42000,duty:31500,vat:15800,_board:'import'},
+  {id:'PO_16696',poNo:'BTVPO2605-03631',company:'BTV',party:'YIWU BOYUE COMMODITY CO.,LTD',type:'oversea',mode:'sea',stage:'transit',cur:'CNY',amount:37730,rate:4.79,origin:'NINGBO, CHINA',dest:'LAEM CHABANG, THAILAND',etd:'2026-06-10',eta:'2026-06-26',bl:'MAEU2204117',container:'MSKU7781902',vessel:'MAERSK SEMARANG',forwarder:'DHL Global',freight:18500,duty:5400,vat:2700,_board:'import'},
+  {id:'PO_15785',poNo:'KOBPO2604-08431',company:'KOB',party:'NINGBO SLAN PACKAGING CO.,LTD.',type:'pk',mode:'sea',stage:'arrived',cur:'CNY',amount:252000,rate:4.75,origin:'NINGBO, CHINA',dest:'LAEM CHABANG, THAILAND',etd:'2026-05-30',eta:'2026-06-20',bl:'ONEY4471209',container:'ONEU8830012',vessel:'ONE COMMITMENT',forwarder:'Sino-Trans',freight:56000,duty:0,vat:0,_board:'import'},
+  {id:'PO_15737',poNo:'BTVPO2604-03450',company:'BTV',party:'Giant Korea Co.,Ltd.',type:'oversea',mode:'sea',stage:'customs',cur:'USD',amount:113550,rate:33.4,origin:'PUSAN, KOREA',dest:'LAEM CHABANG, THAILAND',etd:'2026-05-25',eta:'2026-06-12',bl:'HMMU1130557',container:'HMMU4420138',vessel:'HMM ALGECIRAS',forwarder:'Pantos',freight:88000,duty:142000,vat:71200,_board:'import'},
+  {id:'PO_16341',poNo:'KOBPO2605-08758',company:'KOB',party:'Guangdong Ouxinmay Pack Tech Co., Ltd.',type:'pk',mode:'sea',stage:'received',cur:'CNY',amount:53100,rate:4.81,origin:'SHENZHEN (SHEKOU), CHINA',dest:'LAEM CHABANG, THAILAND',etd:'2026-05-12',eta:'2026-05-30',bl:'YMLU3380901',container:'YMLU2218845',vessel:'YM WARRANTY',forwarder:'Yusen',freight:22000,duty:7600,vat:3800,_board:'import'},
+  {id:'PO_16367',poNo:'KOBPO2605-08766',company:'KOB',party:'XINYI SWIFT PACK CO.,LTD.',type:'pk',mode:'sea',stage:'po',cur:'CNY',amount:30500,rate:4.78,origin:'SHANTOU, CHINA',dest:'LAEM CHABANG, THAILAND',etd:'',eta:'2026-07-15',bl:'',container:'',vessel:'',forwarder:'',freight:0,duty:0,vat:0,_board:'import'},
+  {id:'PO_15930',poNo:'KOBPO2604-08506',company:'KOB',party:'Zhuhai Transmo Plastic Products Co.,Ltd',type:'fg',mode:'sea',stage:'transit',cur:'CNY',amount:20900,rate:4.79,origin:'ZHUHAI, CHINA',dest:'LAEM CHABANG, THAILAND',etd:'2026-06-08',eta:'2026-06-25',bl:'COSU6402218',container:'CSNU7740021',vessel:'COSCO FORTUNE',forwarder:'Sino-Trans',freight:14000,duty:4100,vat:2050,_board:'import'},
+  {id:'PO_15504',poNo:'KOBPO2604-08239',company:'KOB',party:'Ancors (Shanghai) Cosmetics Co., Ltd.',type:'fg',mode:'sea',stage:'arrived',cur:'USD',amount:54400,rate:33.2,origin:'SHANGHAI, CHINA',dest:'LAEM CHABANG, THAILAND',etd:'2026-05-28',eta:'2026-06-18',bl:'OOLU2284410',container:'OOLU8812204',vessel:'OOCL UTAH',forwarder:'OOCL Logistics',freight:48000,duty:36200,vat:18100,_board:'import'},
+  {id:'PO_15065',poNo:'KOBPO2604-07977',company:'KOB',party:'Shenzhen Hongdali Plastic Products Co.,Ltd',type:'fg',mode:'sea',stage:'booking',cur:'THB',amount:16639,rate:1,origin:'SHENZHEN (SHEKOU), CHINA',dest:'LAEM CHABANG, THAILAND',etd:'2026-06-20',eta:'2026-07-06',bl:'SITC2240118',container:'',vessel:'SITC HEFEI',forwarder:'SITC',freight:12000,duty:0,vat:0,_board:'import'},
+  {id:'PO_15602',poNo:'BTVPO2604-03409',company:'BTV',party:'Giant Korea Co.,Ltd.',type:'oversea',mode:'sea',stage:'po',cur:'USD',amount:16000,rate:33.3,origin:'PUSAN, KOREA',dest:'LAEM CHABANG, THAILAND',etd:'',eta:'2026-07-20',bl:'',container:'',vessel:'',forwarder:'',freight:0,duty:0,vat:0,_board:'import'}
+];}
+function sampleExports(){return [
+  {id:'SO_8841',poNo:'KOBSO2605-1142',company:'KOB',party:'Beauty Lab Vietnam Co., Ltd',type:'oversea',mode:'sea',stage:'packing',cur:'USD',amount:28400,rate:33.3,origin:'LAEM CHABANG, THAILAND',dest:'Vietnam',etd:'2026-07-02',eta:'2026-07-14',bl:'',container:'',vessel:'',forwarder:'Kerry Logistics',freight:21000,duty:0,vat:0,_board:'export'},
+  {id:'SO_8830',poNo:'BTVSO2605-0774',company:'BTV',party:'Glow Cosmetics Pte Ltd',type:'oversea',mode:'sea',stage:'booking',cur:'SGD',amount:19200,rate:25.4,origin:'LAEM CHABANG, THAILAND',dest:'Singapore',etd:'2026-06-28',eta:'2026-07-05',bl:'PILU9920331',container:'PCIU2218840',vessel:'PIL KOTA NABIL',forwarder:'PIL',freight:14500,duty:0,vat:0,_board:'export'},
+  {id:'SO_8815',poNo:'KOBSO2605-1138',company:'KOB',party:'Aura Skincare Malaysia Sdn Bhd',type:'oversea',mode:'sea',stage:'shipped',cur:'USD',amount:41600,rate:33.2,origin:'LAEM CHABANG, THAILAND',dest:'Malaysia',etd:'2026-06-18',eta:'2026-06-27',bl:'MAEU7741203',container:'MRKU8830115',vessel:'MAERSK CABO',forwarder:'Maersk',freight:33000,duty:0,vat:0,_board:'export'},
+  {id:'SO_8802',poNo:'BTVSO2605-0769',company:'BTV',party:'Pink Beauty Cambodia',type:'oversea',mode:'sea',stage:'arrived',cur:'USD',amount:12800,rate:33.4,origin:'LAEM CHABANG, THAILAND',dest:'Cambodia',etd:'2026-06-05',eta:'2026-06-16',bl:'SITC4471188',container:'SITU2210043',vessel:'SITC MAKASSAR',forwarder:'SITC',freight:9800,duty:0,vat:0,_board:'export'},
+  {id:'SO_8790',poNo:'KOBSO2605-1130',company:'KOB',party:'Lumiere Beauty Laos',type:'oversea',mode:'sea',stage:'draft',cur:'THB',amount:184000,rate:1,origin:'LAEM CHABANG, THAILAND',dest:'Laos',etd:'',eta:'2026-07-25',bl:'',container:'',vessel:'',forwarder:'',freight:0,duty:0,vat:0,_board:'export'}
+];}
+
+function defaultForm(board){
+  return {board:board||'import',company:'KOB',poNo:'',party:'',type:'oversea',mode:'sea',
+    cur:'CNY',amount:'',origin:'',dest:'LAEM CHABANG, THAILAND',
+    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',freight:'',duty:'',vat:''};
+}
+
+class App extends Component {
+  constructor(props){
+    super(props);
+    const w=typeof window!=='undefined'?window.innerWidth:1280;
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,selBills:{},alertsOpen:false};
+    this._plan=null; this._overrides={}; this._tt=null; this._fx=null;
+  }
+  componentDidMount(){
+    window.addEventListener('resize',this._onResize=()=>{const n=window.innerWidth<880;if(n!==this.state.isNarrow)this.setState({isNarrow:n});});
+    this.loadData();
+  }
+  componentWillUnmount(){window.removeEventListener('resize',this._onResize);}
+  nowTime(){const d=new Date();return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+' น.';}
+
+  async loadData(){
+    this.setState({dataSource:'loading'});
+    const grab=async u=>{const r=await fetch(u,{headers:{Accept:'application/json'}});if(!r.ok)throw 0;return r.json();};
+    // อัตราแลกเปลี่ยนล่าสุดจาก Odoo (ใช้ตอนสร้างรายการใหม่ — fallback เป็นค่า default ถ้าโหลดไม่ได้)
+    if(!this._fx){try{const fx=await grab('/api/fx-rates');if(fx&&fx.ok){const m={};(fx.rows||[]).forEach(r=>{m[r.currency]=r.thb_per_unit;});this._fx=m;}}catch(e){}}
+    try{const p=await grab('/api/import-plan');this._plan=(p&&p.ok&&p.rows)?p.rows:null;}catch(e){this._plan=null;}
+    let overrides={},trackingRows=null;
+    try{const j=await grab('/api/tracking');if(j&&j.ok&&Array.isArray(j.rows)){trackingRows=j.rows;j.rows.forEach(r=>{const k=r.po_so||r.poNo;if(k)overrides[k]=r;});}}catch(e){}
+    this._overrides=overrides;
+    let base=null;
+    try{
+      const [imp,exp]=await Promise.all([grab('/api/import-pos').catch(()=>null),grab('/api/export-sos').catch(()=>null)]);
+      const rows=[];
+      if(imp&&imp.rows)imp.rows.forEach(r=>rows.push(this.mapPo(r,'import')));
+      if(exp&&exp.rows)exp.rows.forEach(r=>rows.push(this.mapPo(r,'export')));
+      if(rows.length)base=rows;
+    }catch(e){}
+    if(!base&&trackingRows&&trackingRows.length)base=trackingRows.map(r=>this.mapTracking(r));
+    if(!base){this.setState({shipments:null,dataSource:'sample'});return;}
+    if(this._plan)base=this.applyPlan(base,this._plan);
+    base=this.applyOverrides(base);
+    this.setState({shipments:base,dataSource:'live',lastSync:this.nowTime()});
+  }
+
+  strip(k){return(k||'').replace(/\s*\(\d+\)\s*$/,'').trim();}
+  applyOverrides(rows){
+    const ov=this._overrides;if(!ov||!Object.keys(ov).length)return rows;
+    const idx={};Object.keys(ov).forEach(k=>{const n=this.strip(k);if(!idx[n])idx[n]=ov[k];});
+    return rows.map(s=>{const o=ov[s.poNo]||idx[this.strip(s.poNo)];return o?this.applyOne(s,o):s;});
+  }
+  applyOne(s,o){
+    const m={...s};
+    ['origin','dest','bl','container','vessel','forwarder','etd','eta'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
+    ['freight','duty','vat'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
+    if(Array.isArray(o.bills))m.bills=o.bills;
+    if(o.stage){m.stage=o.stage;m._stageManual=true;}
+    m._edited=true; return m;
+  }
+  applyPlan(rows,plan){
+    if(!plan)return rows;
+    const idx={};Object.keys(plan).forEach(k=>{const n=this.strip(k);if(!idx[n])idx[n]=plan[k];});
+    const num=v=>parseFloat(v)||0;
+    return rows.map(s=>{
+      const p=plan[s.poNo]||idx[this.strip(s.poNo)];if(!p)return s;
+      const m={...s};
+      if(!m.freight&&p.freight_thb)m.freight=num(p.freight_thb);
+      if(!m.vat&&p.customs_vat)m.vat=num(p.customs_vat);
+      if(!m.duty&&p.duty)m.duty=num(p.duty);
+      if(!m.forwarder&&p.forwarder)m.forwarder=p.forwarder;
+      if(!m.bl&&p.bl_awb)m.bl=p.bl_awb;
+      if(!m.origin&&p.origin)m.origin=p.origin;
+      if(!m.etd&&p.etd)m.etd=p.etd;
+      if(!m.eta&&p.eta)m.eta=p.eta;
+      if(p.mode)m.mode=/air/i.test(p.mode)?'air':'sea';
+      m._plan=true; return m;
+    });
+  }
+  _today(){const d=new Date();d.setHours(0,0,0,0);return d;}
+  _dt(s){if(!s)return null;const d=new Date(String(s).slice(0,10));return isNaN(d)?null:d;}
+  planFor(poNo){
+    if(!this._plan||!poNo)return null;
+    if(this._plan[poNo])return this._plan[poNo];
+    const b=this.strip(poNo);if(this._plan[b])return this._plan[b];
+    for(const k in this._plan){if(this.strip(k)===b)return this._plan[k];}
+    return null;
+  }
+  deriveImportStage(r){
+    const rs=r.receipt_status,os=r.odoo_state;
+    if(rs==='full')return 'received';if(rs==='partial')return 'customs';
+    const today=this._today(),p=this.planFor(r.po_number||r.po_so)||{};
+    const etd=this._dt(p.etd),eta=this._dt(p.eta),atd=this._dt(p.atd);
+    if(eta&&eta<=today)return 'arrived';
+    if((atd&&atd<=today)||(etd&&etd<=today))return 'transit';
+    if(p.bl_awb||p.forwarder||etd||eta)return 'booking';
+    if(os==='draft'||os==='sent')return 'po';
+    const planned=this._dt(r.date_planned);
+    if(planned){const days=Math.round((planned-today)/86400000);if(days<=0)return 'arrived';if(days<=10)return 'transit';if(days<=30)return 'booking';}
+    return 'po';
+  }
+  deriveExportStage(r){
+    const ds=r.delivery_status,os=r.odoo_state;if(ds==='full')return 'arrived';
+    const p=this.planFor(r.so_number||r.po_so)||{},today=this._today();
+    const etd=this._dt(p.etd),atd=this._dt(p.atd);
+    if((atd&&atd<=today)||(etd&&etd<=today)||ds==='partial')return 'shipped';
+    if(p.bl_awb||p.forwarder||etd)return 'booking';
+    const ordered=this._dt(r.date_order);
+    if(ordered&&Math.round((today-ordered)/86400000)>=14)return 'booking';
+    if(os==='sale'||os==='done')return 'packing';
+    return 'draft';
+  }
+  mapPo(r,board){
+    const stage=board==='export'?this.deriveExportStage(r):this.deriveImportStage(r);
+    const rate=parseFloat(r.currency_rate)||0;
+    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',type:normType(''),mode:'sea',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),bl:'',container:'',vessel:'',forwarder:'',freight:0,duty:0,vat:0};
+  }
+  mapTracking(r){
+    const board=r.type==='export'?'export':'import';
+    const wf=(r.state&&r.state!=='draft')?r.state:r.odoo_state;
+    const stageMap=board==='export'?{draft:'draft',sent:'draft',order_confirmed:'packing',production:'packing',packing:'packing',booking_confirmed:'booking',etd:'shipped',sale:'shipped',eta_arrived:'arrived',closed:'arrived',done:'arrived'}:{draft:'po',purchase:'po',sent:'po',booking_confirmed:'booking',etd:'transit',atd:'transit',eta:'arrived',ata:'arrived',customs_clearance:'customs',duty_payment:'customs',goods_received:'received',done:'received'};
+    const stage=stageMap[wf]||(board==='export'?'draft':'po');
+    const odooRate=parseFloat(r.rate)||0;
+    return {_board:board,id:r.id||r.odoo_id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:odooRate>0?1/odooRate:1,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0};
+  }
+
+  allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
+  imports(){return this.allShipments().filter(s=>s._board==='import');}
+  exports(){return this.allShipments().filter(s=>s._board==='export');}
+  filtered(tab){
+    const {co,type,query}=this.state;
+    let list=tab==='export'?this.exports():this.imports();
+    if(co)list=list.filter(s=>s.company===co);
+    if(tab==='import'&&type!=='all')list=list.filter(s=>s.type===type);
+    const q=(query||'').trim().toLowerCase();
+    if(q)list=list.filter(s=>(s.poNo+' '+s.party+' '+(s.bl||'')).toLowerCase().includes(q));
+    return list;
+  }
+
+  showToast(msg,kind){this.setState({toast:{msg,kind:kind||'info'}});clearTimeout(this._tt);this._tt=setTimeout(()=>this.setState({toast:null}),3600);}
+
+  async submitCreate(){
+    if(this.state.saving)return;
+    const f=this.state.form;this.setState({saving:true});
+    const rate=this.fxRate(f.cur);
+    const ns={_board:f.board,id:'new_'+Date.now(),poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    this.setState({shipments:[ns].concat(this.allShipments()),creating:false,tab:f.board,view:'kanban'});
+    const ov={...this._overrides};
+    ov[ns.poNo]={po_so:ns.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:ns.stage,origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',freight:parseFloat(f.freight)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    this._overrides=ov;
+    try{await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ov[ns.poNo])});this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');}
+    catch(e){this.showToast('บันทึกออฟไลน์ชั่วคราว','info');}
+    this.setState({saving:false});
+  }
+
+  startEdit(){
+    const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
+    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),freight:s.freight||'',duty:s.duty||'',vat:s.vat||'',bills:Array.isArray(s.bills)?s.bills:[]};
+    this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();
+  }
+  cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
+  setEdit(k,v){this.setState(s=>({editForm:{...s.editForm,[k]:v}}));}
+  async loadVendors(){
+    if(this.state.vendors)return;
+    try{const r=await fetch('/api/vendors',{headers:{Accept:'application/json'}});const j=await r.json();this.setState({vendors:j&&j.rows?j.rows:[]});}
+    catch(e){this.setState({vendors:[]});}
+  }
+  // ── เปิดรายการบิลขนส่ง/ศุลกากร ให้ผู้ใช้เลือกจับคู่ ──
+  async openBillPicker(){
+    const f=this.state.editForm;if(!f)return;
+    // preselect บิลที่เคยจับคู่ไว้
+    const sel={};(f.bills||[]).forEach(b=>{sel[b.id]=b;});
+    this.setState({billPicker:true,billQuery:'',selBills:sel});
+    if(this.state.billList&&this.state.billList.length){return;}
+    this.setState({billLoading:true});
+    try{
+      const r=await fetch('/api/logistics-bills?company='+encodeURIComponent(f.company)+'&months=12',{headers:{Accept:'application/json'}});
+      const j=await r.json();
+      this.setState({billList:(j&&j.bills)||[],billLoading:false});
+    }catch(e){this.setState({billList:[],billLoading:false});this.showToast('โหลดรายการบิลไม่สำเร็จ','error');}
+  }
+  closeBillPicker(){this.setState({billPicker:false});}
+  toggleBill(b){this.setState(s=>{const sel={...s.selBills};if(sel[b.id])delete sel[b.id];else sel[b.id]=b;return {selBills:sel};});}
+  // ใช้บิลที่เลือก: รวม freight/duty/vat เติมลงช่อง + จำการจับคู่ไว้
+  applySelectedBills(){
+    const sel=Object.values(this.state.selBills||{});
+    let freight=0,duty=0,vat=0;
+    sel.forEach(b=>{freight+=b.freight||0;duty+=b.duty||0;vat+=b.vat||0;});
+    const meta=sel.map(b=>({id:b.id,bill:b.bill,partner:b.partner,amount:b.amount,category:b.category,freight:b.freight||0,duty:b.duty||0,vat:b.vat||0}));
+    this.setState(s=>({
+      editForm:{...s.editForm,freight:Math.round(freight),duty:Math.round(duty),vat:Math.round(vat),bills:meta},
+      billPicker:false,
+      costSrc:sel.length?('✓ จับคู่ '+sel.length+' บิลจาก Odoo'):''
+    }));
+    this.showToast(sel.length?('ใช้ '+sel.length+' บิล รวม ฿'+Math.round(freight+duty+vat).toLocaleString()):'ไม่ได้เลือกบิล',sel.length?'success':'info');
+  }
+  async saveEdit(){
+    const f=this.state.editForm;if(!f||this.state.savingEdit)return;
+    this.setState({savingEdit:true});
+    const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:f.stage||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',freight:num(f.freight),duty:num(f.duty),vat:num(f.vat),bills:Array.isArray(f.bills)?f.bills:[]};
+    const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
+    const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
+    this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
+    try{const res=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});this.showToast(res.ok?'บันทึก PO '+f.poNo+' สำเร็จ':'บันทึกไม่สำเร็จ: HTTP '+res.status,res.ok?'success':'error');}
+    catch(e){this.showToast('ออฟไลน์ — บันทึกชั่วคราว','info');}
+    this.setState({savingEdit:false});
+  }
+  // กด Sync = ล้าง cache ฝั่ง server ก่อน เพื่อให้ได้ข้อมูลสดจริง (ไม่ติด cache 5 นาที)
+  sync(){if(this.state.syncing)return;this.setState({syncing:true});fetch('/api/cache/clear').catch(()=>{}).then(()=>this.loadData()).then(()=>this.setState({syncing:false})).catch(()=>this.setState({syncing:false}));}
+  // อัตราแลกเปลี่ยน: ใช้ค่าจริงจาก Odoo ก่อน ถ้าไม่มีจึงใช้ค่า default
+  fxRate(cur){const v=this._fx&&this._fx[cur];return (v&&v>0)?v:rateGuess(cur);}
+
+  // ── Export Excel: รายการตาม filter ปัจจุบัน + สรุปต้นทุน ──
+  exportExcel(tab){
+    if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
+    const list=this.filtered(tab);
+    if(!list.length){this.showToast('ไม่มีรายการให้ export','info');return;}
+    const rows=list.map(s=>({
+      'PO/SO':s.poNo,'บริษัท':s.company,'ผู้ขาย/ลูกค้า':s.party,
+      'ประเภท':typeMeta(s.type).label,'สถานะ':stageMeta(tab,s.stage).label,
+      'ขนส่ง':s.mode==='air'?'อากาศ':'เรือ','สกุลเงิน':s.cur,'มูลค่าสินค้า':s.amount,
+      'มูลค่าสินค้า (฿)':Math.round(s.amount*s.rate),'ค่าขนส่ง (฿)':s.freight||0,
+      'อากร (฿)':s.duty||0,'VAT (฿)':s.vat||0,
+      'ต้นทุนรวม (฿)':Math.round(s.amount*s.rate+(s.freight||0)+(s.duty||0)+(s.vat||0)),
+      'ต้นทาง':s.origin,'ปลายทาง':s.dest,'BL/AWB':s.bl,
+      'ตู้':s.container,'เรือ/เที่ยว':s.vessel,'Forwarder':s.forwarder,
+      'ETD':s.etd,'ETA':s.eta,
+    }));
+    const ws=XLSX.utils.json_to_sheet(rows);
+    ws['!cols']=Object.keys(rows[0]).map(k=>({wch:Math.max(k.length+2,12)}));
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,tab==='export'?'Export':'Import');
+    const today=new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb,'logistics-'+tab+'-'+today+'.xlsx');
+    this.showToast('ดาวน์โหลด Excel แล้ว ('+list.length+' รายการ)','success');
+  }
+
+  // ── รายการต้องติดตาม: ETA เลยกำหนด หรือใกล้ถึงใน 3 วัน ──
+  alerts(){
+    const today=this._today(),out=[];
+    this.imports().forEach(s=>{
+      if(s.stage==='received')return;
+      const eta=this._dt(s.eta);if(!eta)return;
+      const days=Math.round((eta-today)/86400000);
+      if(days<0)out.push({s,days,kind:'late'});
+      else if(days<=3)out.push({s,days,kind:'soon'});
+    });
+    this.exports().forEach(s=>{
+      if(s.stage==='arrived')return;
+      const eta=this._dt(s.eta);if(!eta)return;
+      const days=Math.round((eta-today)/86400000);
+      if(days<0)out.push({s,days,kind:'late'});
+      else if(days<=3)out.push({s,days,kind:'soon'});
+    });
+    return out.sort((a,b)=>a.days-b.days);
+  }
+
+  buildTimeline(s,tab){
+    const stages=tab==='export'?EXP_STAGES:IMP_STAGES;
+    const curIdx=stages.findIndex(x=>x.key===s.stage);
+    const dateFor=k=>({po:'',booking:s.etd,transit:s.etd,arrived:s.eta,customs:s.eta,received:s.eta,draft:'',packing:s.etd,shipped:s.etd})[k];
+    return stages.map((st,i)=>{
+      const done=i<curIdx,cur=i===curIdx;
+      return {key:st.key,label:st.label,done,cur,date:(done||cur)?fmtDate(dateFor(st.key))||'เสร็จสิ้น':'—',color:st.color,showLine:i<stages.length-1};
+    });
+  }
+
+  // ── Render sections ────────────────────────────────────────
+  renderTopbar(){
+    const {dataSource,lastSync,syncing,isNarrow}=this.state;
+    const dbConf=dataSource==='live'?{c:'#4ade80',t:'เชื่อมต่อ Odoo'}:dataSource==='loading'?{c:'#fbbf24',t:'กำลังโหลด…'}:{c:'#9aa3b2',t:'โหมดตัวอย่าง'};
+    return <header style={{display:'flex',alignItems:'center',gap:'14px',padding:'0 22px',height:'60px',background:'#14181f',flexShrink:0}}>
+      <div style={{display:'flex',alignItems:'center',gap:'11px'}}>
+        <div style={{width:'36px',height:'36px',borderRadius:'9px',background:'linear-gradient(135deg,#c91253,#e8408e)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Ico name="boxes" size={19} sw={1.7}/></div>
+        <div><div style={{fontWeight:700,fontSize:'14.5px',color:'#fff',letterSpacing:'.2px'}}>Logistics Tracking</div><div style={{fontSize:'11px',color:'#8b94a3'}}>KOB &amp; BTV · Import / Export</div></div>
+      </div>
+      <div style={{flex:1}}/>
+      <div style={{display:'flex',alignItems:'center',gap:'6px',padding:'4px 11px',borderRadius:'99px',background:dbConf.c+'1f',border:'1px solid '+dbConf.c+'44',flexShrink:0}}>
+        <span style={{width:'7px',height:'7px',borderRadius:'50%',background:dbConf.c,boxShadow:'0 0 0 3px '+dbConf.c+'33'}}/>
+        <span style={{fontSize:'11.5px',fontWeight:500,color:dbConf.c}}>{dbConf.t}</span>
+      </div>
+      {!isNarrow&&lastSync!=='—'&&<span style={{fontSize:'11.5px',color:'#5b6371',whiteSpace:'nowrap'}}>ซิงค์ล่าสุด {lastSync}</span>}
+      {(()=>{const al=this.alerts();const late=al.filter(a=>a.kind==='late').length;
+        return <button onClick={()=>this.setState({alertsOpen:true})} title="รายการต้องติดตาม" style={{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',border:0,borderRadius:'8px',background:'#232936',color:al.length?'#fbbf24':'#8b94a3',cursor:'pointer',flexShrink:0}}>
+          <Ico name="bell" size={17} sw={1.8}/>
+          {al.length>0&&<span style={{position:'absolute',top:'-4px',right:'-4px',minWidth:'17px',height:'17px',padding:'0 4px',borderRadius:'99px',background:late?'#dc2626':'#d97706',color:'#fff',fontSize:'10px',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>{al.length}</span>}
+        </button>;})()}
+      <button onClick={()=>this.sync()} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:isNarrow?'0 9px':'0 14px',border:0,borderRadius:'8px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:syncing?'default':'pointer',opacity:syncing?0.8:1}}>
+        <span style={{display:'flex',animation:syncing?'kobSpin 1s linear infinite':'none'}}><Ico name="sync" size={15} sw={2}/></span>
+        {!isNarrow&&<span>Sync Odoo</span>}
+      </button>
+    </header>;
+  }
+
+  renderTabs(){
+    const {tab,isNarrow}=this.state;
+    const impAll=this.imports(),expAll=this.exports();
+    return <div style={{display:'flex',alignItems:'center',gap:'2px',padding:'0 22px',background:'#fff',borderBottom:'1px solid #e8dde4',flexShrink:0,overflowX:'auto'}}>
+      {[{key:'import',label:'Import Board',icon:'down',count:impAll.length},{key:'export',label:'Export Board',icon:'up',count:expAll.length},{key:'dashboard',label:'Dashboard',icon:'chart',count:false}].map(t=>{
+        const active=tab===t.key;
+        return <button key={t.key} onClick={()=>this.setState({tab:t.key,detailId:null})} style={{display:'flex',alignItems:'center',gap:'7px',padding:'13px 16px 12px',border:0,borderBottom:active?'2px solid #c91253':'2px solid transparent',background:'transparent',color:active?'#c91253':'#5b6371',fontFamily:'inherit',fontSize:'13.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap',marginBottom:'-1px'}}>
+          <Ico name={t.icon} size={16} sw={1.8}/>
+          <span>{isNarrow&&t.key!=='dashboard'?t.label.replace(' Board',''):t.label}</span>
+          {t.count!==false&&<span style={{fontSize:'10.5px',fontWeight:700,padding:'1px 7px',borderRadius:'99px',background:active?'#c91253':'#f3edf0',color:active?'#fff':'#a99fa8'}}>{t.count}</span>}
+        </button>;
+      })}
+    </div>;
+  }
+
+  renderToolbar(tab){
+    const {co,type,query,view,isNarrow}=this.state;
+    const list=this.filtered(tab);
+    const pill=(active,label,onClick,solid)=><button onClick={onClick} style={{padding:'6px 13px',borderRadius:'99px',border:active?'1.5px solid #c91253':'1.5px solid #e8dde4',background:active?(solid?'#c91253':'#fce7f3'):'#fff',color:active?(solid?'#fff':'#c91253'):'#5b6371',fontFamily:'inherit',fontSize:'12.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap'}}>{label}</button>;
+    const vbtn=active=>({height:'36px',width:'38px',display:'flex',alignItems:'center',justifyContent:'center',border:0,background:active?'#c91253':'#fff',color:active?'#fff':'#7a818d',cursor:'pointer'});
+    return <div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px',flexWrap:'wrap',padding:'16px 22px 12px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'7px',flexWrap:'wrap'}}>
+          {['','KOB','BTV'].map(c=>pill(co===c,c||'ทุกบริษัท',()=>this.setState({co:c}),true))}
+          {tab==='import'&&<><span style={{width:'1px',height:'22px',background:'#e8dde4',margin:'0 4px'}}/>{[{k:'all',l:'ทุกประเภท'},{k:'pk',l:'Packaging'},{k:'fg',l:'Finished'},{k:'oversea',l:'Oversea'}].map(t=>pill(type===t.k,t.l,()=>this.setState({type:t.k}),false))}</>}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',background:'#fff',border:'1.5px solid #e8dde4',borderRadius:'9px',padding:'0 12px',height:'36px',width:'230px',maxWidth:'48vw'}}>
+            <span style={{display:'flex',color:'#a99fa8'}}><Ico name="search" size={16} sw={1.8}/></span>
+            <input value={query} onChange={e=>this.setState({query:e.target.value})} placeholder="ค้นหา PO, ผู้ขาย, BL/AWB…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'#14181f',width:'100%'}}/>
+          </div>
+          <div style={{display:'flex',border:'1.5px solid #e8dde4',borderRadius:'9px',overflow:'hidden'}}>
+            <button onClick={()=>this.setState({view:'kanban'})} style={vbtn(view==='kanban')}><Ico name="kanban" size={16} sw={1.8}/></button>
+            <button onClick={()=>this.setState({view:'table'})} style={{...vbtn(view==='table'),borderLeft:'1px solid #e8dde4'}}><Ico name="table" size={16} sw={1.8}/></button>
+          </div>
+          <button onClick={()=>this.exportExcel(tab)} title="ดาวน์โหลด Excel" style={{display:'flex',alignItems:'center',gap:'6px',height:'36px',padding:'0 12px',border:'1.5px solid #e8dde4',borderRadius:'9px',background:'#fff',color:'#15803d',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}>
+            <Ico name="dl" size={15} sw={1.9}/>{!isNarrow&&<span>Excel</span>}
+          </button>
+          <button onClick={()=>this.setState({creating:true,form:defaultForm(tab==='export'?'export':'import')})} style={{display:'flex',alignItems:'center',gap:'6px',height:'36px',padding:'0 15px',border:0,borderRadius:'9px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',flexShrink:0,boxShadow:'0 3px 10px rgba(201,18,83,.26)'}}>
+            <Ico name="plus" size={16} sw={2}/>{!isNarrow&&<span>เพิ่มรายการ</span>}
+          </button>
+        </div>
+      </div>
+      <div style={{padding:'0 22px 8px',fontSize:'12px',color:'#a99fa8'}}>แสดง {list.length} รายการ{co?' · '+co:''}{tab==='import'&&type!=='all'?' · '+typeMeta(type).label:''}</div>
+    </div>;
+  }
+
+  renderKanban(tab){
+    const {isNarrow}=this.state;
+    const list=this.filtered(tab);
+    const stages=tab==='export'?EXP_STAGES:IMP_STAGES;
+    return <div style={{flex:1,overflowX:'auto',overflowY:'hidden',minHeight:0,padding:'0 22px 22px',scrollSnapType:isNarrow?'x mandatory':'none'}}>
+      <div style={{display:'flex',gap:'13px',height:'100%',alignItems:'stretch'}}>
+        {stages.map(stg=>{
+          const cards=list.filter(s=>s.stage===stg.key);
+          return <div key={stg.key} style={{flex:isNarrow?'0 0 78vw':'1 1 0',minWidth:isNarrow?'78vw':'178px',scrollSnapAlign:isNarrow?'start':'none',background:'#fbf8fa',border:'1px solid #ece3e8',borderRadius:'14px',display:'flex',flexDirection:'column',minHeight:0}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',padding:'11px 12px 10px',borderBottom:'1px solid '+stg.color+'22',background:stg.color+'0d',borderRadius:'14px 14px 0 0'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'8px',minWidth:0}}>
+                <span style={{width:'8px',height:'8px',borderRadius:'50%',background:stg.color,flexShrink:0}}/>
+                <span style={{fontSize:'11.5px',fontWeight:700,color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
+              </div>
+              <span style={{fontSize:'11px',fontWeight:700,minWidth:'20px',textAlign:'center',padding:'1px 7px',borderRadius:'99px',background:stg.color+'1f',color:stg.color}}>{cards.length}</span>
+            </div>
+            <div style={{flex:1,overflowY:'auto',padding:'4px 9px 9px',display:'flex',flexDirection:'column',gap:'8px'}}>
+              {cards.map(s=>{
+                const sm=stageMeta(tab,s.stage);
+                return <div key={s.id} onClick={()=>this.setState({detailId:s.id})} style={{background:'#fff',border:'1px solid #ece3e8',borderLeft:'3px solid '+sm.color,borderRadius:'0 9px 9px 0',padding:'10px 12px',cursor:'pointer'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px'}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11px',fontWeight:600,color:sm.color}}>{s.poNo}</span>
+                    <span style={coBadgeSty(s.company)}>{s.company}</span>
+                  </div>
+                  <div style={{fontSize:'12.5px',color:'#14181f',fontWeight:500,margin:'7px 0 8px',lineHeight:'1.35',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{s.party}</div>
+                  <div style={{display:'flex',alignItems:'center',gap:'5px',marginBottom:'9px'}}>
+                    <span style={typeBadgeSty(s.type)}>{typeMeta(s.type).label}</span>
+                    <span style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'11px',color:'#7a818d'}}><Ico name={s.mode==='air'?'plane':'ship'} size={13} sw={1.6}/>{s.mode==='air'?'อากาศ':'ทางเรือ'}</span>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',paddingTop:'8px',borderTop:'1px solid #f0e9ed'}}>
+                    <span style={{fontSize:'11.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(s.amount,s.cur)}</span>
+                    <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:'#a99fa8'}}><Ico name="cal" size={12} sw={1.6}/>{fmtDate(s.eta)}</span>
+                  </div>
+                </div>;
+              })}
+              {cards.length===0&&<div style={{textAlign:'center',fontSize:'11.5px',color:'#bcb2ba',padding:'14px 0'}}>ไม่มีรายการ</div>}
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>;
+  }
+
+  renderTable(tab){
+    const list=this.filtered(tab);
+    return <div style={{flex:1,overflow:'auto',minHeight:0,padding:'0 22px 22px'}}>
+      <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'14px',overflow:'hidden'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',minWidth:'840px'}}>
+          <thead><tr style={{background:'#faf6f8'}}>
+            {[['PO / ผู้ขาย','left'],['บริษัท','left'],['ประเภท','left'],['สถานะ','left'],['มูลค่า','right'],['ETA','left']].map(([h,a])=>(
+              <th key={h} style={{textAlign:a,fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'12px 14px'}}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {list.map(s=>{const sm=stageMeta(tab,s.stage);return(
+              <tr key={s.id} onClick={()=>this.setState({detailId:s.id})} style={{cursor:'pointer',borderTop:'1px solid #f0e9ed'}}>
+                <td style={{padding:'12px 14px'}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'#14181f'}}>{s.poNo}</div><div style={{fontSize:'12px',color:'#7a818d',marginTop:'2px',maxWidth:'240px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</div></td>
+                <td style={{padding:'12px 14px'}}><span style={coBadgeSty(s.company)}>{s.company}</span></td>
+                <td style={{padding:'12px 14px'}}><span style={typeBadgeSty(s.type)}>{typeMeta(s.type).label}</span></td>
+                <td style={{padding:'12px 14px'}}><span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{sm.label}</span></td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{fmtAmt(s.amount,s.cur)}</td>
+                <td style={{padding:'12px 14px',fontSize:'12.5px',color:'#5b6371',whiteSpace:'nowrap'}}>{fmtDate(s.eta)}</td>
+              </tr>
+            );})}
+          </tbody>
+        </table>
+      </div>
+    </div>;
+  }
+
+  renderDashboard(){
+    const {isNarrow}=this.state;
+    const impAll=this.imports(),expAll=this.exports();
+    const impVal=impAll.reduce((a,s)=>a+s.amount*s.rate,0),expVal=expAll.reduce((a,s)=>a+s.amount*s.rate,0);
+    const activeImp=impAll.filter(s=>['booking','transit','arrived','customs'].includes(s.stage)).length;
+    const pendingImp=impAll.filter(s=>s.stage==='customs'||s.stage==='po').length;
+    const kpis=[
+      {accent:'linear-gradient(90deg,#c91253,#e8408e)',icon:'down',iconBg:'#fce7f3',iconColor:'#c91253',value:impAll.length,label:'Import ทั้งหมด',sub:fmtBaht(impVal)+' มูลค่ารวม',delta:'▲ 12%',dc:'#15803d'},
+      {accent:'linear-gradient(90deg,#7c3aed,#a78bfa)',icon:'up',iconBg:'#ede9fe',iconColor:'#7c3aed',value:expAll.length,label:'Export ทั้งหมด',sub:fmtBaht(expVal)+' มูลค่ารวม',delta:'▲ 6%',dc:'#15803d'},
+      {accent:'linear-gradient(90deg,#f59e0b,#ea580c)',icon:'ship',iconBg:'#fff7ed',iconColor:'#d97706',value:activeImp,label:'กำลังขนส่ง',sub:'อยู่ระหว่างทาง',delta:'▲ 3',dc:'#15803d'},
+      {accent:'linear-gradient(90deg,#059669,#10b981)',icon:'check',iconBg:'#f0fdf4',iconColor:'#059669',value:pendingImp,label:'รอดำเนินการ',sub:'ศุลกากร / PO ใหม่',delta:'▼ 1',dc:'#b91c1c'}
+    ];
+    const pmax=Math.max(1,...IMP_STAGES.map(stg=>impAll.filter(s=>s.stage===stg.key).length));
+    const costSrc=impAll.filter(s=>s.freight>0).slice(0,7);
+    const tg=costSrc.reduce((a,s)=>a+s.amount*s.rate,0),tf=costSrc.reduce((a,s)=>a+s.freight,0),tt=costSrc.reduce((a,s)=>a+s.duty+s.vat,0);
+    return <div style={{flex:1,overflowY:'auto',padding:'22px'}}>
+      <div style={{maxWidth:'1240px',margin:'0 auto',display:'flex',flexDirection:'column',gap:'18px'}}>
+        <div style={{display:'grid',gridTemplateColumns:isNarrow?'repeat(2,1fr)':'repeat(4,1fr)',gap:isNarrow?'12px':'16px'}}>
+          {kpis.map(k=><div key={k.label} style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'18px 18px 16px',position:'relative',overflow:'hidden'}}>
+            <div style={{position:'absolute',top:0,left:0,right:0,height:'3px',background:k.accent}}/>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <span style={{display:'flex',alignItems:'center',justifyContent:'center',width:'38px',height:'38px',borderRadius:'11px',background:k.iconBg,color:k.iconColor}}><Ico name={k.icon} size={18} sw={1.8}/></span>
+              <span style={{fontSize:'12px',fontWeight:600,color:k.dc}}>{k.delta}</span>
+            </div>
+            <div style={{fontSize:'27px',fontWeight:700,color:'#14181f',marginTop:'14px',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{k.value}</div>
+            <div style={{fontSize:'12.5px',color:'#7a818d',marginTop:'6px'}}>{k.label}</div>
+            <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'4px'}}>{k.sub}</div>
+          </div>)}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1.7fr 1fr',gap:isNarrow?'14px':'16px'}}>
+          <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+            <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'18px'}}>
+              <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Import Pipeline</div>
+              <div style={{fontSize:'12px',color:'#a99fa8'}}>{impAll.length} รายการ</div>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
+              {IMP_STAGES.map(stg=>{const c=impAll.filter(s=>s.stage===stg.key).length;return(
+                <div key={stg.key} style={{display:'grid',gridTemplateColumns:'120px 1fr 34px',alignItems:'center',gap:'12px'}}>
+                  <span style={{fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
+                  <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,c/pmax*100)+'%',background:stg.color,transition:'width .5s'}}/></span>
+                  <span style={{fontSize:'12px',fontWeight:600,color:'#14181f',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{c}</span>
+                </div>
+              );})}
+            </div>
+          </div>
+          <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Company Split</div>
+            <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'20px'}}>KOB เทียบ BTV</div>
+            {[{label:'Import',kob:impAll.filter(s=>s.company==='KOB').length,btv:impAll.filter(s=>s.company==='BTV').length},{label:'Export',kob:expAll.filter(s=>s.company==='KOB').length,btv:expAll.filter(s=>s.company==='BTV').length}].map(c=>{
+              const tot=c.kob+c.btv||1;
+              return <div key={c.label} style={{marginBottom:'18px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:'7px'}}><span style={{fontSize:'13px',fontWeight:600,color:'#14181f'}}>{c.label}</span><span style={{fontSize:'12px',color:'#a99fa8'}}>{c.kob+c.btv} รายการ</span></div>
+                <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
+                  <span style={{width:(c.kob/tot*100)+'%',background:'#c91253',transition:'width .5s'}}/>
+                  <span style={{width:(c.btv/tot*100)+'%',background:'#7c3aed',transition:'width .5s'}}/>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'#a99fa8',marginTop:'5px'}}><span>KOB {c.kob}</span><span>BTV {c.btv}</span></div>
+              </div>;
+            })}
+            <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371'}}>
+              <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>KOB</span>
+              <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>BTV</span>
+            </div>
+          </div>
+        </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',overflow:'hidden'}}>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สรุปต้นทุนนำเข้าตาม PO</div>
+            <div style={{fontSize:'12px',color:'#a99fa8'}}>มูลค่าแปลงเป็นบาท (฿)</div>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:'720px'}}>
+              <thead><tr style={{background:'#faf6f8'}}>{['PO','ผู้ขาย','มูลค่าสินค้า','ค่าขนส่ง','ภาษี+อากร','รวม'].map((h,i)=>(
+                <th key={h} style={{textAlign:i>=2?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
+              ))}</tr></thead>
+              <tbody>{costSrc.map(s=>{const goods=s.amount*s.rate,tax=s.duty+s.vat,total=goods+s.freight+tax;return(
+                <tr key={s.id} style={{borderTop:'1px solid #f0e9ed'}}>
+                  <td style={{padding:'11px 14px'}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'#14181f'}}>{s.poNo}</span></td>
+                  <td style={{padding:'11px 14px',fontSize:'12.5px',color:'#5b6371',maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(goods)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(s.freight)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tax)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(total)}</td>
+                </tr>
+              );})}
+              </tbody>
+              <tfoot><tr style={{background:'#faf6f8',borderTop:'2px solid #e8dde4'}}>
+                <td colSpan={2} style={{padding:'12px 14px',fontSize:'12.5px',fontWeight:700,color:'#14181f'}}>รวมทั้งหมด</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg)}</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tf)}</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tt)}</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'13px',fontWeight:700,color:'#c91253',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg+tf+tt)}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>;
+  }
+
+  renderDetail(){
+    const {detailId,editing,editForm,vendors,expenseBusy,costSrc,savingEdit,billPicker,billList,billLoading,billQuery,selBills}=this.state;
+    if(!detailId)return null;
+    const sel=this.allShipments().find(s=>s.id===detailId);if(!sel)return null;
+    const tab=String(sel.id).startsWith('SO')?'export':'import';
+    const goods=sel.amount*sel.rate,total=goods+sel.freight+sel.duty+sel.vat;
+    const timeline=this.buildTimeline(sel,tab);
+    const ef=editForm||{};
+    const curStage=editing?(ef.stage||sel.stage):sel.stage;
+    const stages=tab==='export'?EXP_STAGES:IMP_STAGES;
+    const vList=vendors||[];
+    return <>
+      <div onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.4)',zIndex:60,animation:'kobFadeIn .2s ease'}}/>
+      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'440px',maxWidth:'94vw',background:'#fff',zIndex:61,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
+        <div style={{display:'flex',alignItems:'flex-start',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid #e8dde4'}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'17px',fontWeight:600,color:'#14181f'}}>{sel.poNo}</div>
+            <div style={{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}}>
+              <span style={coBadgeSty(sel.company)}>{sel.company}</span>
+              <span style={typeBadgeSty(sel.type)}>{typeMeta(sel.type).label}</span>
+              <span style={stageBadgeSty(tab,curStage)}><span style={stageDotSty(tab,curStage)}/>{stageMeta(tab,curStage).label}</span>
+            </div>
+          </div>
+          <button onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid #e8dde4',background:'#fff',color:'#7a818d',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'20px 22px'}}>
+          <div style={{fontSize:'13px',color:'#5b6371',marginBottom:'6px'}}>{sel.party}</div>
+          {(()=>{const ov=(this._overrides||{})[sel.poNo];return (ov&&ov._ts)?<div style={{fontSize:'10.5px',color:'#a99fa8',marginBottom:'14px'}}>แก้ไขล่าสุด {new Date(ov._ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</div>:<div style={{marginBottom:'14px'}}/>;})()}
+          {!editing&&<>
+            <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#faf6f8',border:'1px solid #f0e9ed',borderRadius:'12px',padding:'14px 16px',marginBottom:'18px'}}>
+              <div style={{minWidth:0,flex:1}}><div style={{fontSize:'11px',color:'#a99fa8'}}>ต้นทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.origin||'—'}</div></div>
+              <span style={{display:'flex',color:'#c91253',flexShrink:0}}><Ico name="arrow" size={18} sw={1.9}/></span>
+              <div style={{minWidth:0,flex:1,textAlign:'right'}}><div style={{fontSize:'11px',color:'#a99fa8'}}>ปลายทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.dest||'—'}</div></div>
+            </div>
+            <SectionTitle>ข้อมูลขนส่ง</SectionTitle>
+            <div style={{display:'flex',flexDirection:'column',gap:'11px',marginBottom:'22px'}}>
+              {[['BL / AWB',sel.bl],['ตู้คอนเทนเนอร์',sel.container],['เรือ / เที่ยว',sel.vessel],['ตัวแทนขนส่ง',sel.forwarder],['ETD (ออกเดินทาง)',fmtDate(sel.etd)],['ETA (ถึงปลายทาง)',fmtDate(sel.eta)]].map(([l,v])=>(
+                <Row key={l} label={l} value={v||'—'}/>
+              ))}
+            </div>
+            <SectionTitle>ต้นทุน (บาท)</SectionTitle>
+            <div style={{display:'flex',flexDirection:'column',gap:'10px',marginBottom:'8px'}}>
+              {[['มูลค่าสินค้า ('+sel.cur+' '+Math.round(sel.amount).toLocaleString()+')',fmtBaht(goods)],['ค่าขนส่ง',fmtBaht(sel.freight)],['อากรขาเข้า',fmtBaht(sel.duty)],['ภาษีมูลค่าเพิ่ม',fmtBaht(sel.vat)]].map(([l,v])=>(
+                <Row key={l} label={l} value={v}/>
+              ))}
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',gap:'12px',background:'#fce7f3',border:'1px solid #fbcfe8',borderRadius:'10px',padding:'12px 14px',marginBottom:'22px'}}>
+              <span style={{fontSize:'13px',fontWeight:600,color:'#14181f'}}>ต้นทุนรวม</span>
+              <span style={{fontSize:'14px',fontWeight:700,color:'#c91253',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(total)}</span>
+            </div>
+            <SectionTitle>ไทม์ไลน์</SectionTitle>
+            <div style={{display:'flex',flexDirection:'column'}}>
+              {timeline.map(s=>(
+                <div key={s.key} style={{display:'flex',gap:'14px'}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
+                    <span style={s.done?{width:'24px',height:'24px',borderRadius:'50%',background:'#c91253',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}:s.cur?{width:'24px',height:'24px',borderRadius:'50%',background:'#fff',border:'3px solid #c91253',boxShadow:'0 0 0 4px #fce7f3',flexShrink:0}:{width:'24px',height:'24px',borderRadius:'50%',background:'#fff',border:'2px solid #e8dde4',flexShrink:0}}>
+                      {s.done&&<Ico name="check" size={13} sw={2.4}/>}
+                    </span>
+                    {s.showLine&&<span style={{width:'2px',flex:1,minHeight:'24px',background:s.done?'#c91253':'#eee5ea',marginTop:'2px',marginBottom:'2px'}}/>}
+                  </div>
+                  <div style={{paddingBottom:'18px',minWidth:0}}>
+                    <div style={{fontSize:'13.5px',fontWeight:(s.done||s.cur)?600:500,color:(s.done||s.cur)?'#14181f':'#bcb2ba'}}>{s.label}</div>
+                    <div style={{fontSize:'11.5px',color:'#a99fa8',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}>{s.date}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>}
+          {editing&&<div>
+            <SectionTitle>ท่าเรือ ต้นทาง / ปลายทาง</SectionTitle>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'22px'}}>
+              <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>ท่าต้นทาง</div>
+                <select value={ef.origin||''} onChange={e=>this.setEdit('origin',e.target.value)} style={SEL}>
+                  <option value="">— เลือกท่าต้นทาง —</option>
+                  {PORTS_ORIGIN.map(p=><option key={p} value={p}>{p}</option>)}
+                </select></div>
+              <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>ท่าปลายทาง</div>
+                <select value={ef.dest||''} onChange={e=>this.setEdit('dest',e.target.value)} style={SEL}>
+                  <option value="">— เลือกท่าปลายทาง —</option>
+                  {PORTS_DEST.map(p=><option key={p} value={p}>{p}</option>)}
+                </select></div>
+            </div>
+            <SectionTitle>ข้อมูลขนส่ง</SectionTitle>
+            <div style={{display:'flex',flexDirection:'column',gap:'13px',marginBottom:'14px'}}>
+              {[['BL / AWB','bl','text','เช่น COSU1234567'],['ตู้คอนเทนเนอร์','container','text','เช่น TGHU5521430'],['เรือ / เที่ยว','vessel','text','เช่น COSCO HARMONY'],['ETD — วันออกเดินทาง','etd','date',''],['ETA — วันถึงปลายทาง','eta','date','']].map(([l,k,t,ph])=>(
+                <div key={k}><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>{l}</div><input value={ef[k]||''} onChange={e=>this.setEdit(k,e.target.value)} type={t} placeholder={ph} style={INP}/></div>
+              ))}
+              <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>Freight Forwarder</div>
+                <input value={ef.forwarder||''} onChange={e=>this.setEdit('forwarder',e.target.value)} list="kobVL" placeholder="พิมพ์เพื่อค้นหา vendor…" style={INP}/>
+                <datalist id="kobVL">{vList.slice(0,500).map(v=><option key={v.name} value={v.name}/>)}</datalist></div>
+            </div>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',margin:'20px 0 11px'}}>
+              <SectionTitle>ต้นทุน (บาท)</SectionTitle>
+              <button onClick={()=>this.openBillPicker()} style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'6px 11px',border:'1.5px solid #c91253',borderRadius:'8px',background:'#fff',color:'#c91253',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="boxes" size={13} sw={1.8}/>เลือกบิลจาก Odoo</button>
+            </div>
+            {Array.isArray(ef.bills)&&ef.bills.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'5px',marginBottom:'12px',background:'#faf6f8',border:'1px solid #f0e9ed',borderRadius:'10px',padding:'10px 12px'}}>
+              <div style={{fontSize:'10.5px',fontWeight:700,color:'#a99fa8',letterSpacing:'.4px'}}>บิลที่จับคู่ ({ef.bills.length})</div>
+              {ef.bills.map(b=><div key={b.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',fontSize:'11.5px'}}>
+                <span style={{color:'#5b6371',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</span>
+                <span style={{display:'flex',alignItems:'center',gap:'6px',flexShrink:0}}>
+                  <span style={billCatSty(b.category)}>{billCatLabel(b.category)}</span>
+                  <span style={{fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(b.amount).toLocaleString()}</span>
+                </span>
+              </div>)}
+            </div>}
+            <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
+              {[['ค่าขนส่ง (Freight)','freight'],['อากรขาเข้า (Import Duty)','duty'],['ภาษีมูลค่าเพิ่ม (VAT)','vat']].map(([l,k])=>(
+                <div key={k}><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>{l}</div><input value={ef[k]===''||ef[k]==null?'':ef[k]} onChange={e=>this.setEdit(k,e.target.value)} type="number" placeholder="0" style={INP}/></div>
+              ))}
+            </div>
+            {costSrc&&<div style={{fontSize:'11px',color:costSrc.includes('ไม่พบ')?'#b91c1c':'#15803d',marginTop:'4px'}}>{costSrc}</div>}
+            <div style={{fontSize:'11px',fontWeight:700,color:'#a99fa8',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ปรับสถานะ</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:'7px'}}>
+              {stages.map(stg=>{const active=curStage===stg.key;return(
+                <button key={stg.key} onClick={()=>this.setEdit('stage',stg.key)} style={{padding:'7px 12px',borderRadius:'9px',border:active?'1.5px solid '+stg.color:'1.5px solid #e8dde4',background:active?stg.color+'15':'#fff',color:active?stg.color:'#5b6371',fontFamily:'inherit',fontSize:'12px',fontWeight:active?600:500,cursor:'pointer'}}>{stg.label}</button>
+              );})}
+            </div>
+          </div>}
+        </div>
+        <div style={{padding:'14px 22px',borderTop:'1px solid #e8dde4',display:'flex',gap:'10px'}}>
+          {!editing&&<>
+            <button onClick={()=>this.setState({detailId:null})} style={{flex:1,height:'40px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ปิด</button>
+            <button onClick={()=>this.startEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="edit" size={15} sw={1.8}/>แก้ไข</button>
+          </>}
+          {editing&&<>
+            <button onClick={()=>this.cancelEdit()} style={{flex:1,height:'40px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
+            <button onClick={()=>this.saveEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:savingEdit?'default':'pointer',opacity:savingEdit?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="check" size={15} sw={2.2}/>{savingEdit?'กำลังบันทึก…':'บันทึก'}</button>
+          </>}
+        </div>
+      </div>
+      {billPicker&&this.renderBillPicker()}
+    </>;
+  }
+
+  renderBillPicker(){
+    const {billList,billLoading,billQuery,selBills}=this.state;
+    const q=(billQuery||'').trim().toLowerCase();
+    const all=billList||[];
+    const list=q?all.filter(b=>((b.partner||'')+' '+(b.bill||'')+' '+(b.ref||'')+' '+(b.date||'')).toLowerCase().includes(q)):all;
+    // บิลที่ถูกจับคู่กับ shipment อื่นไปแล้ว → เตือนกันต้นทุนนับซ้ำ
+    const curPo=this.state.editForm?this.state.editForm.poNo:'';
+    const usedBy={};const ovAll=this._overrides||{};
+    Object.keys(ovAll).forEach(k=>{if(k===curPo)return;((ovAll[k]&&ovAll[k].bills)||[]).forEach(b=>{if(b&&b.id!=null&&!usedBy[b.id])usedBy[b.id]=k;});});
+    const sel=selBills||{};
+    const selArr=Object.values(sel);
+    const sumF=selArr.reduce((a,b)=>a+(b.freight||0),0);
+    const sumD=selArr.reduce((a,b)=>a+(b.duty||0),0);
+    const sumV=selArr.reduce((a,b)=>a+(b.vat||0),0);
+    return <>
+      <div onClick={()=>this.closeBillPicker()} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.45)',zIndex:70,animation:'kobFadeIn .2s ease'}}/>
+      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'520px',maxWidth:'96vw',background:'#fff',zIndex:71,boxShadow:'-12px 0 40px rgba(20,24,31,.18)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
+        <div style={{padding:'20px 22px 14px',borderBottom:'1px solid #e8dde4'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
+            <div><div style={{fontSize:'16px',fontWeight:700,color:'#14181f'}}>เลือกบิลค่าขนส่ง / ภาษี</div>
+              <div style={{fontSize:'11.5px',color:'#a99fa8',marginTop:'2px'}}>จาก Odoo · เลือกบิลที่เป็นของ shipment นี้ (เลือกได้หลายใบ)</div></div>
+            <button onClick={()=>this.closeBillPicker()} style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid #e8dde4',background:'#fff',color:'#7a818d',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',background:'#faf6f8',border:'1.5px solid #e8dde4',borderRadius:'9px',padding:'0 12px',height:'38px',marginTop:'14px'}}>
+            <span style={{display:'flex',color:'#a99fa8'}}><Ico name="search" size={16} sw={1.8}/></span>
+            <input value={billQuery} onChange={e=>this.setState({billQuery:e.target.value})} placeholder="ค้นหา ผู้ขาย / เลขบิล / วันที่…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'#14181f',width:'100%'}}/>
+          </div>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'12px 16px'}}>
+          {billLoading&&<div style={{textAlign:'center',color:'#a99fa8',fontSize:'13px',padding:'40px 0'}}>กำลังโหลดบิลจาก Odoo…</div>}
+          {!billLoading&&list.length===0&&<div style={{textAlign:'center',color:'#bcb2ba',fontSize:'13px',padding:'40px 0'}}>ไม่พบบิล{q?'ที่ตรงกับคำค้น':''}</div>}
+          {!billLoading&&list.map(b=>{
+            const on=!!sel[b.id];
+            const used=usedBy[b.id];
+            return <div key={b.id} onClick={()=>this.toggleBill(b)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',marginBottom:'7px',border:on?'1.5px solid #c91253':'1.5px solid #ece3e8',borderRadius:'11px',background:on?'#fdf2f8':(used?'#fffbeb':'#fff'),cursor:'pointer',opacity:used&&!on?0.75:1}}>
+              <span style={{width:'20px',height:'20px',borderRadius:'6px',border:on?'0':'1.5px solid #d9d0d6',background:on?'#c91253':'#fff',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{on&&<Ico name="check" size={13} sw={2.6}/>}</span>
+              <div style={{minWidth:0,flex:1}}>
+                <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</div>
+                <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'3px',flexWrap:'wrap'}}>
+                  <span style={billCatSty(b.category)}>{billCatLabel(b.category)}</span>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'10.5px',color:'#a99fa8'}}>{b.bill}</span>
+                  <span style={{fontSize:'10.5px',color:'#a99fa8'}}>· {fmtDate(b.date)}</span>
+                  {used&&<span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:'#fef3c7',color:'#b45309'}}>ใช้กับ {used} แล้ว</span>}
+                </div>
+              </div>
+              <span style={{fontSize:'13px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums',flexShrink:0}}>฿{Math.round(b.amount).toLocaleString()}</span>
+            </div>;
+          })}
+        </div>
+        <div style={{padding:'12px 22px 14px',borderTop:'1px solid #e8dde4'}}>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:'11.5px',color:'#7a818d',marginBottom:'10px'}}>
+            <span>เลือก {selArr.length} บิล</span>
+            <span style={{fontVariantNumeric:'tabular-nums'}}>ขนส่ง ฿{Math.round(sumF).toLocaleString()} · อากร ฿{Math.round(sumD).toLocaleString()} · VAT ฿{Math.round(sumV).toLocaleString()}</span>
+          </div>
+          <div style={{display:'flex',gap:'10px'}}>
+            <button onClick={()=>this.closeBillPicker()} style={{flex:1,height:'42px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
+            <button onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้บิลที่เลือก (฿{Math.round(sumF+sumD+sumV).toLocaleString()})</button>
+          </div>
+        </div>
+      </div>
+    </>;
+  }
+
+  // ── Panel รายการต้องติดตาม (ETA เลยกำหนด / ใกล้ถึง) ──
+  renderAlerts(){
+    const al=this.alerts();
+    return <>
+      <div onClick={()=>this.setState({alertsOpen:false})} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.4)',zIndex:60,animation:'kobFadeIn .2s ease'}}/>
+      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'420px',maxWidth:'94vw',background:'#fff',zIndex:61,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid #e8dde4'}}>
+          <div><div style={{fontSize:'16px',fontWeight:700,color:'#14181f'}}>ต้องติดตาม ({al.length})</div>
+            <div style={{fontSize:'11.5px',color:'#a99fa8',marginTop:'2px'}}>ETA เลยกำหนด หรือถึงภายใน 3 วัน (ยังไม่ปิดงาน)</div></div>
+          <button onClick={()=>this.setState({alertsOpen:false})} style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid #e8dde4',background:'#fff',color:'#7a818d',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'14px 16px'}}>
+          {al.length===0&&<div style={{textAlign:'center',color:'#bcb2ba',fontSize:'13px',padding:'40px 0'}}>ไม่มีรายการค้างติดตาม 🎉</div>}
+          {al.map(({s,days,kind})=>{
+            const tab=s._board==='export'?'export':'import';
+            return <div key={s.id} onClick={()=>this.setState({alertsOpen:false,tab:s._board,detailId:s.id,editing:false,editForm:null})} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 13px',marginBottom:'8px',border:'1px solid #ece3e8',borderLeft:'3px solid '+(kind==='late'?'#dc2626':'#d97706'),borderRadius:'0 10px 10px 0',background:'#fff',cursor:'pointer'}}>
+              <div style={{minWidth:0,flex:1}}>
+                <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'#14181f'}}>{s.poNo}</span>
+                  <span style={coBadgeSty(s.company)}>{s.company}</span>
+                </div>
+                <div style={{fontSize:'11.5px',color:'#7a818d',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.party}</div>
+                <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'5px'}}>
+                  <span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{stageMeta(tab,s.stage).label}</span>
+                  <span style={{fontSize:'11px',color:'#a99fa8'}}>ETA {fmtDate(s.eta)}</span>
+                </div>
+              </div>
+              <span style={{fontSize:'11.5px',fontWeight:700,color:kind==='late'?'#dc2626':'#d97706',whiteSpace:'nowrap',flexShrink:0}}>{days<0?('เลย '+Math.abs(days)+' วัน'):days===0?'ถึงวันนี้':('อีก '+days+' วัน')}</span>
+            </div>;
+          })}
+        </div>
+      </div>
+    </>;
+  }
+
+  renderCreateForm(){
+    const {creating,saving,form}=this.state;
+    if(!creating)return null;
+    const sf=(k,v)=>this.setState(s=>({form:{...s.form,[k]:v}}));
+    return <>
+      <div onClick={()=>this.setState({creating:false})} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.4)',zIndex:62,animation:'kobFadeIn .2s ease'}}/>
+      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'520px',maxWidth:'96vw',background:'#fff',zIndex:63,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid #e8dde4'}}>
+          <div style={{fontSize:'16px',fontWeight:700,color:'#14181f'}}>{form.board==='export'?'เพิ่มรายการส่งออก':'เพิ่มรายการนำเข้า'}</div>
+          <button onClick={()=>this.setState({creating:false})} style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid #e8dde4',background:'#fff',color:'#7a818d',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'20px 22px'}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'14px'}}>
+            <FSelect label="ประเภทรายการ" value={form.board} onChange={e=>sf('board',e.target.value)}>
+              <option value="import">Import (นำเข้า)</option><option value="export">Export (ส่งออก)</option>
+            </FSelect>
+            <FSelect label="บริษัท" value={form.company} onChange={e=>sf('company',e.target.value)}>
+              <option value="KOB">KOB</option><option value="BTV">BTV</option>
+            </FSelect>
+            <FInput label="เลขที่ PO / SO" value={form.poNo} placeholder="KOBPO2605-…" onChange={e=>sf('poNo',e.target.value)}/>
+            <FSelect label="ประเภทสินค้า" value={form.type} onChange={e=>sf('type',e.target.value)}>
+              <option value="oversea">Oversea</option><option value="pk">Packaging</option><option value="fg">Finished</option>
+            </FSelect>
+            <div style={{gridColumn:'1 / -1'}}><FInput label="ผู้ขาย / ลูกค้า" value={form.party} placeholder="ชื่อบริษัทคู่ค้า" onChange={e=>sf('party',e.target.value)}/></div>
+            <FSelect label="การขนส่ง" value={form.mode} onChange={e=>sf('mode',e.target.value)}>
+              <option value="sea">ทางเรือ</option><option value="air">ทางอากาศ</option>
+            </FSelect>
+            <FInput label="ตัวแทนขนส่ง (Forwarder)" value={form.forwarder} placeholder="เช่น Sino-Trans" onChange={e=>sf('forwarder',e.target.value)}/>
+            <FSelect label="สกุลเงิน" value={form.cur} onChange={e=>sf('cur',e.target.value)}>
+              <option value="CNY">CNY ¥</option><option value="USD">USD $</option><option value="THB">THB ฿</option><option value="SGD">SGD S$</option>
+            </FSelect>
+            <FInput label="มูลค่าสินค้า" value={form.amount} type="number" placeholder="0" onChange={e=>sf('amount',e.target.value)}/>
+            <FSelect label="ท่าต้นทาง (Port of Origin)" value={form.origin} onChange={e=>sf('origin',e.target.value)}>
+              <option value="">— เลือกท่าต้นทาง —</option>
+              {PORTS_ORIGIN.map(p=><option key={p} value={p}>{p}</option>)}
+            </FSelect>
+            <FSelect label="ท่าปลายทาง (Port of Destination)" value={form.dest} onChange={e=>sf('dest',e.target.value)}>
+              <option value="">— เลือกท่าปลายทาง —</option>
+              {PORTS_DEST.map(p=><option key={p} value={p}>{p}</option>)}
+            </FSelect>
+            <FInput label="BL / AWB" value={form.bl} placeholder="—" onChange={e=>sf('bl',e.target.value)}/>
+            <FInput label="ตู้คอนเทนเนอร์" value={form.container} placeholder="—" onChange={e=>sf('container',e.target.value)}/>
+            <FInput label="ชื่อเรือ (Vessel)" value={form.vessel} placeholder="—" onChange={e=>sf('vessel',e.target.value)}/>
+            <FInput label="เที่ยว (Voyage)" value={form.voyage} placeholder="—" onChange={e=>sf('voyage',e.target.value)}/>
+            <FInput label="ETD (ออกเดินทาง)" value={form.etd} type="date" onChange={e=>sf('etd',e.target.value)}/>
+            <FInput label="ETA (ถึงปลายทาง)" value={form.eta} type="date" onChange={e=>sf('eta',e.target.value)}/>
+            <div style={{gridColumn:'1 / -1',height:'1px',background:'#f0e9ed',margin:'2px 0'}}/>
+            <FInput label="ค่าขนส่ง (฿)" value={form.freight} type="number" placeholder="0" onChange={e=>sf('freight',e.target.value)}/>
+            <FInput label="อากรขาเข้า (฿)" value={form.duty} type="number" placeholder="0" onChange={e=>sf('duty',e.target.value)}/>
+            <FInput label="ภาษีมูลค่าเพิ่ม (฿)" value={form.vat} type="number" placeholder="0" onChange={e=>sf('vat',e.target.value)}/>
+          </div>
+        </div>
+        <div style={{padding:'14px 22px',borderTop:'1px solid #e8dde4',display:'flex',gap:'10px'}}>
+          <button onClick={()=>this.setState({creating:false})} style={{flex:1,height:'42px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
+          <button onClick={()=>this.submitCreate()} style={{flex:2,height:'42px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:saving?'default':'pointer',opacity:saving?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>{saving?'กำลังบันทึก…':'บันทึก'}</button>
+        </div>
+      </div>
+    </>;
+  }
+
+  render(){
+    const {tab,view,toast}=this.state;
+    const isBoard=tab==='import'||tab==='export';
+    return <div style={{display:'flex',flexDirection:'column',height:'100vh',width:'100%',overflow:'hidden',background:'#f7f3f5'}}>
+      {this.renderTopbar()}
+      {this.renderTabs()}
+      <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
+        {isBoard&&<>
+          {this.renderToolbar(tab)}
+          <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
+            {view==='kanban'?this.renderKanban(tab):this.renderTable(tab)}
+          </div>
+        </>}
+        {tab==='dashboard'&&this.renderDashboard()}
+      </div>
+      {this.renderDetail()}
+      {this.renderCreateForm()}
+      {this.state.alertsOpen&&this.renderAlerts()}
+      {toast&&<div style={{position:'fixed',bottom:'24px',right:'24px',zIndex:80,display:'flex',alignItems:'center',gap:'9px',padding:'12px 16px',borderRadius:'11px',background:toast.kind==='error'?'#dc2626':toast.kind==='success'?'#16a34a':'#14181f',color:'#fff',fontSize:'13px',fontWeight:500,boxShadow:'0 14px 40px rgba(20,24,31,.24)',maxWidth:'360px',animation:'kobFadeIn .2s ease'}}>{toast.msg}</div>}
+    </div>;
+  }
+}
+
+function SectionTitle({children}){
+  return <div style={{fontSize:'11px',fontWeight:700,color:'#a99fa8',letterSpacing:'.6px',textTransform:'uppercase',paddingBottom:'9px',borderBottom:'1px solid #e8dde4',marginBottom:'13px'}}>{children}</div>;
+}
+function Row({label,value}){
+  return <div style={{display:'flex',justifyContent:'space-between',gap:'12px'}}>
+    <span style={{fontSize:'12.5px',color:'#7a818d'}}>{label}</span>
+    <span style={{fontSize:'12.5px',color:'#14181f',fontWeight:500,textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{value}</span>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
