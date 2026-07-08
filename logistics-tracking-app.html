@@ -107,6 +107,23 @@ function billCatLabel(c){return ({freight:'ค่าขนส่ง',clearance:'
 // สถานะดิบจาก Odoo — แสดงคู่กับสถานะที่ระบบตีความ (stage) เพื่อให้ตรวจสอบไขว้กันได้
 function odooStateLabel(s){return ({draft:'ร่าง (draft)',sent:'ส่ง RFQ แล้ว',to_approve:'รออนุมัติ',purchase:'ยืนยันแล้ว (purchase)',done:'ล็อกแล้ว (done)',cancel:'ยกเลิก'})[s]||s||'—';}
 function receiptStatusLabel(s){return ({pending:'ยังไม่รับของ',partial:'รับบางส่วน',full:'รับครบแล้ว'})[s]||s||'—';}
+// สถานะย่อยจาก Odoo แบบสั้น สำหรับแสดงบนการ์ด — บอกว่า PO ยืนยันหรือยัง/รับของหรือยัง
+// ช่วยแยกแยะ PO ที่อยู่คอลัมน์เดียวกันว่าจริงๆ คืบหน้าต่างกันแค่ไหน
+function poStatusMini(s){
+  const parts=[];
+  const st={draft:'RFQ ร่าง',sent:'ส่ง PO แล้ว',to_approve:'รออนุมัติ',purchase:'PO ยืนยันแล้ว',done:'ปิด PO',cancel:'ยกเลิก'}[s._odooState];
+  if(st)parts.push(st);
+  const rc={partial:'รับของบางส่วน',full:'รับของครบ'}[s._receiptStatus];
+  if(rc)parts.push(rc);
+  return parts.join(' · ');
+}
+function poStatusColor(s){
+  if(s._receiptStatus==='full')return '#16a34a';
+  if(s._receiptStatus==='partial')return '#d97706';
+  if(s._odooState==='purchase'||s._odooState==='done')return '#2563eb';
+  if(s._odooState==='draft'||s._odooState==='sent')return '#94a3b8';
+  return '#94a3b8';
+}
 function billCatSty(c){const m=({freight:{bg:'#dbeafe',fg:'#1d4ed8'},clearance:{bg:'#fae8ff',fg:'#a21caf'},insurance:{bg:'#ccfbf1',fg:'#0f766e'},duty:{bg:'#ffedd5',fg:'#c2410c'},vat:{bg:'#dcfce7',fg:'#15803d'}})[c]||{bg:'#f3edf0',fg:'#7a818d'};return {display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:m.bg,color:m.fg};}
 // ต้นทุนนำเข้ารวมของ shipment (ไม่รวมมูลค่าสินค้า)
 function costSum(s){return (s.freight||0)+(s.clearance||0)+(s.insurance||0)+(s.duty||0)+(s.vat||0);}
@@ -177,25 +194,26 @@ class App extends Component {
     let overrides={},trackingRows=null;
     try{const j=await grab('/api/tracking');if(j&&j.ok&&Array.isArray(j.rows)){trackingRows=j.rows;j.rows.forEach(r=>{const k=r.po_so||r.poNo;if(k)overrides[k]=r;});}}catch(e){}
     this._overrides=overrides;
-    // ดึง import-pos/export-sos จาก Odoo สด — ลองซ้ำ 1 ครั้งก่อนยอมแพ้ เพราะการเชื่อมต่อ
-    // อาจสะดุดชั่วขณะ (network blip) ไม่ใช่ล่มจริง — กัน false fallback ที่ทำให้ตัวเลขหาย
+    // ดึง import-pos/export-sos — server เสิร์ฟ snapshot ล่าสุดให้ทันทีถ้า Odoo หลุด
+    // (มี flag stale + as_of บอกว่าเป็นข้อมูลสดหรือชุดที่เก็บไว้ และเก็บไว้เมื่อไหร่)
+    const force=this._forceSync?'?force=1':'';
     async function fetchLive(){
-      const [imp,exp]=await Promise.all([grab('/api/import-pos').catch(()=>null),grab('/api/export-sos').catch(()=>null)]);
-      const rows=[];
-      if(imp&&imp.rows)imp.rows.forEach(r=>rows.push(this.mapPo(r,'import')));
-      if(exp&&exp.rows)exp.rows.forEach(r=>rows.push(this.mapPo(r,'export')));
-      return rows.length?rows:null;
+      const [imp,exp]=await Promise.all([grab('/api/import-pos'+force).catch(()=>null),grab('/api/export-sos'+force).catch(()=>null)]);
+      const rows=[];let stale=false,asOf=null;
+      if(imp&&imp.rows){imp.rows.forEach(r=>rows.push(this.mapPo(r,'import')));if(imp.stale)stale=true;if(imp.as_of)asOf=imp.as_of;}
+      if(exp&&exp.rows){exp.rows.forEach(r=>rows.push(this.mapPo(r,'export')));if(exp.stale)stale=true;}
+      return rows.length?{rows,stale,asOf}:null;
     }
-    let base=null,isLive=false;
-    try{ base=await fetchLive.call(this); }catch(e){}
-    if(!base){ await new Promise(r=>setTimeout(r,1500)); try{ base=await fetchLive.call(this); }catch(e){} }
-    if(base)isLive=true;
+    let res=null;
+    try{ res=await fetchLive.call(this); }catch(e){}
+    // ถ้าไม่ได้อะไรเลย ลองซ้ำ 1 ครั้ง (network blip)
+    if(!res){ await new Promise(r=>setTimeout(r,1500)); try{ res=await fetchLive.call(this); }catch(e){} }
+    let base=res?res.rows:null, isLive=res?!res.stale:false;
+    this._asOf=res?res.asOf:null;
+    // สำรองสุดท้าย: ข้อมูลที่ผู้ใช้เคยแก้เอง (tracking) — ใช้เมื่อไม่มีทั้ง live และ snapshot
     if(!base&&trackingRows&&trackingRows.length)base=trackingRows.map(r=>this.mapTracking(r));
     if(!base){
-      // ถ้าเคยมีข้อมูลจริงอยู่แล้ว (เช่น Sync ซ้ำแล้วพลาด) ห้ามล้างทิ้งเป็นข้อมูลตัวอย่าง —
-      // ให้คงของเดิมไว้ แค่แจ้งเตือนว่าครั้งนี้ดึงไม่สำเร็จ
       if(Array.isArray(this.state.shipments)&&this.state.shipments.length){
-        this.setState({dataSource:this.state.dataSource==='live'?'live':this.state.dataSource});
         this.showToast('ซิงค์ไม่สำเร็จ — แสดงข้อมูลชุดล่าสุดที่มีอยู่','error');
       } else {
         this.setState({shipments:null,dataSource:'sample'});
@@ -398,7 +416,8 @@ class App extends Component {
     this.setState({savingEdit:false});
   }
   // กด Sync = ล้าง cache ฝั่ง server ก่อน เพื่อให้ได้ข้อมูลสดจริง (ไม่ติด cache 5 นาที)
-  sync(){if(this.state.syncing)return;this.setState({syncing:true});fetch('/api/cache/clear').catch(()=>{}).then(()=>this.loadData()).then(()=>this.setState({syncing:false})).catch(()=>this.setState({syncing:false}));}
+  // กด Sync = บังคับ probe Odoo จริง (ข้าม circuit breaker + ล้าง cache ทั้งฝั่ง server)
+  sync(){if(this.state.syncing)return;this.setState({syncing:true});this._forceSync=true;fetch('/api/cache/clear').catch(()=>{}).then(()=>this.loadData()).then(()=>{this._forceSync=false;this.setState({syncing:false});}).catch(()=>{this._forceSync=false;this.setState({syncing:false});});}
   // อัตราแลกเปลี่ยน: ใช้ค่าจริงจาก Odoo ก่อน ถ้าไม่มีจึงใช้ค่า default
   fxRate(cur){const v=this._fx&&this._fx[cur];return (v&&v>0)?v:rateGuess(cur);}
 
@@ -478,8 +497,9 @@ class App extends Component {
   // ── Render sections ────────────────────────────────────────
   renderTopbar(){
     const {dataSource,lastSync,syncing,isNarrow}=this.state;
+    const asOfTxt=this._asOf?(()=>{const d=new Date(this._asOf);return d.toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});})():'';
     const dbConf=dataSource==='live'?{c:'#4ade80',t:'เชื่อมต่อ Odoo'}
-      :dataSource==='fallback'?{c:'#f59e0b',t:'Odoo หลุดชั่วคราว — ใช้ข้อมูลที่บันทึกไว้ล่าสุด'}
+      :dataSource==='fallback'?{c:'#f59e0b',t:(asOfTxt?('ข้อมูล ณ '+asOfTxt):'ใช้ข้อมูลที่บันทึกไว้')}
       :dataSource==='loading'?{c:'#fbbf24',t:'กำลังโหลด…'}
       :{c:'#9aa3b2',t:'โหมดตัวอย่าง'};
     return <header style={{display:'flex',alignItems:'center',gap:'14px',padding:'0 22px',height:'60px',background:'#14181f',flexShrink:0}}>
@@ -584,6 +604,10 @@ class App extends Component {
                     <span style={typeBadgeSty(s.type)}>{typeMeta(s.type).label}</span>
                     <span style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'11px',color:'#7a818d'}}><Ico name={s.mode==='air'?'plane':'ship'} size={13} sw={1.6}/>{s.mode==='air'?'อากาศ':'ทางเรือ'}</span>
                   </div>
+                  {poStatusMini(s)&&<div style={{display:'flex',alignItems:'center',gap:'5px',marginBottom:'9px',fontSize:'10.5px',color:'#7a818d'}}>
+                    <span style={{width:'6px',height:'6px',borderRadius:'50%',background:poStatusColor(s),flexShrink:0}}/>
+                    <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{poStatusMini(s)}</span>
+                  </div>}
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',paddingTop:'8px',borderTop:'1px solid #f0e9ed'}}>
                     <span style={{fontSize:'11.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(s.amount,s.cur)}</span>
                     <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:'#a99fa8'}}><Ico name="cal" size={12} sw={1.6}/>{fmtDate(s.eta)}</span>

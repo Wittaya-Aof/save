@@ -76,6 +76,50 @@ function backupTracking() {
 backupTracking();
 setInterval(backupTracking, 6 * 60 * 60 * 1000).unref(); // เช็คทุก 6 ชม.
 
+// ─── Snapshot ข้อมูล Odoo ล่าสุดลงดิสก์ ──────────────────────────
+// เก็บผล import-pos/export-sos/fx ที่ดึงสำเร็จครั้งล่าสุด เพื่อ:
+//   1) เปิดหน้าเว็บได้ทันทีแม้ Odoo หลุด (ไม่ต้องรอ timeout)
+//   2) ข้อมูลไม่หายเมื่อ restart server
+const SNAPSHOT_FILE = path.join(ROOT, 'odoo_snapshot.json');
+let snapshot = { _ts: {} };
+try {
+  if (fs.existsSync(SNAPSHOT_FILE)) snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8'));
+  if (!snapshot._ts) snapshot._ts = {};
+} catch (e) { console.error('[Snapshot] load error:', e.message); snapshot = { _ts: {} }; }
+let _snapSaveTimer = null;
+function saveSnapshot() {
+  clearTimeout(_snapSaveTimer);
+  _snapSaveTimer = setTimeout(() => {
+    try { fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snapshot), 'utf8'); }
+    catch (e) { console.error('[Snapshot] save error:', e.message); }
+  }, 500);
+}
+
+// ─── Circuit breaker: จำว่า DB เพิ่งล่ม เพื่อไม่ให้ทุก request เสียเวลา
+// รอ timeout 6 วินาทีซ้ำๆ — ระหว่างที่ยังล่ม เสิร์ฟ snapshot ทันที ───
+let dbDownUntil = 0;
+const DB_DOWN_WINDOW = 20000; // 20 วินาที
+const dbLikelyDown = () => Date.now() < dbDownUntil;
+const markDbDown   = () => { dbDownUntil = Date.now() + DB_DOWN_WINDOW; };
+const markDbUp     = () => { dbDownUntil = 0; };
+
+// ดึงข้อมูลสด ถ้าล้มเหลว → เสิร์ฟ snapshot ล่าสุด (พร้อม flag stale + เวลาที่ดึง)
+// force=true → ข้าม circuit breaker (ใช้ตอนกด Sync เพื่อ probe จริง)
+async function liveOrSnapshot(key, sql, force) {
+  // cachedQuery จัดการ circuit breaker + retry ให้แล้ว — ที่นี่แค่เพิ่มชั้น disk snapshot
+  // (ข้อมูลสดล่าสุดที่ persist ไว้) เพื่อเสิร์ฟต่อเมื่อ DB ล่มและ in-memory cache ก็หมดอายุ
+  try {
+    const rows = await cachedQuery(key, sql, force);
+    snapshot[key] = rows;
+    snapshot._ts[key] = new Date().toISOString();
+    saveSnapshot();
+    return { rows, stale: false, as_of: snapshot._ts[key] };
+  } catch (e) {
+    if (snapshot[key]) return { rows: snapshot[key], stale: true, as_of: snapshot._ts[key] || null, reason: e.message };
+    throw e;
+  }
+}
+
 // ─── Postgres connection (read-only user, ค่าจาก .env) ───────────
 const db = new Pool({
   host:     process.env.DB_HOST,
@@ -310,17 +354,24 @@ const SQL_STATS = `
 const cache = { data: {}, ts: {} };
 const CACHE_TTL = 5 * 60 * 1000;
 
-async function cachedQuery(key, sql) {
+async function cachedQuery(key, sql, force) {
   const now = Date.now();
   if (cache.data[key] && (now - cache.ts[key]) < CACHE_TTL) {
     return cache.data[key];
   }
-  // เครือข่ายไป RDS สะดุดเป็นระยะ — ลองซ้ำสั้นๆ ก่อนปล่อยให้ error ขึ้นไปถึง client
+  // Circuit breaker — DB เพิ่งล่มและยังไม่หมด window: ไม่ลองซ้ำ (กันทุก endpoint
+  // เสียเวลารอ connect timeout 6 วิ ต่อ request). มี cache เก่าก็คืนไปก่อน
+  if (!force && dbLikelyDown()) {
+    if (cache.data[key]) return cache.data[key];
+    const e = new Error('DB recently down (circuit open)'); e.fast = true; throw e;
+  }
+  // เครือข่ายไป RDS สะดุดเป็นระยะ — ลองซ้ำสั้นๆ ก่อนยอมแพ้
   // เพื่อไม่ให้ blip 1 ครั้งกลายเป็น "Odoo หลุด" ทั้งที่จริงๆ กดใหม่อีกครั้งก็ผ่าน
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const result = await db.query(sql);
+      markDbUp();
       cache.data[key] = result.rows;
       cache.ts[key]   = now;
       return result.rows;
@@ -329,6 +380,7 @@ async function cachedQuery(key, sql) {
       if (attempt === 0) await new Promise(r => setTimeout(r, 800));
     }
   }
+  markDbDown(); // ทั้ง 2 ครั้งล้ม → เปิด circuit ให้ request ถัดๆ ไป fail เร็ว
   throw lastErr;
 }
 
@@ -393,9 +445,10 @@ const server = http.createServer(async (req, res) => {
   if (reqUrl.startsWith('/api/')) {
 
     if (reqUrl === '/api/import-pos' && method === 'GET') {
+      const force = new URL('http://x' + req.url).searchParams.get('force') === '1';
       try {
-        const rows = await cachedQuery('import', SQL_IMPORT);
-        jsonOk(res, { ok: true, count: rows.length, rows });
+        const r = await liveOrSnapshot('import', SQL_IMPORT, force);
+        jsonOk(res, { ok: true, count: r.rows.length, rows: r.rows, stale: r.stale, as_of: r.as_of });
       } catch (e) {
         console.error('[API] import-pos:', e.message);
         jsonErr(res, 500, e.message);
@@ -404,9 +457,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (reqUrl === '/api/export-sos' && method === 'GET') {
+      const force = new URL('http://x' + req.url).searchParams.get('force') === '1';
       try {
-        const rows = await cachedQuery('export', SQL_EXPORT);
-        jsonOk(res, { ok: true, count: rows.length, rows });
+        const r = await liveOrSnapshot('export', SQL_EXPORT, force);
+        jsonOk(res, { ok: true, count: r.rows.length, rows: r.rows, stale: r.stale, as_of: r.as_of });
       } catch (e) {
         console.error('[API] export-sos:', e.message);
         jsonErr(res, 500, e.message);
@@ -694,6 +748,8 @@ const server = http.createServer(async (req, res) => {
       const LOGI_PATTERN = 'dhl|kerry|pantos|yusen|sino.?trans|sitc|maersk|oocl|cma|evergreen|nippon|nyk|\\mups\\M|fedex|tnt|schenker|expeditors|ceva|dsv|geodis|panalpina|ขนส่ง|forwarder|freight|logistic|shipping|customs|ศุลกากร|broker|clearing|express|cargo|insurance|ประกันภัย|ชิปปิ้ง|marine|transport';
       // product category ของค่าใช้จ่ายนำเข้าใน Odoo (Expense / ... / Import Expenses)
       const IMPORT_CAT = '%Import Expens%';
+      // DB เพิ่งล่ม → ตอบ 503 ทันที ไม่ปล่อยให้ query ค้างรอ timeout 6 วิ
+      if (dbLikelyDown()) { jsonErr(res, 503, 'Odoo ไม่พร้อมใช้งานชั่วคราว'); return; }
       try {
         const args = [`%${q}%`];
         const billSearch = q ? `AND (rp.name ILIKE $1 OR am.ref::text ILIKE $1 OR (am.invoice_origin)::text ILIKE $1 OR am.name::text ILIKE $1)` : '';
@@ -854,10 +910,12 @@ const server = http.createServer(async (req, res) => {
         });
         out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
+        markDbUp();
         jsonOk(res, { ok: true, count: out.length, months, bills: out });
       } catch(e) {
+        if (/timeout|ETIMEDOUT|ECONNREFUSED|ECONNRESET|terminated/.test(e.message)) markDbDown();
         console.error('[API] logistics-bills:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErr(res, 503, 'โหลดรายการบิลไม่สำเร็จ: ' + e.message);
       }
       return;
     }
@@ -1054,6 +1112,7 @@ const server = http.createServer(async (req, res) => {
 
     if (reqUrl === '/api/cache/clear' && method === 'GET') {
       cache.data = {}; cache.ts = {};
+      markDbUp(); // กด Sync = อยากลอง Odoo จริง ปลด circuit breaker
       jsonOk(res, { ok: true, message: 'Cache cleared' });
       return;
     }
@@ -1266,4 +1325,24 @@ server.listen(PORT, HOST, () => {
   console.log(`║   Auth    : ${authStatus.substring(0,38).padEnd(38)} ║`);
   console.log(`║   Odoo RPC: ${odooStatus.substring(0,38).padEnd(38)} ║`);
   console.log('╚══════════════════════════════════════════════════╝\n');
+
+  // Warm-up: ดึงข้อมูลจาก Odoo ทันทีที่เปิด server (background) — ถ้าสำเร็จก็ได้
+  // snapshot สดไว้เสิร์ฟให้ browser ทันที; ถ้าล้ม circuit breaker จะถูกตั้งไว้แล้ว
+  // ทำให้ request แรกจาก browser ไม่ต้องเสียเวลารอ timeout เอง
+  const warm = async (label) => {
+    // probe เบาก่อน (SELECT 1) — รู้เร็วว่า DB ต่อได้ไหม โดยไม่ต้องยิง query หนัก
+    // ถ้าล่ม markDbDown ทันที (request จาก browser จะได้ fast-fail ไม่รอ timeout)
+    try { await db.query('SELECT 1'); }
+    catch (e) { markDbDown(); console.log('[' + label + '] Odoo ยังต่อไม่ได้ — เสิร์ฟ snapshot ล่าสุด'); return false; }
+    try {
+      await liveOrSnapshot('import', SQL_IMPORT, true);
+      await liveOrSnapshot('export', SQL_EXPORT, true);
+      console.log('[' + label + '] snapshot Odoo สำเร็จ', new Date().toISOString());
+      return true;
+    } catch (e) { return false; }
+  };
+  warm('Warmup');
+  // Probe เป็นระยะ — สร้าง/อัปเดต snapshot ทันทีที่ Odoo กลับมาต่อได้ แม้ไม่มีใครเปิดหน้าเว็บ
+  // ทำให้ครั้งถัดไปที่เปิด browser มีข้อมูลสดเสิร์ฟทันที ไม่ต้องรอ
+  setInterval(() => { warm('AutoProbe'); }, 2 * 60 * 1000).unref();
 });
