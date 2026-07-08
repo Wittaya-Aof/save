@@ -90,6 +90,13 @@ function fmtAmt(v,cur){
   return sym+Math.round(v||0).toLocaleString('en-US');
 }
 function rateGuess(cur){return ({CNY:4.77,USD:33.3,SGD:25.4,THB:1})[cur]||1;}
+// fetch ที่มี timeout จริง — เดิม fetch() ไม่มี timeout ในตัว ถ้าเครือข่ายไป Odoo ค้าง
+// (ไม่ reject ไม่ resolve) หน้าจอจะค้าง "กำลังโหลด…" ไปเรื่อยๆ โดยไม่มี error ให้เห็น
+function fetchTimeout(url,opts,ms){
+  const ctrl=new AbortController();
+  const t=setTimeout(()=>ctrl.abort(),ms||12000);
+  return fetch(url,{...opts,signal:ctrl.signal}).finally(()=>clearTimeout(t));
+}
 function stageMeta(tab,key){const list=tab==='export'?EXP_STAGES:IMP_STAGES;return list.find(s=>s.key===key)||list[0];}
 function typeMeta(t){
   return ({oversea:{label:'Oversea',bg:'#dbeafe',color:'#1d4ed8'},pk:{label:'Packaging',bg:'#ffedd5',color:'#c2410c'},fg:{label:'Finished',bg:'#ede9fe',color:'#6d28d9'}})[t]||{label:'Oversea',bg:'#dbeafe',color:'#1d4ed8'};
@@ -144,19 +151,26 @@ class App extends Component {
   constructor(props){
     super(props);
     const w=typeof window!=='undefined'?window.innerWidth:1280;
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,selBills:{},alertsOpen:false};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false};
     this._plan=null; this._overrides={}; this._tt=null; this._fx=null;
   }
   componentDidMount(){
     window.addEventListener('resize',this._onResize=()=>{const n=window.innerWidth<880;if(n!==this.state.isNarrow)this.setState({isNarrow:n});});
     this.loadData();
+    // อัปเดตข้อมูลจาก Odoo อัตโนมัติเป็นระยะ — ถ้าตอนนี้อยู่ในโหมด fallback (Odoo เพิ่งหลุด)
+    // จะได้กลับมาสถานะ live เองทันทีที่เชื่อมต่อได้ ไม่ต้องรอผู้ใช้กด Sync เอง
+    // ข้ามไปถ้ากำลังแก้ไข/เปิด picker อยู่ กันข้อมูลกระตุกระหว่างพิมพ์
+    this._autoRefresh=setInterval(()=>{
+      if(this.state.syncing||this.state.editing||this.state.creating||this.state.billPicker)return;
+      this.loadData();
+    },180000); // ทุก 3 นาที
   }
-  componentWillUnmount(){window.removeEventListener('resize',this._onResize);}
+  componentWillUnmount(){window.removeEventListener('resize',this._onResize);clearInterval(this._autoRefresh);}
   nowTime(){const d=new Date();return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+' น.';}
 
   async loadData(){
     this.setState({dataSource:'loading'});
-    const grab=async u=>{const r=await fetch(u,{headers:{Accept:'application/json'}});if(!r.ok)throw 0;return r.json();};
+    const grab=async u=>{const r=await fetchTimeout(u,{headers:{Accept:'application/json'}},12000);if(!r.ok)throw 0;return r.json();};
     // อัตราแลกเปลี่ยนล่าสุดจาก Odoo (ใช้ตอนสร้างรายการใหม่ — fallback เป็นค่า default ถ้าโหลดไม่ได้)
     if(!this._fx){try{const fx=await grab('/api/fx-rates');if(fx&&fx.ok){const m={};(fx.rows||[]).forEach(r=>{m[r.currency]=r.thb_per_unit;});this._fx=m;}}catch(e){}}
     try{const p=await grab('/api/import-plan');this._plan=(p&&p.ok&&p.rows)?p.rows:null;}catch(e){this._plan=null;}
@@ -320,6 +334,15 @@ class App extends Component {
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
   setEdit(k,v){this.setState(s=>({editForm:{...s.editForm,[k]:v}}));}
+  // ติ๊ก Over-receipt = ของถึงโกดังจริงแล้ว → ปิดงานทันที (ไม่ต้องไล่ผ่าน booking/customs)
+  // ปลดติ๊ก = ไม่บังคับสถานะคืน ให้ผู้ใช้เลือกเอง เพราะไม่รู้ว่าที่ถูกต้องคือขั้นไหน
+  toggleOverReceipt(checked){
+    this.setState(s=>{
+      const ef={...s.editForm,overReceipt:checked};
+      if(checked)ef.stage=ef.board==='export'?'arrived':'received';
+      return {editForm:ef};
+    });
+  }
   async loadVendors(){
     if(this.state.vendors)return;
     try{const r=await fetch('/api/vendors',{headers:{Accept:'application/json'}});const j=await r.json();this.setState({vendors:j&&j.rows?j.rows:[]});}
@@ -330,14 +353,21 @@ class App extends Component {
     const f=this.state.editForm;if(!f)return;
     // preselect บิลที่เคยจับคู่ไว้
     const sel={};(f.bills||[]).forEach(b=>{sel[b.id]=b;});
-    this.setState({billPicker:true,billQuery:'',selBills:sel});
-    if(this.state.billList&&this.state.billList.length){return;}
+    this.setState({billPicker:true,billQuery:'',selBills:sel,billError:false});
+    // cache แยกตามบริษัท — เดิมเช็คแค่ "มีลิสต์อยู่แล้วหรือยัง" ทำให้เปิด BTV ต่อจาก KOB
+    // เห็นบิลของ KOB ค้างอยู่ (ผิดบริษัท)
+    if(this.state.billList&&this.state.billList.length&&this._billListCompany===f.company){return;}
     this.setState({billLoading:true});
     try{
-      const r=await fetch('/api/logistics-bills?company='+encodeURIComponent(f.company)+'&months=12',{headers:{Accept:'application/json'}});
+      const r=await fetchTimeout('/api/logistics-bills?company='+encodeURIComponent(f.company)+'&months=12',{headers:{Accept:'application/json'}},15000);
+      if(!r.ok)throw new Error('HTTP '+r.status);
       const j=await r.json();
+      this._billListCompany=f.company;
       this.setState({billList:(j&&j.bills)||[],billLoading:false});
-    }catch(e){this.setState({billList:[],billLoading:false});this.showToast('โหลดรายการบิลไม่สำเร็จ','error');}
+    }catch(e){
+      this.setState({billList:[],billLoading:false,billError:true});
+      this.showToast(e.name==='AbortError'?'เชื่อมต่อ Odoo ไม่ทันเวลา — ลองใหม่อีกครั้ง':'โหลดรายการบิลไม่สำเร็จ','error');
+    }
   }
   closeBillPicker(){this.setState({billPicker:false});}
   toggleBill(b){this.setState(s=>{const sel={...s.selBills};if(sel[b.id])delete sel[b.id];else sel[b.id]=b;return {selBills:sel};});}
@@ -458,9 +488,9 @@ class App extends Component {
         <div><div style={{fontWeight:700,fontSize:'14.5px',color:'#fff',letterSpacing:'.2px'}}>Logistics Tracking</div><div style={{fontSize:'11px',color:'#8b94a3'}}>KOB &amp; BTV · Import / Export</div></div>
       </div>
       <div style={{flex:1}}/>
-      <div style={{display:'flex',alignItems:'center',gap:'6px',padding:'4px 11px',borderRadius:'99px',background:dbConf.c+'1f',border:'1px solid '+dbConf.c+'44',flexShrink:0}}>
+      <div onClick={dataSource==='fallback'?()=>this.sync():undefined} title={dataSource==='fallback'?'คลิกเพื่อลองเชื่อมต่อ Odoo อีกครั้ง':''} style={{display:'flex',alignItems:'center',gap:'6px',padding:'4px 11px',borderRadius:'99px',background:dbConf.c+'1f',border:'1px solid '+dbConf.c+'44',flexShrink:0,cursor:dataSource==='fallback'?'pointer':'default'}}>
         <span style={{width:'7px',height:'7px',borderRadius:'50%',background:dbConf.c,boxShadow:'0 0 0 3px '+dbConf.c+'33'}}/>
-        <span style={{fontSize:'11.5px',fontWeight:500,color:dbConf.c}}>{dbConf.t}</span>
+        <span style={{fontSize:'11.5px',fontWeight:500,color:dbConf.c}}>{dbConf.t}{dataSource==='fallback'?' · คลิกลองใหม่':''}</span>
       </div>
       {!isNarrow&&lastSync!=='—'&&<span style={{fontSize:'11.5px',color:'#5b6371',whiteSpace:'nowrap'}}>ซิงค์ล่าสุด {lastSync}</span>}
       {(()=>{const al=this.alerts();const late=al.filter(a=>a.kind==='late').length;
@@ -818,9 +848,10 @@ class App extends Component {
             {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
             <div style={{fontSize:'11px',fontWeight:700,color:'#a99fa8',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ธงพิเศษ / หมายเหตุ</div>
             <label style={{display:'flex',alignItems:'center',gap:'9px',cursor:'pointer',marginBottom:'13px'}}>
-              <input type="checkbox" checked={!!ef.overReceipt} onChange={e=>this.setEdit('overReceipt',e.target.checked)} style={{width:'17px',height:'17px',accentColor:'#c91253',cursor:'pointer'}}/>
+              <input type="checkbox" checked={!!ef.overReceipt} onChange={e=>this.toggleOverReceipt(e.target.checked)} style={{width:'17px',height:'17px',accentColor:'#c91253',cursor:'pointer'}}/>
               <span style={{fontSize:'12.5px',color:'#14181f'}}>PO นี้เปิดเพื่อรับของส่วนเกินจากซัพพลายเออร์ (Over-receipt)</span>
             </label>
+            {ef.overReceipt&&<div style={{fontSize:'11px',color:'#b45309',marginTop:'-6px',marginBottom:'13px'}}>✓ ปรับสถานะเป็น{ef.board==='export'?'ถึงปลายทาง':'รับเข้าคลัง'}ให้อัตโนมัติ — ของถึงจริงแล้วจึงเปิด PO นี้</div>}
             <textarea value={ef.note||''} onChange={e=>this.setEdit('note',e.target.value)} placeholder="หมายเหตุเพิ่มเติม เช่น อ้างอิง PO ต้นทาง, เหตุผลที่ของเกิน…" rows={3} style={{...INP,height:'auto',padding:'9px 11px',resize:'vertical',fontFamily:'inherit'}}/>
           </div>}
         </div>
@@ -840,7 +871,7 @@ class App extends Component {
   }
 
   renderBillPicker(){
-    const {billList,billLoading,billQuery,selBills}=this.state;
+    const {billList,billLoading,billQuery,billError,selBills}=this.state;
     const q=(billQuery||'').trim().toLowerCase();
     const all=billList||[];
     const list=q?all.filter(b=>((b.partner||'')+' '+(b.bill||'')+' '+(b.ref||'')+' '+(b.date||'')).toLowerCase().includes(q)):all;
@@ -868,8 +899,12 @@ class App extends Component {
           </div>
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'12px 16px'}}>
-          {billLoading&&<div style={{textAlign:'center',color:'#a99fa8',fontSize:'13px',padding:'40px 0'}}>กำลังโหลดบิลจาก Odoo…</div>}
-          {!billLoading&&list.length===0&&<div style={{textAlign:'center',color:'#bcb2ba',fontSize:'13px',padding:'40px 0'}}>ไม่พบบิล{q?'ที่ตรงกับคำค้น':''}</div>}
+          {billLoading&&<div style={{textAlign:'center',color:'#a99fa8',fontSize:'13px',padding:'40px 0'}}>กำลังโหลดบิลจาก Odoo… (ไม่เกิน 15 วินาที)</div>}
+          {!billLoading&&billError&&<div style={{textAlign:'center',padding:'40px 0'}}>
+            <div style={{color:'#b91c1c',fontSize:'13px',marginBottom:'12px'}}>เชื่อมต่อ Odoo ไม่สำเร็จ</div>
+            <button onClick={()=>{this._billListCompany=null;this.openBillPicker();}} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'8px 16px',border:'1.5px solid #c91253',borderRadius:'9px',background:'#fff',color:'#c91253',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}><Ico name="sync" size={13} sw={2}/>ลองอีกครั้ง</button>
+          </div>}
+          {!billLoading&&!billError&&list.length===0&&<div style={{textAlign:'center',color:'#bcb2ba',fontSize:'13px',padding:'40px 0'}}>ไม่พบบิล{q?'ที่ตรงกับคำค้น':''}</div>}
           {!billLoading&&list.map(b=>{
             const on=!!sel[b.id];
             const used=usedBy[b.id];

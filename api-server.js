@@ -86,6 +86,11 @@ const db = new Pool({
   ssl:      { rejectUnauthorized: false },
   max:      5,
   idleTimeoutMillis: 30000,
+  // ไม่ตั้งไว้แต่เดิม ทำให้ query ค้างรอไม่จำกัดเวลาเมื่อเครือข่ายไป RDS มีปัญหา
+  // (หน้าเว็บเลย "กำลังโหลด…" ค้างตลอดโดยไม่มี error ให้เห็น) — บังคับ fail ไว ให้ retry ไว
+  connectionTimeoutMillis: 6000,
+  statement_timeout: 15000,
+  query_timeout: 15000,
 });
 
 db.on('error', (err) => console.error('[DB] Unexpected error:', err.message));
@@ -310,10 +315,21 @@ async function cachedQuery(key, sql) {
   if (cache.data[key] && (now - cache.ts[key]) < CACHE_TTL) {
     return cache.data[key];
   }
-  const result = await db.query(sql);
-  cache.data[key] = result.rows;
-  cache.ts[key]   = now;
-  return result.rows;
+  // เครือข่ายไป RDS สะดุดเป็นระยะ — ลองซ้ำสั้นๆ ก่อนปล่อยให้ error ขึ้นไปถึง client
+  // เพื่อไม่ให้ blip 1 ครั้งกลายเป็น "Odoo หลุด" ทั้งที่จริงๆ กดใหม่อีกครั้งก็ผ่าน
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const result = await db.query(sql);
+      cache.data[key] = result.rows;
+      cache.ts[key]   = now;
+      return result.rows;
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 0) await new Promise(r => setTimeout(r, 800));
+    }
+  }
+  throw lastErr;
 }
 
 // ─── MIME types ──────────────────────────────────────────────────
