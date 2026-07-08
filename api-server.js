@@ -98,7 +98,9 @@ function saveSnapshot() {
 // ─── Circuit breaker: จำว่า DB เพิ่งล่ม เพื่อไม่ให้ทุก request เสียเวลา
 // รอ timeout 6 วินาทีซ้ำๆ — ระหว่างที่ยังล่ม เสิร์ฟ snapshot ทันที ───
 let dbDownUntil = 0;
-const DB_DOWN_WINDOW = 20000; // 20 วินาที
+// window ต้องยาวกว่ารอบ AutoProbe (2 นาที) เพื่อให้ breaker เปิดต่อเนื่องตลอดช่วง DB ล่ม
+// (probe ทุก 2 นาทีจะรีเฟรช window ก่อนหมดอายุ) → ทุก request เสิร์ฟ snapshot ทันที ไม่มีช่วงค้าง 15 วิ
+const DB_DOWN_WINDOW = 150000; // 2.5 นาที
 const dbLikelyDown = () => Date.now() < dbDownUntil;
 const markDbDown   = () => { dbDownUntil = Date.now() + DB_DOWN_WINDOW; };
 const markDbUp     = () => { dbDownUntil = 0; };
@@ -1331,8 +1333,8 @@ server.listen(PORT, HOST, () => {
   // ทำให้ request แรกจาก browser ไม่ต้องเสียเวลารอ timeout เอง
   const warm = async (label) => {
     // probe เบาก่อน (SELECT 1) — รู้เร็วว่า DB ต่อได้ไหม โดยไม่ต้องยิง query หนัก
-    // ถ้าล่ม markDbDown ทันที (request จาก browser จะได้ fast-fail ไม่รอ timeout)
-    try { await db.query('SELECT 1'); }
+    // สำเร็จ → ปลด breaker ทันที (กลับมา live); ล้ม → markDbDown (request จาก browser fast-fail)
+    try { await db.query('SELECT 1'); markDbUp(); }
     catch (e) { markDbDown(); console.log('[' + label + '] Odoo ยังต่อไม่ได้ — เสิร์ฟ snapshot ล่าสุด'); return false; }
     try {
       await liveOrSnapshot('import', SQL_IMPORT, true);
