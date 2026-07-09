@@ -596,9 +596,14 @@ class App extends Component {
   buildTimeline(s,tab){
     const stages=tab==='export'?EXP_STAGES:IMP_STAGES;
     const curIdx=stages.findIndex(x=>x.key===s.stage);
-    const dateFor=k=>({po:'',booking:s.etd,transit:s.etd,arrived:s.eta,customs:s.eta,received:s.eta,draft:'',packing:s.etd,shipped:s.etd})[k];
+    const lastIdx=stages.length-1;
+    // ขั้นสุดท้าย (รับเข้าคลัง/ถึงปลายทาง) ใช้วันที่รับจริง (actualDate) ถ้ามี — แม่นกว่า eta ที่เป็นแค่ประมาณการ
+    const dateFor=k=>({po:'',booking:s.etd,transit:s.etd,arrived:s.actualDate||s.eta,customs:s.eta,received:s.actualDate||s.eta,draft:'',packing:s.etd,shipped:s.etd})[k];
     return stages.map((st,i)=>{
-      const done=i<curIdx,cur=i===curIdx;
+      // ขั้นสุดท้ายที่เป็นสถานะปัจจุบันแล้ว = จบกระบวนการ ไม่มีขั้นต่อไปให้ "กำลังดำเนินการ"
+      // ต้องติ๊กถูกเหมือนขั้นก่อนหน้า ไม่ใช่วงกลมค้างแบบ current (เดิมค้างเป็นวงกลมว่างตลอดไป)
+      const done=i<curIdx||(i===curIdx&&i===lastIdx);
+      const cur=i===curIdx&&i!==lastIdx;
       return {key:st.key,label:st.label,done,cur,date:(done||cur)?fmtDate(dateFor(st.key))||'เสร็จสิ้น':'—',color:st.color,showLine:i<stages.length-1};
     });
   }
