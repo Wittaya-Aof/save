@@ -38,6 +38,59 @@ const PORTS_DEST = [
   'BANGKOK PAT, THAILAND','BANGKOK UNITHAI, THAILAND','LAEM CHABANG, THAILAND'
 ];
 
+const SHIP_MODES = [
+  {key:'sea',label:'Sea Freight (ทางเรือ)'},
+  {key:'air',label:'Air Freight (ทางอากาศ)'},
+  {key:'courier',label:'Courier (เอกสาร/พัสดุด่วน)'}
+];
+const SEA_TYPES = [
+  {key:'LCL',label:"LCL (Less than Container Load)"},
+  {key:'FCL20',label:"FCL 20' GP"},
+  {key:'FCL40',label:"FCL 40' HQ"}
+];
+const COURIERS = ['FedEx','DHL','UPS','SF Express'];
+
+// ── มาตรฐาน Transit KPI (Total Lead Time = Transit port-to-port + Customs + Inland) หน่วย=วัน ──
+// อ้างอิงจาก Import_Transit_KPI_Standard.xlsx sheet "KPI Standard — FCL/LCL" (ทบทวนล่าสุด ก.ค. 2569
+// ดู sheet "Review 2026" ในไฟล์เดียวกันสำหรับปัจจัยฤดูกาล/ความเสี่ยงที่ควรบวกเพิ่ม)
+// match = คำที่ค้นใน PORTS_ORIGIN แบบ case-insensitive substring — ครอบคลุม 7 ท่าที่มีข้อมูลยืนยัน
+// (ไม่รวม SHANTOU — ยังไม่มีข้อมูลอ้างอิงเฉพาะ จะไม่แสดง KPI ให้ท่านี้เพื่อไม่เดาตัวเลข)
+const PORT_KPI = [
+  {match:['SHEKOU','NANSHA'],  label:'Shekou / Nansha',      fcl:9,  lcl:12},
+  {match:['SHENZHEN'],         label:'Shenzhen (Yantian)',   fcl:11, lcl:14},
+  {match:['GUANGZHOU','ZHUHAI'],label:'Guangzhou / Zhuhai',  fcl:12, lcl:15},
+  {match:['NINGBO'],           label:'Ningbo',               fcl:14, lcl:17},
+  {match:['SHANGHAI'],         label:'Shanghai',             fcl:15, lcl:18},
+  {match:['QINGDAO'],          label:'Qingdao',               fcl:16, lcl:19},
+  {match:['PUSAN','BUSAN'],    label:'Busan, Korea',         fcl:14, lcl:17}
+];
+function findPortKpi(origin){
+  const o=(origin||'').toUpperCase();
+  return PORT_KPI.find(p=>p.match.some(m=>o.includes(m)))||null;
+}
+// คืนมาตรฐานวัน ตาม origin + ประเภทตู้ (FCL20/FCL40 ถือเป็น FCL เดียวกันตาม Excel, LCL แยก)
+function kpiStandardDays(origin,seaType){
+  const p=findPortKpi(origin);if(!p)return null;
+  return {days:seaType==='LCL'?p.lcl:p.fcl,label:p.label};
+}
+// Transit Time จริง: ETD -> วันที่รับเข้าคลังจริง (actualDate) + เทียบมาตรฐาน (import + sea เท่านั้น
+// เพราะ Excel มาตรฐานครอบคลุมเฉพาะ sea freight ขาเข้า)
+function transitInfo(s){
+  if(!s||!s.etd||!s.actualDate)return null;
+  const d1=new Date(s.etd),d2=new Date(s.actualDate);
+  if(isNaN(d1)||isNaN(d2))return null;
+  const days=Math.round((d2-d1)/86400000);
+  if(days<0)return null;
+  const kpi=(s._board==='import'&&s.mode==='sea')?kpiStandardDays(s.origin,s.seaType):null;
+  return {days,kpi};
+}
+function shipModeLabel(s){
+  if(s.mode==='air')return 'Air Freight';
+  if(s.mode==='courier')return 'Courier'+(s.courierCo?' · '+s.courierCo:'');
+  const st=(SEA_TYPES.find(t=>t.key===s.seaType)||{}).label;
+  return 'Sea Freight'+(st?' · '+st:'')+((s.seaType==='FCL20'||s.seaType==='FCL40')&&s.containerQty?' × '+s.containerQty:'');
+}
+
 const IMP_STAGES = [
   {key:'po',label:'Purchase Order',color:'#64748b'},
   {key:'booking',label:'จองเรือ',color:'#2563eb'},
@@ -68,7 +121,8 @@ const PATHS = {
   arrow:'M5 12h14 M13 6l6 6-6 6',close:'M6 6l12 12 M18 6L6 18',
   edit:'M4 20h4l10-10-4-4L4 16z M14 6l4 4',check:'M5 12.5l4.5 4.5L19 7',
   bell:'M18 9a6 6 0 10-12 0c0 6.5-2.5 7.5-2.5 7.5h17S18 15.5 18 9 M10.3 20.5a2 2 0 003.4 0',
-  dl:'M12 3v11 M7 10l5 5 5-5 M4 20h16'
+  dl:'M12 3v11 M7 10l5 5 5-5 M4 20h16',
+  courier:'M3 8l9-5 9 5-9 5-9-5z M3 8v8l9 5 9-5V8 M12 13v8'
 };
 function Ico({name,size=18,sw=1.7}){
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -127,6 +181,31 @@ function poStatusColor(s){
 function billCatSty(c){const m=({freight:{bg:'#dbeafe',fg:'#1d4ed8'},clearance:{bg:'#fae8ff',fg:'#a21caf'},insurance:{bg:'#ccfbf1',fg:'#0f766e'},duty:{bg:'#ffedd5',fg:'#c2410c'},vat:{bg:'#dcfce7',fg:'#15803d'}})[c]||{bg:'#f3edf0',fg:'#7a818d'};return {display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:m.bg,color:m.fg};}
 // ต้นทุนนำเข้ารวมของ shipment (ไม่รวมมูลค่าสินค้า)
 function costSum(s){return (s.freight||0)+(s.clearance||0)+(s.insurance||0)+(s.duty||0)+(s.vat||0);}
+// ต้นทุนรวมแปลงเป็นบาท (มูลค่าสินค้า + ต้นทุนนำเข้า) — ใช้ทั้งตารางต้นทุนและ Dashboard
+function totalCostThb(s){return (s.amount||0)*(s.rate||0)+costSum(s);}
+// สรุปผล Transit Time เทียบ KPI สำหรับ import + sea freight เท่านั้น (ตรงกับที่มีมาตรฐานอ้างอิง)
+// onTime/late นับเฉพาะรายการที่มี ETD + วันที่รับจริง + มีมาตรฐานให้เทียบ (findPortKpi เจอ)
+function transitStats(list){
+  let onTime=0,late=0,noData=0;
+  list.forEach(s=>{
+    const ti=transitInfo(s);
+    if(!ti||!ti.kpi){noData++;return;}
+    if(ti.days<=ti.kpi.days)onTime++;else late++;
+  });
+  return {onTime,late,noData,measured:onTime+late};
+}
+// ปีจากวันที่ ETD (ถ้าไม่มีใช้ ETA) — ใช้จัดกลุ่มสรุปค่าใช้จ่ายรายปี/ไตรมาส
+function yearOf(s){
+  const d=new Date(s.etd||s.eta||s.orderDate||'');
+  return isNaN(d)?null:d.getFullYear();
+}
+// ไตรมาสแบบ 3 ช่วง/ปี (Q1=ม.ค.-เม.ย., Q2=พ.ค.-ส.ค., Q3=ก.ย.-ธ.ค.) ตามที่กำหนด
+function quarterOf(s){
+  const d=new Date(s.etd||s.eta||s.orderDate||'');
+  if(isNaN(d))return null;
+  const y=d.getFullYear(),m=d.getMonth()+1,q=m<=4?1:m<=8?2:3;
+  return {y,q,key:y+'-Q'+q,label:'Q'+q+'/'+(y+543-2500)};
+}
 function typeBadgeSty(t){const m=typeMeta(t);return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:600,background:m.bg,color:m.color};}
 function stageBadgeSty(tab,key){const m=stageMeta(tab,key);return {display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 9px',borderRadius:'99px',fontSize:'11px',fontWeight:600,background:m.color+'1a',color:m.color,whiteSpace:'nowrap'};}
 function stageDotSty(tab,key){return {width:'6px',height:'6px',borderRadius:'50%',background:stageMeta(tab,key).color,flexShrink:0};}
@@ -137,6 +216,25 @@ const SEL={...INP,cursor:'pointer',padding:'0 9px'};
 function Field({label,children}){return <div><label style={{display:'block',fontSize:'11px',fontWeight:600,color:'#7a818d',marginBottom:'5px'}}>{label}</label>{children}</div>;}
 function FInput({label,...p}){return <Field label={label}><input style={INP} {...p}/></Field>;}
 function FSelect({label,value,onChange,children}){return <Field label={label}><select style={SEL} value={value} onChange={onChange}>{children}</select></Field>;}
+// กลุ่มช่อง Ship Mode ที่ใช้ร่วมกันทั้งฟอร์มสร้าง/แก้ไข — เปลี่ยน Ship Mode แล้วโชว์ช่องย่อยตามประเภท
+// v = {mode,seaType,containerQty,courierCo} ปัจจุบัน, set(key,val) = setter ของฟอร์มนั้น
+function ShipModeFields({v,set}){
+  const isFcl=v.seaType==='FCL20'||v.seaType==='FCL40';
+  return <>
+    <FSelect label="Ship Mode (รูปแบบขนส่ง)" value={v.mode||'sea'} onChange={e=>set('mode',e.target.value)}>
+      {SHIP_MODES.map(m=><option key={m.key} value={m.key}>{m.label}</option>)}
+    </FSelect>
+    {v.mode==='sea'&&<FSelect label="Sea Type" value={v.seaType||''} onChange={e=>set('seaType',e.target.value)}>
+      <option value="">— เลือกประเภทตู้ —</option>
+      {SEA_TYPES.map(t=><option key={t.key} value={t.key}>{t.label}</option>)}
+    </FSelect>}
+    {v.mode==='sea'&&isFcl&&<FInput label="จำนวนตู้คอนเทนเนอร์" type="number" min="1" placeholder="เช่น 1" value={v.containerQty||''} onChange={e=>set('containerQty',e.target.value)}/>}
+    {v.mode==='courier'&&<FSelect label="บริษัทขนส่งพัสดุ (Courier)" value={v.courierCo||''} onChange={e=>set('courierCo',e.target.value)}>
+      <option value="">— เลือก Courier —</option>
+      {COURIERS.map(c=><option key={c} value={c}>{c}</option>)}
+    </FSelect>}
+  </>;
+}
 
 function sampleImports(){return [
   {id:'PO_15433',poNo:'KOBPO2604-08194',company:'KOB',party:'SHI JIA ZHUANG GAOOU TRADE CO.,LTD',type:'oversea',mode:'sea',stage:'booking',cur:'CNY',amount:218640,rate:4.77,origin:'PUSAN, KOREA',dest:'LAEM CHABANG, THAILAND',etd:'2026-06-22',eta:'2026-07-08',bl:'COSU6391882',container:'TGHU5521430',vessel:'COSCO HARMONY',forwarder:'Sino-Trans',freight:42000,duty:31500,vat:15800,_board:'import'},
@@ -159,9 +257,9 @@ function sampleExports(){return [
 ];}
 
 function defaultForm(board){
-  return {board:board||'import',company:'KOB',poNo:'',party:'',type:'oversea',mode:'sea',
+  return {board:board||'import',company:'KOB',poNo:'',party:'',type:'oversea',mode:'sea',seaType:'FCL20',containerQty:'',courierCo:'',
     cur:'CNY',amount:'',origin:'',dest:'LAEM CHABANG, THAILAND',
-    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',freight:'',clearance:'',insurance:'',duty:'',vat:''};
+    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',actualDate:'',freight:'',clearance:'',insurance:'',duty:'',vat:''};
 }
 
 class App extends Component {
@@ -233,8 +331,8 @@ class App extends Component {
   }
   applyOne(s,o){
     const m={...s};
-    ['origin','dest','bl','container','vessel','forwarder','etd','eta','note'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
-    ['freight','clearance','insurance','duty','vat'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
+    ['origin','dest','bl','container','vessel','forwarder','etd','eta','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
+    ['freight','clearance','insurance','duty','vat','containerQty'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
     if(o.overReceipt!=null)m.overReceipt=!!o.overReceipt;
     if(Array.isArray(o.bills))m.bills=o.bills;
     if(o.stage){
@@ -299,7 +397,10 @@ class App extends Component {
   mapPo(r,board){
     const stage=board==='export'?this.deriveExportStage(r):this.deriveImportStage(r);
     const rate=parseFloat(r.currency_rate)||0;
-    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',type:normType(''),mode:'sea',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
+    // orderDate = po.date_order/so.date_order — มีให้ทั้ง import/export เสมอ ใช้เป็น fallback
+    // จัดกลุ่มปี/ไตรมาสเมื่อยังไม่มี etd/eta (โดยเฉพาะ export ที่ SQL ไม่มี date_planned เลย
+    // ทำให้ eta ว่างเปล่าตลอด — ไม่มี orderDate ตัวนี้ export จะกลุ่มปีไม่ได้เลยสักรายการ)
+    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',type:normType(''),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
       _odooState:r.odoo_state||'',_receiptStatus:r.receipt_status||r.delivery_status||''};
   }
   mapTracking(r){
@@ -313,7 +414,7 @@ class App extends Component {
     // id ต้องไม่มีวันเป็น undefined — record ที่บันทึกผ่านฟอร์มแก้ไข/สร้างในแอปไม่มี r.id/r.odoo_id
     // (มีแค่ po_so) ถ้าปล่อยเป็น undefined หลาย record จะชนกัน ทำให้คลิกแล้วเปิดผิด PO
     const id=r.id||r.odoo_id||('t_'+(r.po_so||Math.random()));
-    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:odooRate>0?1/odooRate:1,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,_fallback:true};
+    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:odooRate>0?1/odooRate:1,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,_fallback:true};
   }
 
   allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
@@ -335,10 +436,10 @@ class App extends Component {
     if(this.state.saving)return;
     const f=this.state.form;this.setState({saving:true});
     const rate=this.fxRate(f.cur);
-    const ns={_board:f.board,id:'new_'+Date.now(),poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    const ns={_board:f.board,id:'new_'+Date.now(),poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
     this.setState({shipments:[ns].concat(this.allShipments()),creating:false,tab:f.board,view:'kanban'});
     const ov={...this._overrides};
-    ov[ns.poNo]={po_so:ns.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:ns.stage,origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    ov[ns.poNo]={po_so:ns.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
     this._overrides=ov;
     try{await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ov[ns.poNo])});this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');}
     catch(e){this.showToast('บันทึกออฟไลน์ชั่วคราว','info');}
@@ -347,7 +448,7 @@ class App extends Component {
 
   startEdit(){
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
-    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||''};
+    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||''};
     this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
@@ -357,7 +458,10 @@ class App extends Component {
   toggleOverReceipt(checked){
     this.setState(s=>{
       const ef={...s.editForm,overReceipt:checked};
-      if(checked)ef.stage=ef.board==='export'?'arrived':'received';
+      if(checked){
+        ef.stage=ef.board==='export'?'arrived':'received';
+        if(!ef.actualDate)ef.actualDate=new Date().toISOString().slice(0,10);
+      }
       return {editForm:ef};
     });
   }
@@ -407,7 +511,7 @@ class App extends Component {
     const f=this.state.editForm;if(!f||this.state.savingEdit)return;
     this.setState({savingEdit:true});
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
-    const o={po_so:f.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:f.stage||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
     const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
     this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
@@ -426,18 +530,22 @@ class App extends Component {
     if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
     const list=this.filtered(tab);
     if(!list.length){this.showToast('ไม่มีรายการให้ export','info');return;}
-    const rows=list.map(s=>({
+    const rows=list.map(s=>{
+      const ti=transitInfo(s);
+      return {
       'PO/SO':s.poNo,'บริษัท':s.company,'ผู้ขาย/ลูกค้า':s.party,
       'ประเภท':typeMeta(s.type).label,'สถานะ':stageMeta(tab,s.stage).label,
-      'ขนส่ง':s.mode==='air'?'อากาศ':'เรือ','สกุลเงิน':s.cur,'มูลค่าสินค้า':s.amount,
+      'Ship Mode':shipModeLabel(s),'สกุลเงิน':s.cur,'มูลค่าสินค้า':s.amount,
       'มูลค่าสินค้า (฿)':Math.round(s.amount*s.rate),'ค่าขนส่ง (฿)':s.freight||0,
       'ค่าเดินพิธีการ (฿)':s.clearance||0,'ค่าประกันภัย (฿)':s.insurance||0,
       'อากร (฿)':s.duty||0,'VAT (฿)':s.vat||0,
       'ต้นทุนรวม (฿)':Math.round(s.amount*s.rate+costSum(s)),
       'ต้นทาง':s.origin,'ปลายทาง':s.dest,'BL/AWB':s.bl,
       'ตู้':s.container,'เรือ/เที่ยว':s.vessel,'Forwarder':s.forwarder,
-      'ETD':s.etd,'ETA':s.eta,
-    }));
+      'ETD':s.etd,'ETA (ประมาณ)':s.eta,'วันที่รับจริง/ถึงจริง':s.actualDate||'',
+      'Transit จริง (วัน)':ti?ti.days:'','KPI มาตรฐาน (วัน)':ti&&ti.kpi?ti.kpi.days:'',
+      'ผลเทียบ KPI':ti&&ti.kpi?(ti.days-ti.kpi.days<=0?'ตรง/เร็วกว่า':('ล่าช้า '+(ti.days-ti.kpi.days)+' วัน')):'',
+    };});
     const ws=XLSX.utils.json_to_sheet(rows);
     ws['!cols']=Object.keys(rows[0]).map(k=>({wch:Math.max(k.length+2,12)}));
     const wb=XLSX.utils.book_new();
@@ -470,9 +578,10 @@ class App extends Component {
   // "รับแล้ว": ปิดงานทันที (import→รับเข้าคลัง / export→ถึงปลายทาง) — บันทึกลง server เลย
   async quickCloseAlert(s){
     const stage=s._board==='export'?'arrived':'received';
-    const o={...(this._overrides[s.poNo]||{}),po_so:s.poNo,_board:s._board,_edited:true,_ts:Date.now(),stage};
+    const actualDate=s.actualDate||new Date().toISOString().slice(0,10);
+    const o={...(this._overrides[s.poNo]||{}),po_so:s.poNo,_board:s._board,_edited:true,_ts:Date.now(),stage,actualDate};
     this._overrides={...this._overrides,[s.poNo]:o};
-    const rows=this.allShipments().map(x=>x.poNo===s.poNo?{...x,stage,_stageManual:true,_edited:true}:x);
+    const rows=this.allShipments().map(x=>x.poNo===s.poNo?{...x,stage,actualDate,_stageManual:true,_edited:true}:x);
     this.setState({shipments:rows});
     try{
       const r=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
@@ -602,7 +711,7 @@ class App extends Component {
                   <div style={{fontSize:'12.5px',color:'#14181f',fontWeight:500,margin:'7px 0 8px',lineHeight:'1.35',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{s.party}</div>
                   <div style={{display:'flex',alignItems:'center',gap:'5px',marginBottom:'9px'}}>
                     <span style={typeBadgeSty(s.type)}>{typeMeta(s.type).label}</span>
-                    <span style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'11px',color:'#7a818d'}}><Ico name={s.mode==='air'?'plane':'ship'} size={13} sw={1.6}/>{s.mode==='air'?'อากาศ':'ทางเรือ'}</span>
+                    <span style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'11px',color:'#7a818d',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'150px'}}><Ico name={s.mode==='air'?'plane':s.mode==='courier'?'courier':'ship'} size={13} sw={1.6}/>{shipModeLabel(s)}</span>
                   </div>
                   {poStatusMini(s)&&<div style={{display:'flex',alignItems:'center',gap:'5px',marginBottom:'9px',fontSize:'10.5px',color:'#7a818d'}}>
                     <span style={{width:'6px',height:'6px',borderRadius:'50%',background:poStatusColor(s),flexShrink:0}}/>
@@ -664,6 +773,25 @@ class App extends Component {
     const pmax=Math.max(1,...IMP_STAGES.map(stg=>impAll.filter(s=>s.stage===stg.key).length));
     const costSrc=impAll.filter(s=>costSum(s)>0).slice(0,7);
     const tg=costSrc.reduce((a,s)=>a+s.amount*s.rate,0),tf=costSrc.reduce((a,s)=>a+(s.freight||0)+(s.clearance||0)+(s.insurance||0),0),tt=costSrc.reduce((a,s)=>a+(s.duty||0)+(s.vat||0),0);
+
+    // ── สรุป Transit Time เทียบ KPI (import + sea freight) ──
+    const tstat=transitStats(impAll);
+
+    // ── สัดส่วนต้นทุนตามปี: Import vs Export ──
+    const yearMap={};
+    impAll.forEach(s=>{const y=yearOf(s);if(y==null)return;(yearMap[y]=yearMap[y]||{imp:0,exp:0}).imp+=totalCostThb(s);});
+    expAll.forEach(s=>{const y=yearOf(s);if(y==null)return;(yearMap[y]=yearMap[y]||{imp:0,exp:0}).exp+=totalCostThb(s);});
+    const yearRows=Object.keys(yearMap).map(Number).sort((a,b)=>a-b).map(y=>{
+      const v=yearMap[y],tot=v.imp+v.exp||1;
+      return {year:y,label:(y+543-2500)+' (พ.ศ. '+(y+543)+')',imp:v.imp,exp:v.exp,tot:v.imp+v.exp,impPct:v.imp/tot*100,expPct:v.exp/tot*100};
+    });
+
+    // ── เทียบต้นทุนตามไตรมาส (1 ปี = 3 ไตรมาส: Q1 ม.ค.-เม.ย., Q2 พ.ค.-ส.ค., Q3 ก.ย.-ธ.ค.) ──
+    const qMap={};
+    const addQ=(s,field)=>{const q=quarterOf(s);if(!q)return;const e=qMap[q.key]=qMap[q.key]||{y:q.y,q:q.q,label:q.label,imp:0,exp:0};e[field]+=totalCostThb(s);};
+    impAll.forEach(s=>addQ(s,'imp')); expAll.forEach(s=>addQ(s,'exp'));
+    const qRows=Object.keys(qMap).map(k=>qMap[k]).sort((a,b)=>a.y-b.y||a.q-b.q);
+    const qMax=Math.max(1,...qRows.map(r=>Math.max(r.imp,r.exp)));
     return <div style={{flex:1,overflowY:'auto',padding:'22px'}}>
       <div style={{maxWidth:'1240px',margin:'0 auto',display:'flex',flexDirection:'column',gap:'18px'}}>
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'repeat(2,1fr)':'repeat(4,1fr)',gap:isNarrow?'12px':'16px'}}>
@@ -714,6 +842,32 @@ class App extends Component {
             </div>
           </div>
         </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'6px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Transit Time KPI (นำเข้า · Sea Freight)</div>
+            <div style={{fontSize:'12px',color:'#a99fa8'}}>เทียบ ETD → วันที่รับเข้าคลังจริง กับมาตรฐานต่อท่า</div>
+          </div>
+          <div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'16px'}}>วัดได้ {tstat.measured} จาก {impAll.length} รายการ (ต้องมี ETD + วันที่รับจริง + มีมาตรฐานท่านั้น) · ยังไม่มีข้อมูล {tstat.noData} รายการ</div>
+          <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr 1fr':'repeat(3,1fr)',gap:isNarrow?'10px':'16px',marginBottom:'16px'}}>
+            <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'12px',padding:'14px 16px'}}>
+              <div style={{fontSize:'22px',fontWeight:700,color:'#15803d',fontVariantNumeric:'tabular-nums'}}>{tstat.onTime}</div>
+              <div style={{fontSize:'12px',color:'#166534',marginTop:'3px'}}>ตรงเวลา / เร็วกว่า KPI</div>
+            </div>
+            <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'12px',padding:'14px 16px'}}>
+              <div style={{fontSize:'22px',fontWeight:700,color:'#dc2626',fontVariantNumeric:'tabular-nums'}}>{tstat.late}</div>
+              <div style={{fontSize:'12px',color:'#991b1b',marginTop:'3px'}}>เกินระยะเวลา KPI</div>
+            </div>
+            <div style={{background:'#f3edf0',border:'1px solid #e8dde4',borderRadius:'12px',padding:'14px 16px'}}>
+              <div style={{fontSize:'22px',fontWeight:700,color:'#7a818d',fontVariantNumeric:'tabular-nums'}}>{tstat.noData}</div>
+              <div style={{fontSize:'12px',color:'#7a818d',marginTop:'3px'}}>ยังไม่มีข้อมูลวัด</div>
+            </div>
+          </div>
+          {tstat.measured>0&&<div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
+            <span style={{width:(tstat.onTime/tstat.measured*100)+'%',background:'#16a34a',transition:'width .5s'}}/>
+            <span style={{width:(tstat.late/tstat.measured*100)+'%',background:'#dc2626',transition:'width .5s'}}/>
+          </div>}
+          {tstat.measured>0&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'6px'}}>ตรงเวลา {Math.round(tstat.onTime/tstat.measured*100)}% ของรายการที่วัดได้</div>}
+        </div>
         <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',overflow:'hidden'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
             <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สรุปต้นทุนนำเข้าตาม PO</div>
@@ -745,6 +899,59 @@ class App extends Component {
             </table>
           </div>
         </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',overflow:'hidden'}}>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สัดส่วนต้นทุนตามปี — Import เทียบ Export</div>
+            <div style={{fontSize:'12px',color:'#a99fa8'}}>มูลค่าแปลงเป็นบาท (฿) · แยกตามปี ETD</div>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',minWidth:'620px'}}>
+              <thead><tr style={{background:'#faf6f8'}}>{['ปี','Import (฿)','Export (฿)','รวม (฿)','สัดส่วน Import : Export'].map((h,i)=>(
+                <th key={h} style={{textAlign:i>=1&&i<=3?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
+              ))}</tr></thead>
+              <tbody>{yearRows.map(y=>(
+                <tr key={y.year} style={{borderTop:'1px solid #f0e9ed'}}>
+                  <td style={{padding:'11px 14px',fontSize:'12.5px',fontWeight:600,color:'#14181f'}}>{y.label}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#c91253',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(y.imp)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#7c3aed',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(y.exp)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(y.tot)}</td>
+                  <td style={{padding:'11px 14px',minWidth:'160px'}}>
+                    <div style={{display:'flex',height:'9px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
+                      <span style={{width:y.impPct+'%',background:'#c91253'}}/>
+                      <span style={{width:y.expPct+'%',background:'#7c3aed'}}/>
+                    </div>
+                    <div style={{fontSize:'10.5px',color:'#a99fa8',marginTop:'4px'}}>{Math.round(y.impPct)}% : {Math.round(y.expPct)}%</div>
+                  </td>
+                </tr>
+              ))}
+              {yearRows.length===0&&<tr><td colSpan={5} style={{padding:'20px 14px',textAlign:'center',fontSize:'12.5px',color:'#bcb2ba'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามปี</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>เทียบต้นทุนตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'12px',color:'#a99fa8'}}>1 ปี = 3 ไตรมาส (Q1 ม.ค.-เม.ย. · Q2 พ.ค.-ส.ค. · Q3 ก.ย.-ธ.ค.)</div>
+          </div>
+          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371',marginBottom:'18px'}}>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>Import</span>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
+          </div>
+          {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
+          {qRows.length>0&&<div style={{display:'flex',alignItems:'flex-end',gap:isNarrow?'10px':'22px',overflowX:'auto',paddingBottom:'6px',minHeight:'180px'}}>
+            {qRows.map(q=>(
+              <div key={q.label} style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,minWidth:'58px'}}>
+                <div style={{display:'flex',alignItems:'flex-end',gap:'5px',height:'140px'}}>
+                  <div title={fmtBaht(q.imp)} style={{width:'16px',height:Math.max(2,q.imp/qMax*140)+'px',background:'linear-gradient(180deg,#e8408e,#c91253)',borderRadius:'4px 4px 0 0'}}/>
+                  <div title={fmtBaht(q.exp)} style={{width:'16px',height:Math.max(2,q.exp/qMax*140)+'px',background:'linear-gradient(180deg,#a78bfa,#7c3aed)',borderRadius:'4px 4px 0 0'}}/>
+                </div>
+                <div style={{fontSize:'11px',fontWeight:600,color:'#14181f',marginTop:'8px',whiteSpace:'nowrap'}}>{q.label}</div>
+                <div style={{fontSize:'9.5px',color:'#a99fa8',marginTop:'2px',whiteSpace:'nowrap'}}>{fmtBaht(q.imp+q.exp)}</div>
+              </div>
+            ))}
+          </div>}
+        </div>
       </div>
     </div>;
   }
@@ -753,7 +960,10 @@ class App extends Component {
     const {detailId,editing,editForm,vendors,expenseBusy,costSrc,savingEdit,billPicker,billList,billLoading,billQuery,selBills}=this.state;
     if(!detailId)return null;
     const sel=this.allShipments().find(s=>s.id===detailId);if(!sel)return null;
-    const tab=String(sel.id).startsWith('SO')?'export':'import';
+    // เดิมเช็ค sel.id.startsWith('SO') ซึ่งใช้ได้แค่กับรูปแบบ id ของ sample data เท่านั้น —
+    // ข้อมูลจริงจาก mapPo/mapTracking ไม่มี id แบบนั้น ทำให้ export ทุกรายการโดนตีเป็น import
+    // ผิดๆ (stage labels/KPI ผิดชุด) ใช้ sel._board ตรงๆ ถูกต้องกับทุกแหล่งข้อมูล
+    const tab=sel._board==='export'?'export':'import';
     const goods=sel.amount*sel.rate,total=goods+costSum(sel);
     const timeline=this.buildTimeline(sel,tab);
     const ef=editForm||{};
@@ -785,11 +995,23 @@ class App extends Component {
               <div style={{minWidth:0,flex:1,textAlign:'right'}}><div style={{fontSize:'11px',color:'#a99fa8'}}>ปลายทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.dest||'—'}</div></div>
             </div>
             <SectionTitle>ข้อมูลขนส่ง</SectionTitle>
-            <div style={{display:'flex',flexDirection:'column',gap:'11px',marginBottom:'22px'}}>
-              {[['BL / AWB',sel.bl],['ตู้คอนเทนเนอร์',sel.container],['เรือ / เที่ยว',sel.vessel],['ตัวแทนขนส่ง',sel.forwarder],['ETD (ออกเดินทาง)',fmtDate(sel.etd)],['ETA (ถึงปลายทาง)',fmtDate(sel.eta)]].map(([l,v])=>(
+            <div style={{display:'flex',flexDirection:'column',gap:'11px',marginBottom:'16px'}}>
+              {[['Ship Mode',shipModeLabel(sel)],['BL / AWB',sel.bl],['ตู้คอนเทนเนอร์',sel.container],['เรือ / เที่ยว',sel.vessel],['ตัวแทนขนส่ง',sel.forwarder],['ETD (ออกเดินทาง)',fmtDate(sel.etd)],['ETA (ประมาณ)',fmtDate(sel.eta)],[sel._board==='export'?'วันที่ถึงปลายทางจริง':'วันที่รับเข้าคลังจริง',fmtDate(sel.actualDate)]].map(([l,v])=>(
                 <Row key={l} label={l} value={v||'—'}/>
               ))}
             </div>
+            {(()=>{const ti=transitInfo(sel);if(!ti)return null;
+              const variance=ti.kpi?ti.days-ti.kpi.days:null;
+              const color=variance==null?'#2563eb':variance<=0?'#15803d':variance<=2?'#d97706':'#dc2626';
+              return <div style={{background:color+'12',border:'1px solid '+color+'33',borderRadius:'10px',padding:'12px 14px',marginBottom:'22px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+                  <span style={{fontSize:'12.5px',fontWeight:600,color:'#14181f'}}>Transit Time (ETD → {sel._board==='export'?'ถึงปลายทางจริง':'รับเข้าคลังจริง'})</span>
+                  <span style={{fontSize:'16px',fontWeight:700,color,fontVariantNumeric:'tabular-nums'}}>{ti.days} วัน</span>
+                </div>
+                {ti.kpi&&<div style={{fontSize:'11.5px',color:'#7a818d',marginTop:'5px'}}>มาตรฐาน {ti.kpi.label}: {ti.kpi.days} วัน — {variance<=0?('เร็วกว่ามาตรฐาน '+Math.abs(variance)+' วัน'):('ล่าช้ากว่ามาตรฐาน '+variance+' วัน')}</div>}
+                {!ti.kpi&&<div style={{fontSize:'11.5px',color:'#a99fa8',marginTop:'5px'}}>{sel._board==='import'&&sel.mode==='sea'?'ไม่มีมาตรฐานอ้างอิงสำหรับท่านี้':'มาตรฐาน KPI มีเฉพาะ Sea Freight ขาเข้า'}</div>}
+              </div>;
+            })()}
             <SectionTitle>ต้นทุน (บาท)</SectionTitle>
             <div style={{display:'flex',flexDirection:'column',gap:'10px',marginBottom:'8px'}}>
               {[['มูลค่าสินค้า ('+sel.cur+' '+Math.round(sel.amount).toLocaleString()+')',fmtBaht(goods)],['ค่าขนส่ง',fmtBaht(sel.freight)],['ค่าเดินพิธีการ',fmtBaht(sel.clearance)],['ค่าประกันภัย',fmtBaht(sel.insurance)],['อากรขาเข้า',fmtBaht(sel.duty)],['ภาษีมูลค่าเพิ่ม',fmtBaht(sel.vat)]].map(([l,v])=>(
@@ -834,11 +1056,24 @@ class App extends Component {
                   {PORTS_DEST.map(p=><option key={p} value={p}>{p}</option>)}
                 </select></div>
             </div>
+            <SectionTitle>Ship Mode</SectionTitle>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'18px'}}>
+              <ShipModeFields v={ef} set={(k,v)=>this.setEdit(k,v)}/>
+            </div>
             <SectionTitle>ข้อมูลขนส่ง</SectionTitle>
             <div style={{display:'flex',flexDirection:'column',gap:'13px',marginBottom:'14px'}}>
-              {[['BL / AWB','bl','text','เช่น COSU1234567'],['ตู้คอนเทนเนอร์','container','text','เช่น TGHU5521430'],['เรือ / เที่ยว','vessel','text','เช่น COSCO HARMONY'],['ETD — วันออกเดินทาง','etd','date',''],['ETA — วันถึงปลายทาง','eta','date','']].map(([l,k,t,ph])=>(
+              {[['BL / AWB','bl','text','เช่น COSU1234567'],['ตู้คอนเทนเนอร์','container','text','เช่น TGHU5521430'],['เรือ / เที่ยว','vessel','text','เช่น COSCO HARMONY'],['ETD — วันออกเดินทาง','etd','date',''],['ETA — วันถึงปลายทาง (ประมาณ)','eta','date','']].map(([l,k,t,ph])=>(
                 <div key={k}><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>{l}</div><input value={ef[k]||''} onChange={e=>this.setEdit(k,e.target.value)} type={t} placeholder={ph} style={INP}/></div>
               ))}
+              <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>{ef.board==='export'?'วันที่ถึงปลายทางจริง (Actual)':'วันที่รับเข้าคลังจริง (Actual)'}</div>
+                <input value={ef.actualDate||''} onChange={e=>this.setEdit('actualDate',e.target.value)} type="date" style={INP}/></div>
+              {(()=>{const ti=transitInfo({...ef,_board:ef.board});if(!ti)return null;
+                const variance=ti.kpi?ti.days-ti.kpi.days:null;
+                const color=variance==null?'#2563eb':variance<=0?'#15803d':variance<=2?'#d97706':'#dc2626';
+                return <div style={{background:color+'12',border:'1px solid '+color+'33',borderRadius:'10px',padding:'10px 12px',fontSize:'12px',color}}>
+                  Transit {ti.days} วัน{ti.kpi?(' · มาตรฐาน '+ti.kpi.label+' '+ti.kpi.days+' วัน · '+(variance<=0?('เร็วกว่า '+Math.abs(variance)+' วัน'):('ล่าช้า '+variance+' วัน'))):''}
+                </div>;
+              })()}
               <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>Freight Forwarder</div>
                 <input value={ef.forwarder||''} onChange={e=>this.setEdit('forwarder',e.target.value)} list="kobVL" placeholder="พิมพ์เพื่อค้นหา vendor…" style={INP}/>
                 <datalist id="kobVL">{vList.slice(0,500).map(v=><option key={v.name} value={v.name}/>)}</datalist></div>
@@ -1029,9 +1264,7 @@ class App extends Component {
               <option value="oversea">Oversea</option><option value="pk">Packaging</option><option value="fg">Finished</option>
             </FSelect>
             <div style={{gridColumn:'1 / -1'}}><FInput label="ผู้ขาย / ลูกค้า" value={form.party} placeholder="ชื่อบริษัทคู่ค้า" onChange={e=>sf('party',e.target.value)}/></div>
-            <FSelect label="การขนส่ง" value={form.mode} onChange={e=>sf('mode',e.target.value)}>
-              <option value="sea">ทางเรือ</option><option value="air">ทางอากาศ</option>
-            </FSelect>
+            <ShipModeFields v={form} set={sf}/>
             <FInput label="ตัวแทนขนส่ง (Forwarder)" value={form.forwarder} placeholder="เช่น Sino-Trans" onChange={e=>sf('forwarder',e.target.value)}/>
             <FSelect label="สกุลเงิน" value={form.cur} onChange={e=>sf('cur',e.target.value)}>
               <option value="CNY">CNY ¥</option><option value="USD">USD $</option><option value="THB">THB ฿</option><option value="SGD">SGD S$</option>
@@ -1050,7 +1283,8 @@ class App extends Component {
             <FInput label="ชื่อเรือ (Vessel)" value={form.vessel} placeholder="—" onChange={e=>sf('vessel',e.target.value)}/>
             <FInput label="เที่ยว (Voyage)" value={form.voyage} placeholder="—" onChange={e=>sf('voyage',e.target.value)}/>
             <FInput label="ETD (ออกเดินทาง)" value={form.etd} type="date" onChange={e=>sf('etd',e.target.value)}/>
-            <FInput label="ETA (ถึงปลายทาง)" value={form.eta} type="date" onChange={e=>sf('eta',e.target.value)}/>
+            <FInput label="ETA (ถึงปลายทาง ประมาณ)" value={form.eta} type="date" onChange={e=>sf('eta',e.target.value)}/>
+            <FInput label={form.board==='export'?'วันที่ถึงปลายทางจริง (ถ้ามี)':'วันที่รับเข้าคลังจริง (ถ้ามี)'} value={form.actualDate} type="date" onChange={e=>sf('actualDate',e.target.value)}/>
             <div style={{gridColumn:'1 / -1',height:'1px',background:'#f0e9ed',margin:'2px 0'}}/>
             <FInput label="ค่าขนส่ง (฿)" value={form.freight} type="number" placeholder="0" onChange={e=>sf('freight',e.target.value)}/>
             <FInput label="ค่าเดินพิธีการ (฿)" value={form.clearance} type="number" placeholder="0" onChange={e=>sf('clearance',e.target.value)}/>
