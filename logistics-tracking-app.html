@@ -758,6 +758,30 @@ class App extends Component {
     </div>;
   }
 
+  // ── Line chart แบบเบา (SVG + จุด hover) ใช้ร่วมกันทั้งกราฟต้นทุนและกราฟจำนวน shipment ──
+  // ไม่พึ่ง library ภายนอก (ตามแนวทางเดิมของแอปนี้ที่ทำทุกกราฟด้วย SVG/CSS เอง)
+  // rows = [{label, [aKey]:number, [bKey]:number}], max = ค่าสูงสุดสำหรับสเกลแกน Y
+  renderLineChart(rows,aKey,bKey,max,fmt){
+    const n=rows.length;
+    const toPts=key=>rows.map((r,i)=>({x:n>1?(i/(n-1))*100:50,y:96-Math.min(92,(r[key]/max)*92),v:r[key]}));
+    const aPts=toPts(aKey),bPts=toPts(bKey);
+    const path=pts=>pts.map(p=>p.x+','+p.y).join(' ');
+    return <div>
+      <div style={{position:'relative',height:'170px'}}>
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{width:'100%',height:'100%',position:'absolute',top:0,left:0}}>
+          <line x1="0" y1="96" x2="100" y2="96" stroke="#f0e9ed" strokeWidth="0.6"/>
+          <polyline points={path(aPts)} fill="none" stroke="#c91253" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round"/>
+          <polyline points={path(bPts)} fill="none" stroke="#7c3aed" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round"/>
+        </svg>
+        {aPts.map((p,i)=><div key={'a'+i} title={'Import: '+fmt(p.v)} style={{position:'absolute',left:p.x+'%',top:p.y+'%',width:'9px',height:'9px',borderRadius:'50%',background:'#c91253',border:'2px solid #fff',boxShadow:'0 1px 3px rgba(20,24,31,.2)',transform:'translate(-50%,-50%)',cursor:'default'}}/>)}
+        {bPts.map((p,i)=><div key={'b'+i} title={'Export: '+fmt(p.v)} style={{position:'absolute',left:p.x+'%',top:p.y+'%',width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed',border:'2px solid #fff',boxShadow:'0 1px 3px rgba(20,24,31,.2)',transform:'translate(-50%,-50%)',cursor:'default'}}/>)}
+      </div>
+      <div style={{display:'flex',marginTop:'8px'}}>
+        {rows.map((r,i)=><div key={i} style={{flex:1,textAlign:'center',fontSize:'11px',color:'#5b6371',fontWeight:600,minWidth:0}}>{r.label}</div>)}
+      </div>
+    </div>;
+  }
+
   renderDashboard(){
     const {isNarrow}=this.state;
     const impAll=this.imports(),expAll=this.exports();
@@ -771,8 +795,11 @@ class App extends Component {
       {accent:'linear-gradient(90deg,#059669,#10b981)',icon:'check',iconBg:'#f0fdf4',iconColor:'#059669',value:pendingImp,label:'รอดำเนินการ',sub:'ศุลกากร / PO ใหม่',delta:'▼ 1',dc:'#b91c1c'}
     ];
     const pmax=Math.max(1,...IMP_STAGES.map(stg=>impAll.filter(s=>s.stage===stg.key).length));
-    const costSrc=impAll.filter(s=>costSum(s)>0).slice(0,7);
-    const tg=costSrc.reduce((a,s)=>a+s.amount*s.rate,0),tf=costSrc.reduce((a,s)=>a+(s.freight||0)+(s.clearance||0)+(s.insurance||0),0),tt=costSrc.reduce((a,s)=>a+(s.duty||0)+(s.vat||0),0);
+    const costAll=impAll.filter(s=>costSum(s)>0);
+    const costSrc=costAll.slice(0,7);
+    // แถว "รวมทั้งหมด" ต้องรวมจาก costAll (ทุกรายการที่มีต้นทุน) ไม่ใช่ costSrc (7 แถวที่โชว์)
+    // ไม่งั้นยอดรวมจะโกหกเมื่อมีรายการมากกว่า 7 — โชว์แค่บางแถวได้ แต่ยอดรวมต้องจริงเสมอ
+    const tg=costAll.reduce((a,s)=>a+s.amount*s.rate,0),tf=costAll.reduce((a,s)=>a+(s.freight||0)+(s.clearance||0)+(s.insurance||0),0),tt=costAll.reduce((a,s)=>a+(s.duty||0)+(s.vat||0),0);
 
     // ── สรุป Transit Time เทียบ KPI (import + sea freight) ──
     const tstat=transitStats(impAll);
@@ -781,10 +808,14 @@ class App extends Component {
     const yearMap={};
     impAll.forEach(s=>{const y=yearOf(s);if(y==null)return;(yearMap[y]=yearMap[y]||{imp:0,exp:0}).imp+=totalCostThb(s);});
     expAll.forEach(s=>{const y=yearOf(s);if(y==null)return;(yearMap[y]=yearMap[y]||{imp:0,exp:0}).exp+=totalCostThb(s);});
+    // label = ค.ศ. นำ + (พ.ศ. ตามหลัง) เช่น "2025 (พ.ศ. 2568)" — เดิมเอาเลข พ.ศ. แบบสั้น (68/69)
+    // ไปแสดงเป็นตัวเลขนำหน้าโดยไม่ตั้งใจ ทำให้อ่านสับสนว่าเป็นปีอะไร
     const yearRows=Object.keys(yearMap).map(Number).sort((a,b)=>a-b).map(y=>{
       const v=yearMap[y],tot=v.imp+v.exp||1;
-      return {year:y,label:(y+543-2500)+' (พ.ศ. '+(y+543)+')',imp:v.imp,exp:v.exp,tot:v.imp+v.exp,impPct:v.imp/tot*100,expPct:v.exp/tot*100};
+      return {year:y,label:y+' (พ.ศ. '+(y+543)+')',imp:v.imp,exp:v.exp,tot:v.imp+v.exp,impPct:v.imp/tot*100,expPct:v.exp/tot*100};
     });
+    const nowYear=new Date().getFullYear();
+    const yearLatestPartial=yearRows.length>0&&yearRows[yearRows.length-1].year===nowYear;
 
     // ── เทียบต้นทุนตามไตรมาส (1 ปี = 3 ไตรมาส: Q1 ม.ค.-เม.ย., Q2 พ.ค.-ส.ค., Q3 ก.ย.-ธ.ค.) ──
     const qMap={};
@@ -794,6 +825,8 @@ class App extends Component {
     const qRows=Object.keys(qMap).map(k=>qMap[k]).sort((a,b)=>a.y-b.y||a.q-b.q);
     const qMax=Math.max(1,...qRows.map(r=>Math.max(r.imp,r.exp)));
     const qMaxN=Math.max(1,...qRows.map(r=>Math.max(r.impN,r.expN)));
+    const nowQ=quarterOf({etd:new Date().toISOString().slice(0,10)});
+    const qLatestPartial=qRows.length>0&&nowQ&&qRows[qRows.length-1].key===nowQ.key;
     return <div style={{flex:1,overflowY:'auto',padding:'22px'}}>
       <div style={{maxWidth:'1240px',margin:'0 auto',display:'flex',flexDirection:'column',gap:'18px'}}>
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'repeat(2,1fr)':'repeat(4,1fr)',gap:isNarrow?'12px':'16px'}}>
@@ -873,7 +906,7 @@ class App extends Component {
         <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',overflow:'hidden'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
             <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สรุปต้นทุนนำเข้าตาม PO</div>
-            <div style={{fontSize:'12px',color:'#a99fa8'}}>มูลค่าแปลงเป็นบาท (฿)</div>
+            <div style={{fontSize:'12px',color:'#a99fa8'}}>{costAll.length>7?('แสดง 7 จาก '+costAll.length+' รายการที่มีต้นทุน · '):''}มูลค่าแปลงเป็นบาท (฿)</div>
           </div>
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:'720px'}}>
@@ -892,7 +925,7 @@ class App extends Component {
               );})}
               </tbody>
               <tfoot><tr style={{background:'#faf6f8',borderTop:'2px solid #e8dde4'}}>
-                <td colSpan={2} style={{padding:'12px 14px',fontSize:'12.5px',fontWeight:700,color:'#14181f'}}>รวมทั้งหมด</td>
+                <td colSpan={2} style={{padding:'12px 14px',fontSize:'12.5px',fontWeight:700,color:'#14181f'}}>รวมทั้งหมด ({costAll.length} รายการ)</td>
                 <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg)}</td>
                 <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tf)}</td>
                 <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tt)}</td>
@@ -930,6 +963,7 @@ class App extends Component {
               </tbody>
             </table>
           </div>
+          {yearLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',padding:'0 22px 16px'}}>* ปี {nowYear} เป็นปีปัจจุบัน ข้อมูลยังไม่ครบทั้งปี — เทียบกับปีก่อนหน้าโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
         <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
@@ -941,18 +975,8 @@ class App extends Component {
             <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
-          {qRows.length>0&&<div style={{display:'flex',alignItems:'flex-end',gap:isNarrow?'10px':'22px',overflowX:'auto',paddingBottom:'6px',minHeight:'180px'}}>
-            {qRows.map(q=>(
-              <div key={q.label} style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,minWidth:'58px'}}>
-                <div style={{display:'flex',alignItems:'flex-end',gap:'5px',height:'140px'}}>
-                  <div title={fmtBaht(q.imp)} style={{width:'16px',height:Math.max(2,q.imp/qMax*140)+'px',background:'linear-gradient(180deg,#e8408e,#c91253)',borderRadius:'4px 4px 0 0'}}/>
-                  <div title={fmtBaht(q.exp)} style={{width:'16px',height:Math.max(2,q.exp/qMax*140)+'px',background:'linear-gradient(180deg,#a78bfa,#7c3aed)',borderRadius:'4px 4px 0 0'}}/>
-                </div>
-                <div style={{fontSize:'11px',fontWeight:600,color:'#14181f',marginTop:'8px',whiteSpace:'nowrap'}}>{q.label}</div>
-                <div style={{fontSize:'9.5px',color:'#a99fa8',marginTop:'2px',whiteSpace:'nowrap'}}>{fmtBaht(q.imp+q.exp)}</div>
-              </div>
-            ))}
-          </div>}
+          {qRows.length>0&&this.renderLineChart(qRows,'imp','exp',qMax,fmtBaht)}
+          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสล่าสุดยังไม่ครบช่วงเวลา ({qRows[qRows.length-1].label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
         <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
@@ -964,18 +988,8 @@ class App extends Component {
             <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
-          {qRows.length>0&&<div style={{display:'flex',alignItems:'flex-end',gap:isNarrow?'10px':'22px',overflowX:'auto',paddingBottom:'6px',minHeight:'180px'}}>
-            {qRows.map(q=>(
-              <div key={q.label} style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,minWidth:'58px'}}>
-                <div style={{display:'flex',alignItems:'flex-end',gap:'5px',height:'140px'}}>
-                  <div title={q.impN+' รายการ'} style={{width:'16px',height:Math.max(2,q.impN/qMaxN*140)+'px',background:'linear-gradient(180deg,#e8408e,#c91253)',borderRadius:'4px 4px 0 0'}}/>
-                  <div title={q.expN+' รายการ'} style={{width:'16px',height:Math.max(2,q.expN/qMaxN*140)+'px',background:'linear-gradient(180deg,#a78bfa,#7c3aed)',borderRadius:'4px 4px 0 0'}}/>
-                </div>
-                <div style={{fontSize:'11px',fontWeight:600,color:'#14181f',marginTop:'8px',whiteSpace:'nowrap'}}>{q.label}</div>
-                <div style={{fontSize:'9.5px',color:'#a99fa8',marginTop:'2px',whiteSpace:'nowrap'}}>{q.impN+q.expN} รายการ</div>
-              </div>
-            ))}
-          </div>}
+          {qRows.length>0&&this.renderLineChart(qRows,'impN','expN',qMaxN,v=>v+' รายการ')}
+          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสล่าสุดยังไม่ครบช่วงเวลา ({qRows[qRows.length-1].label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
       </div>
     </div>;
