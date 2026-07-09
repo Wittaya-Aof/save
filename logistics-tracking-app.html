@@ -788,10 +788,12 @@ class App extends Component {
 
     // ── เทียบต้นทุนตามไตรมาส (1 ปี = 3 ไตรมาส: Q1 ม.ค.-เม.ย., Q2 พ.ค.-ส.ค., Q3 ก.ย.-ธ.ค.) ──
     const qMap={};
-    const addQ=(s,field)=>{const q=quarterOf(s);if(!q)return;const e=qMap[q.key]=qMap[q.key]||{y:q.y,q:q.q,label:q.label,imp:0,exp:0};e[field]+=totalCostThb(s);};
-    impAll.forEach(s=>addQ(s,'imp')); expAll.forEach(s=>addQ(s,'exp'));
+    // เก็บทั้งค่าใช้จ่าย (imp/exp) และจำนวน shipment (impN/expN) ต่อไตรมาสในรอบเดียว
+    const addQ=(s,costField,countField)=>{const q=quarterOf(s);if(!q)return;const e=qMap[q.key]=qMap[q.key]||{y:q.y,q:q.q,label:q.label,imp:0,exp:0,impN:0,expN:0};e[costField]+=totalCostThb(s);e[countField]+=1;};
+    impAll.forEach(s=>addQ(s,'imp','impN')); expAll.forEach(s=>addQ(s,'exp','expN'));
     const qRows=Object.keys(qMap).map(k=>qMap[k]).sort((a,b)=>a.y-b.y||a.q-b.q);
     const qMax=Math.max(1,...qRows.map(r=>Math.max(r.imp,r.exp)));
+    const qMaxN=Math.max(1,...qRows.map(r=>Math.max(r.impN,r.expN)));
     return <div style={{flex:1,overflowY:'auto',padding:'22px'}}>
       <div style={{maxWidth:'1240px',margin:'0 auto',display:'flex',flexDirection:'column',gap:'18px'}}>
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'repeat(2,1fr)':'repeat(4,1fr)',gap:isNarrow?'12px':'16px'}}>
@@ -948,6 +950,29 @@ class App extends Component {
                 </div>
                 <div style={{fontSize:'11px',fontWeight:600,color:'#14181f',marginTop:'8px',whiteSpace:'nowrap'}}>{q.label}</div>
                 <div style={{fontSize:'9.5px',color:'#a99fa8',marginTop:'2px',whiteSpace:'nowrap'}}>{fmtBaht(q.imp+q.exp)}</div>
+              </div>
+            ))}
+          </div>}
+        </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>จำนวน Shipment ตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'12px',color:'#a99fa8'}}>1 ปี = 3 ไตรมาส (Q1 ม.ค.-เม.ย. · Q2 พ.ค.-ส.ค. · Q3 ก.ย.-ธ.ค.)</div>
+          </div>
+          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371',marginBottom:'18px'}}>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>Import</span>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
+          </div>
+          {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
+          {qRows.length>0&&<div style={{display:'flex',alignItems:'flex-end',gap:isNarrow?'10px':'22px',overflowX:'auto',paddingBottom:'6px',minHeight:'180px'}}>
+            {qRows.map(q=>(
+              <div key={q.label} style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,minWidth:'58px'}}>
+                <div style={{display:'flex',alignItems:'flex-end',gap:'5px',height:'140px'}}>
+                  <div title={q.impN+' รายการ'} style={{width:'16px',height:Math.max(2,q.impN/qMaxN*140)+'px',background:'linear-gradient(180deg,#e8408e,#c91253)',borderRadius:'4px 4px 0 0'}}/>
+                  <div title={q.expN+' รายการ'} style={{width:'16px',height:Math.max(2,q.expN/qMaxN*140)+'px',background:'linear-gradient(180deg,#a78bfa,#7c3aed)',borderRadius:'4px 4px 0 0'}}/>
+                </div>
+                <div style={{fontSize:'11px',fontWeight:600,color:'#14181f',marginTop:'8px',whiteSpace:'nowrap'}}>{q.label}</div>
+                <div style={{fontSize:'9.5px',color:'#a99fa8',marginTop:'2px',whiteSpace:'nowrap'}}>{q.impN+q.expN} รายการ</div>
               </div>
             ))}
           </div>}
