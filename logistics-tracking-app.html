@@ -758,27 +758,22 @@ class App extends Component {
     </div>;
   }
 
-  // ── Line chart แบบเบา (SVG + จุด hover) ใช้ร่วมกันทั้งกราฟต้นทุนและกราฟจำนวน shipment ──
-  // ไม่พึ่ง library ภายนอก (ตามแนวทางเดิมของแอปนี้ที่ทำทุกกราฟด้วย SVG/CSS เอง)
-  // rows = [{label, [aKey]:number, [bKey]:number}], max = ค่าสูงสุดสำหรับสเกลแกน Y
-  renderLineChart(rows,aKey,bKey,max,fmt){
-    const n=rows.length;
-    const toPts=key=>rows.map((r,i)=>({x:n>1?(i/(n-1))*100:50,y:96-Math.min(92,(r[key]/max)*92),v:r[key]}));
-    const aPts=toPts(aKey),bPts=toPts(bKey);
-    const path=pts=>pts.map(p=>p.x+','+p.y).join(' ');
-    return <div>
-      <div style={{position:'relative',height:'170px'}}>
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{width:'100%',height:'100%',position:'absolute',top:0,left:0}}>
-          <line x1="0" y1="96" x2="100" y2="96" stroke="#f0e9ed" strokeWidth="0.6"/>
-          <polyline points={path(aPts)} fill="none" stroke="#c91253" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round"/>
-          <polyline points={path(bPts)} fill="none" stroke="#7c3aed" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round"/>
-        </svg>
-        {aPts.map((p,i)=><div key={'a'+i} title={'Import: '+fmt(p.v)} style={{position:'absolute',left:p.x+'%',top:p.y+'%',width:'9px',height:'9px',borderRadius:'50%',background:'#c91253',border:'2px solid #fff',boxShadow:'0 1px 3px rgba(20,24,31,.2)',transform:'translate(-50%,-50%)',cursor:'default'}}/>)}
-        {bPts.map((p,i)=><div key={'b'+i} title={'Export: '+fmt(p.v)} style={{position:'absolute',left:p.x+'%',top:p.y+'%',width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed',border:'2px solid #fff',boxShadow:'0 1px 3px rgba(20,24,31,.2)',transform:'translate(-50%,-50%)',cursor:'default'}}/>)}
-      </div>
-      <div style={{display:'flex',marginTop:'8px'}}>
-        {rows.map((r,i)=><div key={i} style={{flex:1,textAlign:'center',fontSize:'11px',color:'#5b6371',fontWeight:600,minWidth:0}}>{r.label}</div>)}
-      </div>
+  // ── กราฟแท่งคู่ (Import/Export) ใช้ร่วมกันทั้งกราฟต้นทุนและกราฟจำนวน shipment ──
+  // rows = [{label, [aKey]:number, [bKey]:number}], max = ค่าสูงสุดสำหรับสเกลความสูงแท่ง
+  // fmtTip = format ค่าเดี่ยวสำหรับ tooltip เวลา hover, fmtPair = format ข้อความ "Import : Export" ใต้แท่ง
+  renderBarChart(rows,aKey,bKey,max,fmtTip,fmtPair){
+    const {isNarrow}=this.state;
+    return <div style={{display:'flex',alignItems:'flex-end',gap:isNarrow?'10px':'22px',overflowX:'auto',paddingBottom:'6px',minHeight:'190px'}}>
+      {rows.map(r=>(
+        <div key={r.label} style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,minWidth:'74px'}}>
+          <div style={{display:'flex',alignItems:'flex-end',gap:'5px',height:'140px'}}>
+            <div title={'Import: '+fmtTip(r[aKey])} style={{width:'18px',height:Math.max(2,r[aKey]/max*140)+'px',background:'linear-gradient(180deg,#e8408e,#c91253)',borderRadius:'4px 4px 0 0'}}/>
+            <div title={'Export: '+fmtTip(r[bKey])} style={{width:'18px',height:Math.max(2,r[bKey]/max*140)+'px',background:'linear-gradient(180deg,#a78bfa,#7c3aed)',borderRadius:'4px 4px 0 0'}}/>
+          </div>
+          <div style={{fontSize:'11px',fontWeight:600,color:'#14181f',marginTop:'8px',whiteSpace:'nowrap'}}>{r.label}</div>
+          <div style={{fontSize:'10px',color:'#a99fa8',marginTop:'3px',whiteSpace:'nowrap',textAlign:'center'}}>{fmtPair(r[aKey],r[bKey])}</div>
+        </div>
+      ))}
     </div>;
   }
 
@@ -975,7 +970,7 @@ class App extends Component {
             <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
-          {qRows.length>0&&this.renderLineChart(qRows,'imp','exp',qMax,fmtBaht)}
+          {qRows.length>0&&this.renderBarChart(qRows,'imp','exp',qMax,fmtBaht,(a,b)=>Math.round(a).toLocaleString('en-US')+' : '+Math.round(b).toLocaleString('en-US')+' บาท')}
           {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสล่าสุดยังไม่ครบช่วงเวลา ({qRows[qRows.length-1].label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
         <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
@@ -988,7 +983,7 @@ class App extends Component {
             <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
-          {qRows.length>0&&this.renderLineChart(qRows,'impN','expN',qMaxN,v=>v+' รายการ')}
+          {qRows.length>0&&this.renderBarChart(qRows,'impN','expN',qMaxN,v=>v+' รายการ',(a,b)=>a+' : '+b+' shipment')}
           {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสล่าสุดยังไม่ครบช่วงเวลา ({qRows[qRows.length-1].label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
       </div>
