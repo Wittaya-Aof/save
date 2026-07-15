@@ -8,12 +8,16 @@ const http  = require('http');
 const { Pool } = require('pg');
 const fs    = require('fs');
 const path  = require('path');
+const nodemailer = require('nodemailer');
+const { verifyShipmentRequest } = require('./lib/verify-shipment');
 
 const PORT = 3000;
 const ROOT = __dirname;
 const TRACKING_FILE = path.join(ROOT, 'tracking_data.json');
 const AUDIT_FILE    = path.join(ROOT, 'tracking_audit.jsonl');
 const BACKUP_DIR    = path.join(ROOT, 'backups');
+const INTEGRITY_SEEN_FILE = path.join(ROOT, 'integrity_seen.json');
+const INTEGRITY_DIGEST_FILE = path.join(ROOT, 'integrity_digest.json');
 
 // ─── .env loader (ไม่ใช้ dependency) ─────────────────────────────
 // อ่าน key=value จากไฟล์ .env — ค่าใน environment จริงมีสิทธิ์เหนือกว่า
@@ -105,19 +109,164 @@ const dbLikelyDown = () => Date.now() < dbDownUntil;
 const markDbDown   = () => { dbDownUntil = Date.now() + DB_DOWN_WINDOW; };
 const markDbUp     = () => { dbDownUntil = 0; };
 
-// ดึงข้อมูลสด ถ้าล้มเหลว → เสิร์ฟ snapshot ล่าสุด (พร้อม flag stale + เวลาที่ดึง)
-// force=true → ข้าม circuit breaker (ใช้ตอนกด Sync เพื่อ probe จริง)
+// ─── MCP proxy bridge (HTTPS) — fallback อัตโนมัติเมื่อต่อ RDS ตรง (5432) ไม่ได้ ──────
+// สาเหตุที่ direct หลุดบ่อย: IP เครื่องนี้เป็น dynamic ไม่อยู่ใน security-group allowlist
+// ตลอด (ดู memory data-load-resilience) — MCP proxy คนละ path (443) ไม่ติดปัญหานี้
+// เดิมต้องรัน build-snapshot.mjs มือ + restart server เอง ทุกครั้งที่ direct หลุด
+// ย้าย logic เดียวกันมาไว้ใน server เอง ให้ดึงเองอัตโนมัติ ไม่ต้องมีคนมาสั่งอีก
+const MCP_URL = process.env.MCP_URL, MCP_TOKEN = process.env.MCP_TOKEN;
+// NCOLS*CHUNK = งบ base64 ต่อแถว (24*50=1200 ตัว ≈ 900 byte JSON ดิบ) — เผื่อแถวที่มีชื่อผู้ขาย/สินค้ายาว
+// หรือ currency_rate ทศนิยมเยอะ ไม่ให้ตัดขาดจน parse ไม่ผ่าน (เดิม 16 คอลัมน์ = 600 byte เสี่ยงพอดีกับแถวยาวๆ)
+const MCP_NCOLS = 24, MCP_CHUNK = 50, MCP_PAGE = 120;
+// กันยิง MCP ถี่เกินไปตอน direct หลุดยาว (ทุก request ที่ไม่ force จะเช็คก่อน) — ลองใหม่ได้ทุก 1 นาที/key
+const MCP_RETRY_INTERVAL = 60000;
+// snapshot อายุไม่เกินนี้ถือว่า "ยังสด" แม้รอบนี้จะโดน throttle ไม่ได้ fetch จริง (กัน UI ขึ้นเตือนหลอก)
+// ต้องยาวกว่า MCP_RETRY_INTERVAL และ AutoProbe (2 นาที) รวมกัน ไม่งั้นจะมีช่วงโดนตีเป็น stale ทั้งที่เพิ่งอัปเดต
+const SNAPSHOT_FRESH_WINDOW = 240000; // 4 นาที
+const mcpNextTry = { import: 0, export: 0 };
+
+// หมายเหตุสำคัญ: session id ("sid") ส่งผ่านเป็น parameter ทุกฟังก์ชัน ไม่เก็บเป็นตัวแปร
+// module-level ที่ใช้ร่วมกัน — เพราะ import/export ถูกดึงพร้อมกัน (Promise.all ฝั่ง frontend)
+// ถ้าใช้ sid ตัวเดียวร่วมกัน คำขอสองอันจะแย่ง/ทับ session กัน ทำให้ pagination พัง
+// (เจอจริงตอนกด Sync: request ที่มาพร้อมกันทำให้ผลลัพธ์งอแงเป็นระยะ)
+function mcpHeaders(sid) {
+  return { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream',
+    'Authorization': 'Bearer ' + MCP_TOKEN, ...(sid ? { 'Mcp-Session-Id': sid } : {}) };
+}
+function mcpParseBody(txt) {
+  txt = (txt || '').trim();
+  if (!txt) return null;
+  if (txt[0] === '{') return JSON.parse(txt);
+  const data = txt.split(/\r?\n/).filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()).join('');
+  return JSON.parse(data);
+}
+// ต้องมี timeout เอง — ต่างจาก client ฝั่ง browser ที่มี fetchTimeout(); ถ้า MCP proxy ค้าง (ไม่ error แต่ไม่ตอบ)
+// fetch() เปล่าๆ ไม่มี timeout ในตัว จะรอไม่จำกัดเวลา ทำให้ warm()/AutoProbe ค้างไปเรื่อยๆ ทุก 2 นาที
+const MCP_FETCH_TIMEOUT = 20000;
+async function mcpRpc(sid, method, params, id) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), MCP_FETCH_TIMEOUT);
+  try {
+    const r = await fetch(MCP_URL, { method: 'POST', headers: mcpHeaders(sid), signal: ac.signal,
+      body: JSON.stringify({ jsonrpc: '2.0', ...(id != null ? { id } : {}), method, ...(params ? { params } : {}) }) });
+    const txt = await r.text();
+    const newSid = r.headers.get('mcp-session-id') || sid;
+    return { status: r.status, sid: newSid, body: txt ? mcpParseBody(txt) : null };
+  } finally { clearTimeout(t); }
+}
+async function mcpConnect() {
+  const init = await mcpRpc(null, 'initialize',
+    { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'logistics-api-server', version: '1.0' } }, 0);
+  if (init.status !== 200) throw new Error('MCP initialize HTTP ' + init.status);
+  await mcpRpc(init.sid, 'notifications/initialized', null, null);
+  return init.sid;
+}
+async function mcpRunSql(sid, sql) {
+  const res = await mcpRpc(sid, 'tools/call', { name: 'run_sql', arguments: { sql } }, Math.floor(Math.random() * 1e6) + 2);
+  if (res.status !== 200) throw new Error('MCP run_sql HTTP ' + res.status);
+  const c = res.body?.result?.content;
+  return Array.isArray(c) ? c.map(x => x.text || '').join('') : '';
+}
+// SELECT ที่คืนแต่ละแถวเป็น base64 หั่น NCOLS คอลัมน์ — MCP tool ตัดข้อความที่ ~58 ตัว/ช่อง
+// เข้ารหัส base64 ทั้งแถวเป็น JSON เดียวแล้วหั่นเป็นคอลัมน์เล็กๆ กันตัด ประกอบคืนฝั่งนี้ (lossless)
+function mcpWrap(innerSelect, orderCols, off) {
+  const cols = [];
+  for (let i = 0; i < MCP_NCOLS; i++) cols.push(`substring(b,${i * MCP_CHUNK + 1},${MCP_CHUNK}) AS c${i}`);
+  const orderBy = orderCols.split(',').map(s => s.trim().split(' AS ')[1] + ' DESC NULLS LAST').join(', ');
+  return `
+    SELECT ${cols.join(', ')} FROM (
+      SELECT translate(encode(convert_to(row_to_json(r)::text,'UTF8'),'base64'), E'\\n','') AS b, ${orderCols}
+      FROM ( ${innerSelect} ) r
+      ORDER BY ${orderBy}
+      LIMIT ${MCP_PAGE} OFFSET ${off}
+    ) x
+    ORDER BY ${orderBy}`;
+}
+function mcpParseTable(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.includes('│'));
+  const rows = [];
+  for (const line of lines) {
+    const cells = line.split('│').map(s => s.trim());
+    if (cells.every(c => /^c\d+$/.test(c) || c === '')) continue; // header row
+    const b64 = cells.join('').replace(/\s+/g, '');
+    if (b64) rows.push(b64);
+  }
+  return rows;
+}
+// ถอดรหัส base64 → JSON ต่อแถว ใช้ร่วมกันทั้ง mcpPull (bulk, paginate) และ mcpFetchPoLines (เดี่ยว ไม่ paginate)
+// แถวเสีย (เช่น ยาวเกิน budget ของคอลัมน์ base64 ที่หั่นไว้) เคย silent ข้ามเงียบๆ — log ไว้ให้เห็นใน server log
+// อย่างน้อย จะได้ไล่ดูได้ว่าควรขยาย MCP_NCOLS ไหม แทนที่จะไม่รู้ตัวว่าข้อมูลหาย
+function decodeB64Rows(b64rows, label) {
+  const out = [];
+  for (const b of b64rows) {
+    try { out.push(JSON.parse(Buffer.from(b, 'base64').toString('utf8'))); }
+    catch (e) { console.error('[MCP] แถวเสีย (parse ไม่ได้' + (label ? ', ' + label : '') + '):', e.message); }
+  }
+  return out;
+}
+// maxRows (ถ้าใส่) หยุด paginate เมื่อถึงจำนวนนี้ — mirror LIMIT ของ SQL_IMPORT/SQL_EXPORT (2000/500)
+// ไม่งั้น path นี้ไม่มี cap เลย ต่างจาก direct pg ที่ถูกจำกัดไว้ ทำให้ชุดข้อมูลระหว่าง 2 ทางไม่ตรงกัน
+async function mcpPull(sid, innerSelect, orderCols, maxRows) {
+  const out = [];
+  for (let off = 0; ; off += MCP_PAGE) {
+    const text = await mcpRunSql(sid, mcpWrap(innerSelect, orderCols, off));
+    const b64rows = mcpParseTable(text);
+    if (!b64rows.length) break;
+    out.push(...decodeB64Rows(b64rows, 'off=' + off));
+    if (b64rows.length < MCP_PAGE) break;
+    if (maxRows && out.length >= maxRows) break;
+  }
+  return maxRows ? out.slice(0, maxRows) : out;
+}
+
+// inner SELECT สำหรับ MCP path — ต้อง mirror WHERE/ชื่อคอลัมน์ของ SQL_IMPORT/SQL_EXPORT (ด้านล่าง) ให้ตรงกัน
+// (คนละ path จาก direct pg แต่ frontend ใช้ชื่อ field เดียวกันกับทั้งสองทาง) SQL ชุดนี้แชร์กับ build-snapshot.mjs
+// ผ่าน odoo-queries.js ไฟล์เดียว แก้ตรงนั้นที่เดียวพอ ไม่ต้องแก้ทั้งสองไฟล์แล้วเสี่ยงลืมอีกฝั่ง
+const { IMPORT_INNER: MCP_IMPORT_INNER, EXPORT_INNER: MCP_EXPORT_INNER, ORDER_COLS: MCP_ORDER_COLS } = require('./odoo-queries.js');
+
+async function mcpFetch(key) {
+  // เปิด session ใหม่ทุกครั้ง (ไม่แชร์กับคำขออื่น) — ดู comment ที่ mcpHeaders ด้านบน
+  const sid = await mcpConnect();
+  const inner = key === 'import' ? MCP_IMPORT_INNER : MCP_EXPORT_INNER;
+  const cap = key === 'import' ? 2000 : 500; // ตรงกับ LIMIT ของ SQL_IMPORT/SQL_EXPORT
+  return await mcpPull(sid, inner, MCP_ORDER_COLS, cap);
+}
+
+// ดึงข้อมูลสด ถ้าล้มเหลว → ลองผ่าน MCP bridge ก่อน → ถ้ายังไม่ได้ เสิร์ฟ snapshot ล่าสุด
+// (พร้อม flag stale + เวลาที่ดึง) force=true → ข้าม circuit breaker + throttle ของ MCP (ใช้ตอนกด Sync)
 async function liveOrSnapshot(key, sql, force) {
-  // cachedQuery จัดการ circuit breaker + retry ให้แล้ว — ที่นี่แค่เพิ่มชั้น disk snapshot
-  // (ข้อมูลสดล่าสุดที่ persist ไว้) เพื่อเสิร์ฟต่อเมื่อ DB ล่มและ in-memory cache ก็หมดอายุ
+  // cachedQuery จัดการ circuit breaker + retry ให้แล้ว — ที่นี่แค่เพิ่มชั้น MCP bridge และ disk snapshot
   try {
     const rows = await cachedQuery(key, sql, force);
     snapshot[key] = rows;
     snapshot._ts[key] = new Date().toISOString();
     saveSnapshot();
-    return { rows, stale: false, as_of: snapshot._ts[key] };
+    return { rows, stale: false, as_of: snapshot._ts[key], via: 'direct' };
   } catch (e) {
-    if (snapshot[key]) return { rows: snapshot[key], stale: true, as_of: snapshot._ts[key] || null, reason: e.message };
+    if (MCP_URL && MCP_TOKEN && (key === 'import' || key === 'export') && (force || Date.now() >= mcpNextTry[key])) {
+      mcpNextTry[key] = Date.now() + MCP_RETRY_INTERVAL;
+      try {
+        const rows = await mcpFetch(key);
+        // เดิมเช็ค rows.length ก่อนเชื่อผล — ถ้า Odoo ไม่มี PO/SO ตรงเงื่อนไขจริงๆ (ผลลัพธ์ว่างที่ถูกต้อง)
+        // จะโดนมองว่า "MCP ก็ล้มเหลว" แล้วดันไปเสิร์ฟ snapshot เก่าแทนความจริงที่ว่างเปล่า — เชื่อผลลัพธ์เสมอ
+        // เมื่อ mcpFetch ไม่ throw (แปลว่า query ผ่านจริง) ไม่ว่าจะได้กี่แถว
+        snapshot[key] = rows;
+        snapshot._ts[key] = new Date().toISOString();
+        saveSnapshot();
+        console.log('[MCP] ดึง ' + key + ' ผ่าน bridge สำเร็จ —', rows.length, 'แถว (direct หลุด:', e.message + ')');
+        return { rows, stale: false, as_of: snapshot._ts[key], via: 'mcp' };
+      } catch (mcpErr) {
+        console.error('[MCP] fallback ล้มเหลว:', mcpErr.message);
+      }
+    }
+    if (snapshot[key]) {
+      // ไม่ได้ fetch สดในรอบนี้ (โดน throttle กันยิง MCP ถี่) ไม่ได้แปลว่าข้อมูล "เก่า" จริง —
+      // ถ้า snapshot เพิ่งอัปเดตไม่นานมานี้ (เช่น MCP เพิ่งดึงสำเร็จเมื่อกี้) ให้ยังถือว่าสดอยู่
+      // กันหน้าเว็บขึ้นแดง/ส้มเข้าใจผิดว่าหลุดทั้งที่ข้อมูลจริงยังใหม่มาก
+      const asOf = snapshot._ts[key] || null;
+      const age  = asOf ? Date.now() - new Date(asOf).getTime() : Infinity;
+      return { rows: snapshot[key], stale: age > SNAPSHOT_FRESH_WINDOW, as_of: asOf, reason: e.message, via: 'snapshot' };
+    }
     throw e;
   }
 }
@@ -140,6 +289,159 @@ const db = new Pool({
 });
 
 db.on('error', (err) => console.error('[DB] Unexpected error:', err.message));
+
+// ─── รอบตรวจสอบข้อมูลอัตโนมัติ (data integrity check) ──────────────────────────
+// ต่อยอดจากการตรวจสอบครั้งเดียวที่เจอบั๊ก currency_rate หายไปเงียบๆ 8 จุด (13-14 ก.ค. 2569)
+// แทนที่จะรอให้คนสังเกตตัวเลขผิดปกติเอง ให้ตรวจรูปแบบบั๊กเดิมซ้ำอัตโนมัติเป็นประจำ — เช็คตรงจุดกำเนิดบั๊ก
+// (currency ต่างประเทศแต่ rate เพี้ยนเป็น 1 พอดี = สัญญาณเดียวกับที่พบทุกครั้งที่ผ่านมา) ไม่ต้องรอ AI มาตรวจมือใหม่
+let integrityReport = { ranAt: null, findings: [], importChecked: 0, exportChecked: 0 };
+const INTEGRITY_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // ทุก 24 ชม. (ข้อมูลการเงินไม่ต้องเช็คถี่เท่า connectivity)
+
+// เจอ currency ต่างประเทศที่ rate หายไป (parse ไม่ได้/0) หรือ rate ดันเป็น 1 พอดี (ค่า default ตอน rate>0
+// เป็นเท็จ) — นี่คือรอยเดียวกับบั๊ก currency_rate ที่เจอจริงในระบบนี้มาแล้วหลายจุด ไม่ใช่การเดา
+function checkCurrencyRateSanity(rows, board, poKey) {
+  const findings = [];
+  for (const r of (rows || [])) {
+    const cur = r.currency;
+    if (!cur || cur === 'THB') continue;
+    const rate = parseFloat(r.currency_rate);
+    if (!(rate > 0) || Math.abs(rate - 1) < 1e-9) {
+      findings.push({
+        board, po: r[poKey] || '?', currency: cur,
+        message: `${r[poKey] || '?'} (${cur}) — currency_rate หายไปหรือเพี้ยนเป็น 1 พอดี มูลค่าอาจถูกนับเป็นบาทตรงๆ โดยไม่แปลงหน่วย`,
+      });
+    }
+  }
+  return findings;
+}
+
+// รายการที่ "ซ่อมอัตโนมัติ" แล้ว — SQL ตั้งธง rate_auto_corrected=1 เมื่อค่าที่ Odoo เพี้ยนแต่ดึง rate จาก
+// ใบวางบิลมาแทนได้ ต่างจาก finding (ปัญหาจริงที่ยังแก้ไม่ได้) — ตัวนี้แอปแสดงเลขถูกแล้ว แต่ Odoo ต้นทางยัง
+// ต้องตามไปแก้ ถึงโชว์ไว้เป็น "ข้อมูล" ไม่ใช่ error เพื่อไม่ให้การซ่อมอัตโนมัติบดบังปัญหาต้นทางไปเงียบๆ
+function collectAutoCorrected(rows, board, poKey) {
+  const out = [];
+  for (const r of (rows || [])) {
+    if (Number(r.rate_auto_corrected) === 1) {
+      out.push({
+        board, po: r[poKey] || '?', currency: r.currency || '?',
+        message: `${r[poKey] || '?'} (${r.currency || '?'}) — Odoo ยังตั้ง currency_rate เพี้ยน แอปดึงอัตราจากใบวางบิลมาแสดงแทนให้แล้ว ควรตามไปแก้ที่ Odoo`,
+      });
+    }
+  }
+  return out;
+}
+
+// ─── แจ้งเตือนทางอีเมลเฉพาะ finding ที่ "ใหม่" ────────────────────────────────
+// เก็บ key ของ finding ที่เคยแจ้งไปแล้วไว้ในไฟล์ (กันแจ้งซ้ำทุก 24 ชม.ถ้ายังไม่ได้แก้ที่ Odoo)
+// ถ้า finding เดิมหายไปแล้วกลับมาใหม่ (แก้แล้วแต่พังซ้ำ) จะนับเป็น "ใหม่" อีกครั้ง ตั้งใจให้เป็นแบบนั้น
+const findingKey = f => `${f.board}|${f.po}|${f.currency}`;
+let integritySeenKeys = new Set();
+try {
+  const raw = JSON.parse(fs.readFileSync(INTEGRITY_SEEN_FILE, 'utf8'));
+  if (Array.isArray(raw)) integritySeenKeys = new Set(raw);
+} catch (e) { /* ไม่มีไฟล์ตอน deploy ครั้งแรก — เริ่มจากว่างเปล่า */ }
+
+function saveIntegritySeenKeys() {
+  try { fs.writeFileSync(INTEGRITY_SEEN_FILE, JSON.stringify([...integritySeenKeys])); }
+  catch (e) { console.error('[Integrity] เซฟ integrity_seen.json ไม่สำเร็จ:', e.message); }
+}
+
+let mailTransporter;
+function getMailTransporter() {
+  if (mailTransporter !== undefined) return mailTransporter;
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) { mailTransporter = null; return null; }
+  mailTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+  });
+  return mailTransporter;
+}
+
+async function sendIntegrityAlertEmail(newFindings, label) {
+  const transporter = getMailTransporter();
+  const to = process.env.ALERT_EMAIL_TO;
+  if (!transporter || !to) {
+    console.log('[Integrity] ยังไม่ได้ตั้งค่าอีเมล (GMAIL_USER/GMAIL_APP_PASSWORD/ALERT_EMAIL_TO ใน .env) — ข้ามการแจ้งเตือน');
+    return;
+  }
+  const lines = newFindings.map(f => `- ${f.message}`).join('\n');
+  await transporter.sendMail({
+    from: process.env.GMAIL_USER,
+    to,
+    subject: `[Logistics Tracking] พบข้อมูลผิดปกติใหม่ ${newFindings.length} จุด`,
+    text: `ระบบตรวจสอบข้อมูลอัตโนมัติ (${label}) พบรายการใหม่ที่น่าสงสัย:\n\n${lines}\n\nดูรายละเอียดที่ Dashboard: http://localhost:3000/`,
+  });
+  console.log('[Integrity] ส่งอีเมลแจ้งเตือน', newFindings.length, 'จุดใหม่ ไปที่', to);
+}
+
+// ─── สรุปรายสัปดาห์ (heartbeat) ──────────────────────────────────────────────
+// ปัญหา: การแจ้งเตือน "เฉพาะของใหม่" แปลว่าถ้าอีเมลเงียบไป อาจหมายถึง "ทุกอย่างปกติ" หรือ "ระบบแจ้งเตือนพัง"
+// ก็ได้ — แยกไม่ออก จึงส่งสรุปสถานะทุก 7 วันแม้ไม่มีปัญหา เพื่อยืนยันว่าระบบยังทำงานอยู่ (ถ้าไม่ได้สรุปตามรอบ
+// = ระบบมีปัญหา) เก็บเวลาส่งครั้งล่าสุดลงไฟล์ ให้ทนต่อการ restart (ไม่ผูกกับ setInterval ที่รีเซ็ตทุกครั้ง)
+const DIGEST_INTERVAL = 7 * 24 * 60 * 60 * 1000;
+let lastDigestAt = 0;
+try {
+  const d = JSON.parse(fs.readFileSync(INTEGRITY_DIGEST_FILE, 'utf8'));
+  if (d && typeof d.lastDigestAt === 'number') lastDigestAt = d.lastDigestAt;
+} catch (e) { /* ยังไม่เคยส่ง */ }
+
+async function maybeSendWeeklyDigest() {
+  const now = Date.now();
+  if (now - lastDigestAt < DIGEST_INTERVAL) return;
+  const transporter = getMailTransporter();
+  const to = process.env.ALERT_EMAIL_TO;
+  if (!transporter || !to) return; // ไม่ตั้งค่าอีเมล = ข้ามเงียบๆ (เหมือน alert)
+  const ir = integrityReport;
+  const fCount = (ir.findings || []).length, aCount = (ir.autoCorrected || []).length;
+  const statusLine = fCount
+    ? `⚠️ ยังพบปัญหาค้างอยู่ ${fCount} จุด (ต้องแก้)`
+    : 'ระบบทำงานปกติ — ไม่พบปัญหาที่ต้องแก้';
+  const detail = [
+    ...(fCount ? ['ปัญหาที่ต้องแก้:', ...ir.findings.map(f => `  - ${f.message}`)] : []),
+    ...(aCount ? ['', `ซ่อมอัตโนมัติ (แอปแสดงถูกแล้ว แต่ควรตามไปแก้ที่ Odoo) ${aCount} จุด:`, ...ir.autoCorrected.map(f => `  - ${f.message}`)] : []),
+  ].join('\n');
+  try {
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
+      to,
+      subject: `[Logistics Tracking] สรุปสถานะข้อมูลรายสัปดาห์ — ${fCount ? 'พบ ' + fCount + ' จุด' : 'ปกติ'}`,
+      text: `สรุปการตรวจสอบข้อมูลอัตโนมัติประจำสัปดาห์\n\n${statusLine}\nตรวจล่าสุด: ${ir.ranAt || '-'} · เช็ค ${(ir.importChecked||0)+(ir.exportChecked||0)} รายการ\n\n${detail || '(ไม่มีรายการที่ต้องรายงาน)'}\n\nอีเมลนี้ส่งทุก 7 วันเพื่อยืนยันว่าระบบแจ้งเตือนยังทำงานอยู่ — ถ้าไม่ได้รับตามรอบ แปลว่าระบบอาจมีปัญหา\nDashboard: http://localhost:3000/`,
+    });
+    lastDigestAt = now;
+    fs.writeFileSync(INTEGRITY_DIGEST_FILE, JSON.stringify({ lastDigestAt }));
+    console.log('[Integrity] ส่งสรุปรายสัปดาห์ไปที่', to);
+  } catch (e) {
+    console.error('[Integrity] ส่งสรุปรายสัปดาห์ไม่สำเร็จ:', e.message);
+  }
+}
+
+// ใช้ snapshot ปัจจุบัน (ข้อมูลที่กำลังเสิร์ฟให้ผู้ใช้จริงอยู่แล้ว) ไม่ยิง query ใหม่ — กันเพิ่มโหลดฐานข้อมูล/
+// เสี่ยง trip circuit breaker โดยไม่จำเป็น เช็คแค่สิ่งที่ผู้ใช้เห็นอยู่ตอนนี้ว่าเชื่อถือได้ไหม
+async function runIntegrityCheck(label) {
+  const findings = [
+    ...checkCurrencyRateSanity(snapshot.import, 'import', 'po_number'),
+    ...checkCurrencyRateSanity(snapshot.export, 'export', 'so_number'),
+  ];
+  const autoCorrected = [
+    ...collectAutoCorrected(snapshot.import, 'import', 'po_number'),
+    ...collectAutoCorrected(snapshot.export, 'export', 'so_number'),
+  ];
+  integrityReport = {
+    ranAt: new Date().toISOString(), findings, autoCorrected,
+    importChecked: (snapshot.import || []).length, exportChecked: (snapshot.export || []).length,
+  };
+  const acNote = autoCorrected.length ? ' · ซ่อมอัตโนมัติ ' + autoCorrected.length + ' จุด' : '';
+  if (findings.length) console.error('[Integrity:' + label + '] พบความผิดปกติ', findings.length, 'จุด' + acNote);
+  else console.log('[Integrity:' + label + '] ตรวจ', integrityReport.importChecked + integrityReport.exportChecked, 'รายการ — ไม่พบความผิดปกติ' + acNote);
+
+  const newFindings = findings.filter(f => !integritySeenKeys.has(findingKey(f)));
+  integritySeenKeys = new Set(findings.map(findingKey));
+  saveIntegritySeenKeys();
+  if (newFindings.length) {
+    sendIntegrityAlertEmail(newFindings, label).catch(e => console.error('[Integrity] ส่งอีเมลแจ้งเตือนไม่สำเร็จ:', e.message));
+  }
+  return integrityReport;
+}
 
 // ─── Odoo JSON-RPC ───────────────────────────────────────────────
 // ตั้งค่า ODOO_USER / ODOO_PASS ผ่าน environment variable หรือแก้ที่นี่
@@ -228,7 +530,29 @@ const SQL_IMPORT = `
     po.date_planned,
     po.amount_total,
     cu.name                   AS currency,
-    po.currency_rate,
+    -- po.currency_rate ไม่ได้อัปเดตตามใบวางบิลที่สร้างทีหลัง PO (พบจริง: BTVPO2506-01022 ค้างเป็น 1
+    -- ทั้งที่ใบวางบิลจริงมี rate ถูกต้อง 0.2174) — เฉพาะตอน po.currency_rate ผิดปกติ (หาย/เป็น 1 พอดี)
+    -- ให้ดึง rate จากใบวางบิลจริง (account_move) ที่ผูกกับ PO นี้แทน ไม่กระทบ PO ปกติที่เหลือ
+    CASE
+      WHEN po.currency_rate IS NULL OR po.currency_rate <= 0 OR ABS(po.currency_rate - 1) < 1e-9
+      THEN COALESCE(
+        (SELECT am.invoice_currency_rate FROM account_move am
+         WHERE am.invoice_origin = po.name AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
+         ORDER BY am.invoice_date DESC LIMIT 1),
+        po.currency_rate
+      )
+      ELSE po.currency_rate
+    END                       AS currency_rate,
+    -- ธงบอกว่าแถวนี้ "ซ่อมอัตโนมัติ" (ค่าที่ Odoo เพี้ยน แต่เราดึง rate จากใบวางบิลมาแทนได้) — โชว์เป็นข้อมูล
+    -- ไม่ใช่ปัญหา เพื่อไม่ให้บดบังความจริงว่า Odoo ต้นทางยังต้องแก้ (ดู runIntegrityCheck)
+    CASE
+      WHEN (po.currency_rate IS NULL OR po.currency_rate <= 0 OR ABS(po.currency_rate - 1) < 1e-9)
+       AND cu.name <> 'THB'
+       AND (SELECT am.invoice_currency_rate FROM account_move am
+            WHERE am.invoice_origin = po.name AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
+            ORDER BY am.invoice_date DESC LIMIT 1) IS NOT NULL
+      THEN 1 ELSE 0
+    END                       AS rate_auto_corrected,
     po.receipt_status,
     po.origin,
     po.notes,
@@ -277,6 +601,25 @@ const SQL_EXPORT = `
     so.date_order,
     so.amount_total,
     cu.name                   AS currency,
+    -- ป้องกันเคสเดียวกับฝั่ง PO (ดู SQL_IMPORT) แม้ยังไม่เจอจริงฝั่ง export ก็ตาม — กันไว้ก่อน
+    CASE
+      WHEN so.currency_rate IS NULL OR so.currency_rate <= 0 OR ABS(so.currency_rate - 1) < 1e-9
+      THEN COALESCE(
+        (SELECT am.invoice_currency_rate FROM account_move am
+         WHERE am.invoice_origin = so.name AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
+         ORDER BY am.invoice_date DESC LIMIT 1),
+        so.currency_rate
+      )
+      ELSE so.currency_rate
+    END                       AS currency_rate,
+    CASE
+      WHEN (so.currency_rate IS NULL OR so.currency_rate <= 0 OR ABS(so.currency_rate - 1) < 1e-9)
+       AND cu.name <> 'THB'
+       AND (SELECT am.invoice_currency_rate FROM account_move am
+            WHERE am.invoice_origin = so.name AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
+            ORDER BY am.invoice_date DESC LIMIT 1) IS NOT NULL
+      THEN 1 ELSE 0
+    END                       AS rate_auto_corrected,
     so.delivery_status,
     so.invoice_status,
     so.origin,
@@ -297,6 +640,77 @@ const SQL_EXPORT = `
   ORDER BY so.date_order DESC
   LIMIT 500
 `;
+
+// ─── รายการสินค้าใน PO/SO — ดึงตามต้องการตอนเปิดดูรายละเอียด ไม่ query ทุก PO ล่วงหน้า ──────
+// product_template.name/uom_uom.name เป็น jsonb หลายภาษา (เหมือน res_country.name) ต้องแกะ en_US/th_TH
+// display_type IS NULL กันแถว section/note (หัวข้อย่อยไม่ใช่สินค้าจริง) หลุดเข้ามาปนสินค้าจริง
+// SELECT ร่วมสำหรับรายการสินค้าใน PO/SO — ponameSql คือนิพจน์ SQL ที่แทนค่าเลข PO/SO
+// ($1 สำหรับ direct pg แบบ parameterized, หรือ string literal ที่ escape แล้วสำหรับ MCP ที่ต้องฝัง SQL เป็น text)
+// รวมเป็นจุดเดียวเพื่อไม่ให้ direct กับ MCP fallback มีข้อมูลไม่ตรงกันถ้าแก้ query ฝั่งเดียวแล้วลืมอีกฝั่ง
+function poLineSelectBody(board, ponameSql) {
+  return board === 'export' ? `
+    SELECT sol.id, sol.sequence,
+      COALESCE(pt.name->>'en_US', pt.name->>'th_TH', sol.name) AS product_name,
+      pt.default_code AS sku, sol.product_uom_qty AS qty,
+      COALESCE(uom.name->>'en_US', uom.name->>'th_TH') AS uom,
+      sol.price_unit, sol.price_subtotal, sol.price_total
+    FROM sale_order_line sol
+    JOIN sale_order so ON so.id = sol.order_id
+    LEFT JOIN product_product pp ON pp.id = sol.product_id
+    LEFT JOIN product_template pt ON pt.id = pp.product_tmpl_id
+    LEFT JOIN uom_uom uom ON uom.id = sol.product_uom
+    WHERE so.name = ${ponameSql} AND sol.display_type IS NULL` : `
+    SELECT pol.id, pol.sequence,
+      COALESCE(pt.name->>'en_US', pt.name->>'th_TH', pol.name) AS product_name,
+      pt.default_code AS sku, pol.product_qty AS qty,
+      COALESCE(uom.name->>'en_US', uom.name->>'th_TH') AS uom,
+      pol.price_unit, pol.price_subtotal, pol.price_total
+    FROM purchase_order_line pol
+    JOIN purchase_order po ON po.id = pol.order_id
+    LEFT JOIN product_product pp ON pp.id = pol.product_id
+    LEFT JOIN product_template pt ON pt.id = pp.product_tmpl_id
+    LEFT JOIN uom_uom uom ON uom.id = pol.product_uom
+    WHERE po.name = ${ponameSql} AND pol.display_type IS NULL`;
+}
+function poLineOrderBy(board) { return board === 'export' ? 'sol.sequence, sol.id' : 'pol.sequence, pol.id'; }
+function poLineSqlDirect(board) {
+  return poLineSelectBody(board, '$1') + '\n    ORDER BY ' + poLineOrderBy(board);
+}
+// path MCP ส่ง SQL เป็น text ตรงๆ (ไม่มี placeholder แบบ pg) จึง escape เลข PO เองก่อนฝังในสตริง
+// รายการสินค้าต่อ PO มีไม่กี่บรรทัด (ไม่ต้อง paginate) แต่ยังเข้ารหัส base64 กันชื่อสินค้ายาวเกิน 58 ตัวโดนตัด
+async function mcpFetchPoLines(board, poNumber) {
+  const esc = poNumber.replace(/'/g, "''");
+  const inner = poLineSelectBody(board, `'${esc}'`);
+  const sql = `
+    SELECT ${Array.from({ length: MCP_NCOLS }, (_, i) => `substring(b,${i * MCP_CHUNK + 1},${MCP_CHUNK}) AS c${i}`).join(', ')}
+    FROM (
+      SELECT translate(encode(convert_to(row_to_json(r)::text,'UTF8'),'base64'), E'\\n','') AS b, r.sequence AS _seq, r.id AS _id
+      FROM ( ${inner} ) r
+    ) x
+    ORDER BY _seq ASC NULLS LAST, _id ASC`;
+  const sid = await mcpConnect();
+  const text = await mcpRunSql(sid, sql);
+  return decodeB64Rows(mcpParseTable(text), 'po-lines');
+}
+// cache รายการสินค้าต่อ PO — จำกัดจำนวน entry กันโตไม่มีเพดานถ้า process รันยาวและมีคนเปิดดูหลาย PO เรื่อยๆ
+const poLineCache = { data: {}, ts: {} };
+const PO_LINE_CACHE_TTL = 5 * 60 * 1000;
+const PO_LINE_CACHE_MAX = 500;
+function poLineCacheSet(key, rows) {
+  poLineCache.data[key] = rows; poLineCache.ts[key] = Date.now();
+  const keys = Object.keys(poLineCache.data);
+  if (keys.length > PO_LINE_CACHE_MAX) {
+    // ไม่มี insertion-order รับประกัน 100% ใน object เก่ามาก แต่ V8 คง insertion order ให้จริงในทางปฏิบัติ
+    // เอาตัวเก่าสุดออกพอประมาณ — ไม่ต้องแม่นเป๊ะ แค่กันโตไม่มีที่สิ้นสุด
+    for (const k of keys.slice(0, keys.length - PO_LINE_CACHE_MAX)) { delete poLineCache.data[k]; delete poLineCache.ts[k]; }
+  }
+}
+function poLineCacheGet(key) {
+  const ts = poLineCache.ts[key];
+  if (ts == null) return undefined;
+  if (Date.now() - ts >= PO_LINE_CACHE_TTL) { delete poLineCache.data[key]; delete poLineCache.ts[key]; return undefined; }
+  return poLineCache.data[key];
+}
 
 // อ่าน logistics.shipment records (ใช้ได้หลัง module ถูก install ใน Odoo)
 const SQL_SHIPMENTS = `
@@ -467,6 +881,41 @@ const server = http.createServer(async (req, res) => {
         console.error('[API] export-sos:', e.message);
         jsonErr(res, 500, e.message);
       }
+      return;
+    }
+
+    // ── รายการสินค้าใน PO/SO — เรียกตอนเปิดดูรายละเอียด ไม่ query ทุก PO ล่วงหน้า ──
+    // GET /api/po-lines?po=<po_number>&board=import|export
+    if (reqUrl === '/api/po-lines' && method === 'GET') {
+      const params = new URL('http://x' + req.url).searchParams;
+      const po     = (params.get('po') || '').trim();
+      const board  = params.get('board') === 'export' ? 'export' : 'import';
+      if (!po) { jsonErr(res, 400, 'ต้องระบุ po'); return; }
+      // allowlist รูปแบบเลข PO/SO — กัน injection ฝั่ง MCP ที่ต้องฝัง SQL เป็น text ตรงๆ (ไม่มี placeholder)
+      if (!/^[\w\-\s().#/]{1,60}$/.test(po)) { jsonErr(res, 400, 'รูปแบบเลข PO ไม่ถูกต้อง'); return; }
+      const cacheKey = board + ':' + po;
+      const cached = poLineCacheGet(cacheKey);
+      if (cached) { jsonOk(res, { ok: true, rows: cached, source: 'cache' }); return; }
+      let directErr = null;
+      if (!dbLikelyDown()) {
+        try {
+          const r = await db.query(poLineSqlDirect(board), [po]);
+          markDbUp();
+          poLineCacheSet(cacheKey, r.rows);
+          jsonOk(res, { ok: true, rows: r.rows, source: 'direct' });
+          return;
+        } catch (e) { directErr = e; markDbDown(); }
+      }
+      // direct ต่อไม่ได้ (หรือรู้อยู่แล้วว่าล่ม) — ลองผ่าน MCP bridge ก่อนยอมแพ้
+      if (MCP_URL && MCP_TOKEN) {
+        try {
+          const rows = await mcpFetchPoLines(board, po);
+          poLineCacheSet(cacheKey, rows);
+          jsonOk(res, { ok: true, rows, source: 'mcp' });
+          return;
+        } catch (mcpErr) { console.error('[API] po-lines MCP fallback:', mcpErr.message); }
+      }
+      jsonErr(res, 503, 'ดึงรายการสินค้าไม่ได้ในขณะนี้ (Odoo ต่อไม่ได้)' + (directErr ? ': ' + directErr.message : ''));
       return;
     }
 
@@ -767,6 +1216,7 @@ const server = http.createServer(async (req, res) => {
             am.amount_total,
             am.amount_tax,
             cu.name::text             AS currency,
+            COALESCE(NULLIF(am.inverse_currency_rate,0), 1.0/NULLIF(am.invoice_currency_rate,0)) AS rate_thb,
             rp.name::text             AS partner,
             am.invoice_date::text     AS doc_date,
             COALESCE(aml_s.lines_json, '[]'::json) AS lines
@@ -807,6 +1257,7 @@ const server = http.createServer(async (req, res) => {
             po.origin::text,
             po.amount_total,
             cu.name::text        AS currency,
+            1.0/NULLIF(po.currency_rate,0) AS rate_thb,
             rp.name::text        AS partner,
             po.date_order::text  AS doc_date,
             prod.main_product,
@@ -873,16 +1324,22 @@ const server = http.createServer(async (req, res) => {
 
         const out = [];
         const billedPoNames = new Set();
+        // แปลงเป็นบาทเสมอตาม rate_thb ของแต่ละบิล/PO — เดิมไม่แปลงเลย บิลสกุลต่างประเทศ (เช่น DHL/forwarder
+        // ที่ออกบิลเป็น USD) ถูกนับเป็นบาทตรงๆ ผิดขนาด ~30 เท่า (bug จริงที่เจอและแก้ 13 ก.ค. 2569 — คนละจุด
+        // กับ bug currency_rate ของ export SO ที่แก้ไปก่อนหน้านี้ แต่เป็น "โรค" เดียวกัน: ดึงยอดสกุลเงินมาโดยไม่แปลง)
+        const thbRate = r => { if (!r.currency || r.currency === 'THB') return 1; const v = parseFloat(r.rate_thb); return v > 0 ? v : 1; };
         billRows.forEach(r => {
-          const total = parseFloat(r.amount_total) || 0;
-          const tax   = parseFloat(r.amount_tax)   || 0;
+          const fx = thbRate(r);
+          const origAmount = parseFloat(r.amount_total) || 0;
+          const total = origAmount * fx;
+          const tax   = (parseFloat(r.amount_tax) || 0) * fx;
           const lines = Array.isArray(r.lines) ? r.lines : [];
           const text  = lines.map(l => l.name || '').join(' ');
           const c = zero5();
           // ลองแยกตาม line ก่อน — ใช้ได้เมื่อยอด line บวกรวมแล้วเป็นยอดจริง (ไม่หักล้างกัน)
           let lineTotal = 0;
           const lineSums = zero5();
-          lines.forEach(l => { const a = parseFloat(l.amount) || 0; lineTotal += a; lineSums[lineCat(l.name)] += a; });
+          lines.forEach(l => { const a = (parseFloat(l.amount) || 0) * fx; lineTotal += a; lineSums[lineCat(l.name)] += a; });
           let cat;
           if (lines.length && lineTotal > total * 0.5) {
             // scale ยอด line (ก่อน VAT) ให้เท่ายอดจ่ายจริงทั้งใบ
@@ -897,17 +1354,21 @@ const server = http.createServer(async (req, res) => {
           [r.invoice_origin, r.ref].forEach(v => { if (v) billedPoNames.add(v.trim()); });
           out.push({ id: r.id, kind: 'bill', bill: r.bill_name, partner: r.partner,
             ref: r.ref, origin: r.invoice_origin, amount: total, currency: r.currency,
+            origAmount: fx !== 1 ? origAmount : null, fxRate: fx !== 1 ? fx : null,
             date: r.doc_date, category: cat, ...round5(c) });
         });
         poRows.forEach(r => {
           // PO ที่มีบิลอ้างถึงแล้ว → ข้าม (ใช้ยอดจากบิลจริงแทน)
           if (billedPoNames.has((r.po_number || '').trim())) return;
-          const total = parseFloat(r.amount_total) || 0;
+          const fx = thbRate(r);
+          const origAmount = parseFloat(r.amount_total) || 0;
+          const total = origAmount * fx;
           const text  = (r.main_product || '') + ' ' + (r.cat_name || '');
           const cat   = wholeBillCat(text, r.partner, 0);
           const c = zero5(); c[cat] = total;
           out.push({ id: 'po_' + r.id, kind: 'po', bill: r.po_number, partner: r.partner,
             ref: r.origin, origin: r.origin, amount: total, currency: r.currency,
+            origAmount: fx !== 1 ? origAmount : null, fxRate: fx !== 1 ? fx : null,
             date: r.doc_date, category: cat, ...round5(c) });
         });
         out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -1119,6 +1580,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── ผลตรวจสอบข้อมูลอัตโนมัติ — GET /api/integrity-check?force=1 เพื่อสั่งตรวจใหม่ทันที ──
+    if (reqUrl === '/api/integrity-check' && method === 'GET') {
+      const force = new URL('http://x' + req.url).searchParams.get('force') === '1';
+      if (force || !integrityReport.ranAt) await runIntegrityCheck(force ? 'Manual' : 'FirstView');
+      jsonOk(res, { ok: true, ...integrityReport });
+      return;
+    }
+
     // ── Tracking data (server-side persistence) ──
     if (reqUrl === '/api/tracking' && method === 'GET') {
       const rows = loadTracking();
@@ -1172,6 +1641,42 @@ const server = http.createServer(async (req, res) => {
           const ok = saveTracking(data);
           jsonOk(res, { ok, applied, total: data.length });
         } catch(e) { jsonErr(res, 400, e.message); }
+      });
+      return;
+    }
+
+    // ── ลบ shipment ที่แยกเอง (synthetic) เท่านั้น — ห้ามลบ PO จริงที่มาจาก Odoo ──
+    // ปิดใช้งานโดย default: ต้องตั้ง DELETE_PASSWORD ใน .env ก่อน ไม่งั้นทุกคำขอถูกปฏิเสธเสมอ
+    // (ผู้ใช้ทั่วไปแก้ .env ไม่ได้ — เจ้าของระบบเป็นคนตั้งรหัสแล้วแจกให้เฉพาะผู้มีอำนาจเท่านั้น)
+    // POST /api/tracking/delete  body = { po_so, password }
+    if (reqUrl === '/api/tracking/delete' && method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          if (!process.env.DELETE_PASSWORD) {
+            jsonErr(res, 403, 'ฟีเจอร์ลบยังไม่เปิดใช้งาน — ต้องตั้งค่า DELETE_PASSWORD ใน .env ก่อน');
+            return;
+          }
+          const { po_so, password } = JSON.parse(body || '{}');
+          if (password !== process.env.DELETE_PASSWORD) {
+            auditLog('delete_denied', po_so || '?', ['wrong_password'], req.socket.remoteAddress);
+            jsonErr(res, 401, 'รหัสผ่านไม่ถูกต้อง');
+            return;
+          }
+          if (!po_so) { jsonErr(res, 400, 'ไม่พบ po_so'); return; }
+          const data = loadTracking();
+          const idx  = data.findIndex(r => (r.po_so || r.id) === po_so);
+          if (idx < 0) { jsonErr(res, 404, 'ไม่พบรายการนี้'); return; }
+          if (!data[idx]._synthetic) {
+            jsonErr(res, 400, 'ลบได้เฉพาะ shipment ที่แยกเอง (สร้างในแอป) เท่านั้น — PO จริงจาก Odoo ลบผ่านหน้านี้ไม่ได้');
+            return;
+          }
+          data.splice(idx, 1);
+          const ok = saveTracking(data);
+          auditLog('delete', po_so, ['deleted'], req.socket.remoteAddress);
+          jsonOk(res, { ok });
+        } catch (e) { jsonErr(res, 400, e.message); }
       });
       return;
     }
@@ -1291,6 +1796,24 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── AI ตรวจเอกสาร shipment (layer 4) — เรียก Claude API ตรงจาก server ──
+    // multipart/form-data: field "mode" (import|export) + field "files" (หลายไฟล์)
+    // มีค่าใช้จ่ายจริงต่อครั้ง (ต้องตั้ง ANTHROPIC_API_KEY ใน .env ก่อน)
+    if (reqUrl === '/api/verify-shipment' && method === 'POST') {
+      if (!process.env.ANTHROPIC_API_KEY) {
+        jsonErr(res, 503, 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY ใน .env — ฟีเจอร์ตรวจเอกสารยังใช้งานไม่ได้');
+        return;
+      }
+      try {
+        const result = await verifyShipmentRequest(req);
+        jsonOk(res, result);
+      } catch (e) {
+        console.error('[API] verify-shipment:', e.message);
+        jsonErr(res, e.code === 'NO_API_KEY' ? 503 : 400, e.message);
+      }
+      return;
+    }
+
     jsonErr(res, 404, 'API endpoint not found');
     return;
   }
@@ -1312,6 +1835,12 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
+// การตรวจเอกสารด้วย AI (/api/verify-shipment) เป็น request เดียวที่ใช้เวลานาน (30 วิ - 2 นาที)
+// ค่า default ของ Node (headersTimeout 60s, requestTimeout 5min) พอไหวอยู่แล้ว แต่ตั้งชัดเจน
+// ไว้กันเคสไฟล์เยอะ/เอกสารยาวผิดปกติที่อาจใช้เวลาเกิน 5 นาที
+server.requestTimeout = 6 * 60 * 1000;
+server.headersTimeout = 65 * 1000;
+
 // HOST=127.0.0.1 (ค่าเริ่มต้น) = เข้าได้เฉพาะเครื่องนี้
 // ถ้าต้องการเปิดให้เครือข่าย ให้ตั้ง HOST=0.0.0.0 + APP_PASSWORD ใน .env
 const HOST = process.env.HOST || '127.0.0.1';
@@ -1332,19 +1861,28 @@ server.listen(PORT, HOST, () => {
   // snapshot สดไว้เสิร์ฟให้ browser ทันที; ถ้าล้ม circuit breaker จะถูกตั้งไว้แล้ว
   // ทำให้ request แรกจาก browser ไม่ต้องเสียเวลารอ timeout เอง
   const warm = async (label) => {
-    // probe เบาก่อน (SELECT 1) — รู้เร็วว่า DB ต่อได้ไหม โดยไม่ต้องยิง query หนัก
+    // probe เบาก่อน (SELECT 1) — รู้เร็วว่า DB ตรงต่อได้ไหม โดยไม่ต้องยิง query หนัก
     // สำเร็จ → ปลด breaker ทันที (กลับมา live); ล้ม → markDbDown (request จาก browser fast-fail)
+    // หมายเหตุ: ต่อให้ direct ล้ม ก็ยังเรียก liveOrSnapshot ต่อเสมอ (ไม่ return ตรงนี้) เพราะ
+    // liveOrSnapshot มีชั้น MCP bridge fallback ในตัวแล้ว — ให้โอกาสดึงสดผ่าน MCP ต่อทุกรอบ
     try { await db.query('SELECT 1'); markDbUp(); }
-    catch (e) { markDbDown(); console.log('[' + label + '] Odoo ยังต่อไม่ได้ — เสิร์ฟ snapshot ล่าสุด'); return false; }
+    catch (e) { markDbDown(); console.log('[' + label + '] Odoo ตรงยังต่อไม่ได้ — ลอง MCP bridge ต่อ'); }
     try {
-      await liveOrSnapshot('import', SQL_IMPORT, true);
-      await liveOrSnapshot('export', SQL_EXPORT, true);
-      console.log('[' + label + '] snapshot Odoo สำเร็จ', new Date().toISOString());
+      // import/export แต่ละอันเปิด MCP session ของตัวเอง (ไม่แชร์กัน — ดู comment ที่ mcpFetch) ยิงพร้อมกันได้เลย
+      // ไม่งั้นตอน direct หลุดจะรอ MCP handshake+pagination ของ import จบก่อนค่อยเริ่ม export ช้าเป็น 2 เท่าโดยไม่จำเป็น
+      const [imp, exp] = await Promise.all([
+        liveOrSnapshot('import', SQL_IMPORT, true),
+        liveOrSnapshot('export', SQL_EXPORT, true),
+      ]);
+      console.log('[' + label + '] snapshot สำเร็จ (import:' + imp.via + ' export:' + exp.via + ')', new Date().toISOString());
       return true;
-    } catch (e) { return false; }
+    } catch (e) { console.log('[' + label + '] ล้มเหลวทั้ง direct และ MCP — เสิร์ฟ snapshot เดิม:', e.message); return false; }
   };
-  warm('Warmup');
+  // รอข้อมูลพร้อมก่อน ไม่งั้นรอบแรกจะเช็คจากลิสต์ว่างเปล่า — แล้วส่งสรุปรายสัปดาห์ถ้าถึงรอบ (ครั้งแรก = ยืนยันระบบพร้อม)
+  warm('Warmup').then(() => runIntegrityCheck('Startup')).then(() => maybeSendWeeklyDigest());
   // Probe เป็นระยะ — สร้าง/อัปเดต snapshot ทันทีที่ Odoo กลับมาต่อได้ แม้ไม่มีใครเปิดหน้าเว็บ
   // ทำให้ครั้งถัดไปที่เปิด browser มีข้อมูลสดเสิร์ฟทันที ไม่ต้องรอ
   setInterval(() => { warm('AutoProbe'); }, 2 * 60 * 1000).unref();
+  // รอบตรวจสอบข้อมูลอัตโนมัติ — ทุก 24 ชม. โดยไม่ต้องรอให้คนสังเกตตัวเลขผิดปกติเอง + เช็คว่าถึงรอบสรุปรายสัปดาห์ไหม
+  setInterval(() => { runIntegrityCheck('Scheduled').then(() => maybeSendWeeklyDigest()); }, INTEGRITY_CHECK_INTERVAL).unref();
 });

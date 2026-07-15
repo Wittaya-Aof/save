@@ -122,7 +122,9 @@ const PATHS = {
   edit:'M4 20h4l10-10-4-4L4 16z M14 6l4 4',check:'M5 12.5l4.5 4.5L19 7',
   bell:'M18 9a6 6 0 10-12 0c0 6.5-2.5 7.5-2.5 7.5h17S18 15.5 18 9 M10.3 20.5a2 2 0 003.4 0',
   dl:'M12 3v11 M7 10l5 5 5-5 M4 20h16',
-  courier:'M3 8l9-5 9 5-9 5-9-5z M3 8v8l9 5 9-5V8 M12 13v8'
+  courier:'M3 8l9-5 9 5-9 5-9-5z M3 8v8l9 5 9-5V8 M12 13v8',
+  split:'M12 3v6 M12 9l-6 4v6 M12 9l6 4v6 M4 21h4 M16 21h4',
+  trash:'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13'
 };
 function Ico({name,size=18,sw=1.7}){
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -144,6 +146,8 @@ function fmtAmt(v,cur){
   return sym+Math.round(v||0).toLocaleString('en-US');
 }
 function rateGuess(cur){return ({CNY:4.77,USD:33.3,SGD:25.4,THB:1})[cur]||1;}
+// สีประจำสกุลเงิน — ใช้ที่แผง FX exposure ใน Dashboard เท่านั้น (ไม่ผูกกับ palette อื่นในไฟล์)
+function curColor(cur){return ({CNY:'#c91253',USD:'#7c3aed',SGD:'#0ea5e9',THB:'#16a34a'})[cur]||'#94a3b8';}
 // fetch ที่มี timeout จริง — เดิม fetch() ไม่มี timeout ในตัว ถ้าเครือข่ายไป Odoo ค้าง
 // (ไม่ reject ไม่ resolve) หน้าจอจะค้าง "กำลังโหลด…" ไปเรื่อยๆ โดยไม่มี error ให้เห็น
 function fetchTimeout(url,opts,ms){
@@ -266,8 +270,8 @@ class App extends Component {
   constructor(props){
     super(props);
     const w=typeof window!=='undefined'?window.innerWidth:1280;
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false};
-    this._plan=null; this._overrides={}; this._tt=null; this._fx=null;
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyLoading:false,verifyResult:null,verifyError:null};
+    this._plan=null; this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   componentDidMount(){
     window.addEventListener('resize',this._onResize=()=>{const n=window.innerWidth<880;if(n!==this.state.isNarrow)this.setState({isNarrow:n});});
@@ -279,13 +283,60 @@ class App extends Component {
       if(this.state.syncing||this.state.editing||this.state.creating||this.state.billPicker)return;
       this.loadData();
     },180000); // ทุก 3 นาที
+    this.loadIntegrityReport(false);
   }
   componentWillUnmount(){window.removeEventListener('resize',this._onResize);clearInterval(this._autoRefresh);}
+  // ผลตรวจสอบข้อมูลอัตโนมัติจาก server (รอบ 24 ชม. + เช็คตอน server เพิ่งเปิด) — force=true = สั่งตรวจใหม่ทันที
+  async loadIntegrityReport(force){
+    this.setState({integrityLoading:true});
+    try{
+      const r=await fetchTimeout('/api/integrity-check'+(force?'?force=1':''),{headers:{Accept:'application/json'}},force?20000:12000);
+      const j=await r.json();
+      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      this.setState({integrityReport:j,integrityLoading:false});
+    }catch(e){this.setState({integrityLoading:false});}
+  }
+  // เปิดรายละเอียด PO ใบใหม่ (detailId เปลี่ยน) → โหลดรายการสินค้าของ PO นั้นอัตโนมัติ
+  // อยู่จุดเดียวตรงนี้ ไม่ต้องแก้ทุกที่ที่ setState({detailId:...}) กระจายอยู่หลายจุด
+  componentDidUpdate(prevProps,prevState){
+    if(this.state.detailId&&this.state.detailId!==prevState.detailId){
+      const sel=this.allShipments().find(s=>s.id===this.state.detailId);
+      if(sel)this.loadPoLines(sel);
+    }
+  }
+  // PO ที่แยกเป็น shipment ย่อย (_synthetic) ไม่มี PO จริงคู่กัน — โชว์รายการสินค้าของ PO ต้นฉบับแทน
+  async loadPoLines(sel){
+    const board=sel._board,poForLines=sel._splitBase||sel.poNo;
+    const cacheKey=board+':'+poForLines;
+    // TTL 5 นาที ให้ตรงกับ PO_LINE_CACHE_TTL ฝั่ง server — เดิม cache ฝั่ง client ไม่มีวันหมดอายุเลยในทาบเดียว
+    // เปิด PO เดิมซ้ำตอนหลังราคาสินค้าอาจเปลี่ยนใน Odoo แล้ว แต่ยังเห็นของเก่าไม่มีอะไรบอกว่าเก่า
+    const cached=this._poLinesCache[cacheKey];
+    if(cached&&(Date.now()-cached.ts)<300000){this.setState({poLines:cached.rows,poLinesLoading:false,poLinesError:''});return;}
+    this.setState({poLines:null,poLinesLoading:true,poLinesError:''});
+    try{
+      // เผื่อเวลาให้พอกับ path ตรง→MCP bridge เดียวกับ loadData() (ตรงหลุด ~13 วิ + MCP ต่ออีกหลายวิ)
+      // เดิม 12 วิ พอกันกับตอน loadData ก่อนแก้ ทำให้ตอน RDS หลุดจะขึ้น "โหลดไม่สำเร็จ" หลอกๆ ทั้งที่ server หาเจอ
+      const r=await fetchTimeout('/api/po-lines?po='+encodeURIComponent(poForLines)+'&board='+board,{headers:{Accept:'application/json'}},20000);
+      const j=await r.json();
+      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      // จำกัดขนาด cache กันโตไม่มีเพดานถ้าเปิดดู PO ไปเรื่อยๆ ในทาบเดียวนานๆ — ตัดตัวเก่าสุดออกเมื่อเกิน
+      const keys=Object.keys(this._poLinesCache);
+      if(keys.length>=200)delete this._poLinesCache[keys[0]];
+      this._poLinesCache[cacheKey]={rows:j.rows||[],ts:Date.now()};
+      // ถ้าผู้ใช้เปิดรายละเอียดใบอื่นไปแล้วระหว่างรอ ไม่ต้อง setState ทับของใบใหม่
+      if(this.state.detailId===sel.id)this.setState({poLines:j.rows||[],poLinesLoading:false});
+    }catch(e){
+      if(this.state.detailId===sel.id)this.setState({poLines:null,poLinesLoading:false,poLinesError:e.message||'โหลดไม่สำเร็จ'});
+    }
+  }
   nowTime(){const d=new Date();return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+' น.';}
 
   async loadData(){
     this.setState({dataSource:'loading'});
-    const grab=async u=>{const r=await fetchTimeout(u,{headers:{Accept:'application/json'}},12000);if(!r.ok)throw 0;return r.json();};
+    // force sync (ปุ่ม Sync Odoo) อาจต้องรอทั้ง direct pg timeout (~13 วิ) แล้วต่อด้วย MCP bridge
+    // (อีกหลายวิ) ก่อนจะรู้ผล — ให้เวลามากกว่าโหลดปกติ กัน timeout ฝั่ง client ตัดก่อนได้คำตอบจริง
+    // แล้วดีดไปโชว์ fallback ข้อมูลเก่าทั้งที่ server หาข้อมูลสดเจอจริงๆ (แค่ช้ากว่าที่ client รอ)
+    const grab=async u=>{const r=await fetchTimeout(u,{headers:{Accept:'application/json'}},this._forceSync?35000:15000);if(!r.ok)throw 0;return r.json();};
     // อัตราแลกเปลี่ยนล่าสุดจาก Odoo (ใช้ตอนสร้างรายการใหม่ — fallback เป็นค่า default ถ้าโหลดไม่ได้)
     if(!this._fx){try{const fx=await grab('/api/fx-rates');if(fx&&fx.ok){const m={};(fx.rows||[]).forEach(r=>{m[r.currency]=r.thb_per_unit;});this._fx=m;}}catch(e){}}
     try{const p=await grab('/api/import-plan');this._plan=(p&&p.ok&&p.rows)?p.rows:null;}catch(e){this._plan=null;}
@@ -326,13 +377,32 @@ class App extends Component {
   strip(k){return(k||'').replace(/\s*\(\d+\)\s*$/,'').trim();}
   applyOverrides(rows){
     const ov=this._overrides;if(!ov||!Object.keys(ov).length)return rows;
-    const idx={};Object.keys(ov).forEach(k=>{const n=this.strip(k);if(!idx[n])idx[n]=ov[k];});
-    return rows.map(s=>{const o=ov[s.poNo]||idx[this.strip(s.poNo)];return o?this.applyOne(s,o):s;});
+    // idx เป็น fallback แบบ fuzzy-match สำหรับ override/plan เก่าที่คีย์มี " (2)" ต่อท้ายเพราะข้อมูลต้นทางเดิมเป็นแบบนั้น
+    // (ดู strip()) — ต้องข้าม override ที่เป็น _synthetic (shipment ที่แยกเอง) ไม่งั้น PO จริงที่ยังไม่มี
+    // override ของตัวเองจะดันไปจับคู่กับ override ของ "PO (2)" (ตัวแยก) แทน ทำให้มูลค่า/สกุลเงินของ PO จริงเพี้ยน
+    const idx={};Object.keys(ov).forEach(k=>{if(ov[k]._synthetic)return;const n=this.strip(k);if(!idx[n])idx[n]=ov[k];});
+    const merged=rows.map(s=>{const o=ov[s.poNo]||idx[this.strip(s.poNo)];return o?this.applyOne(s,o):s;});
+    // shipment ย่อยที่แยกออกจาก PO เดิม (ไม่มี PO จริงคู่กันใน Odoo) — ไม่ merge ทับ ต้องเพิ่มเป็นรายการใหม่ต่างหาก
+    const extra=Object.keys(ov).filter(k=>ov[k]._synthetic&&!rows.some(s=>s.poNo===k)).map(k=>this.mapSynthetic(ov[k]));
+    return merged.concat(extra);
+  }
+  // สร้าง shipment object เต็มจาก override ที่เป็นรายการสังเคราะห์ (แยก shipment/สร้างใหม่)
+  // แยกจาก mapTracking() เพราะ field ที่ใช้ต่างกัน (cur/amount/rate ตรงตัว ไม่ใช่ convention rate กลับด้านแบบ Odoo)
+  mapSynthetic(o){
+    return {_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_synthetic:true};
   }
   applyOne(s,o){
     const m={...s};
     ['origin','dest','bl','container','vessel','forwarder','etd','eta','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
     ['freight','clearance','insurance','duty','vat','containerQty'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
+    // มูลค่าสินค้า (amount/cur/rate) มาจาก Odoo เสมอสำหรับ PO จริง ห้าม override ทับ —
+    // ยกเว้น shipment ที่แยกเอง (_synthetic) ซึ่งไม่มี PO จริงคู่กัน มูลค่าต้องรับจากฟอร์มแก้ไขเท่านั้น
+    if(o._synthetic){
+      if(o.cur)m.cur=o.cur;
+      if(o.amount!=null)m.amount=parseFloat(o.amount)||0;
+      if(o.rate!=null)m.rate=parseFloat(o.rate)||m.rate;
+      m._synthetic=true; if(o._splitBase)m._splitBase=o._splitBase;
+    }
     if(o.overReceipt!=null)m.overReceipt=!!o.overReceipt;
     if(Array.isArray(o.bills))m.bills=o.bills;
     if(o.stage){
@@ -362,7 +432,17 @@ class App extends Component {
     });
   }
   _today(){const d=new Date();d.setHours(0,0,0,0);return d;}
-  _dt(s){if(!s)return null;const d=new Date(String(s).slice(0,10));return isNaN(d)?null:d;}
+  // ต้อง parse เป็นเที่ยงคืน "เวลาท้องถิ่น" ให้ตรงกับ _today() เสมอ — new Date("YYYY-MM-DD") ตรงๆ จะ parse
+  // เป็นเที่ยงคืน UTC ซึ่งในไทย (UTC+7) ช้ากว่าเที่ยงคืนท้องถิ่น 7 ชม. ทำให้ eta ที่ตรงกับ "วันนี้" เทียบ
+  // กับ _today() แล้ว eta<=today เป็น false ทั้งวัน (เพิ่งพ้นจุดเทียบไป 7 ชม.) กว่าจะ true ก็ข้ามวันไปแล้ว
+  // บั๊กนี้ทำให้ shipment ที่ ETA ตรงกับวันนี้พอดี ยังไม่ถูกนับเป็น "ถึงแล้ว" จนกว่าจะเป็นวันถัดไป
+  _dt(s){
+    if(!s)return null;
+    const p=String(s).slice(0,10).split('-');
+    if(p.length<3)return null;
+    const d=new Date(parseInt(p[0],10),parseInt(p[1],10)-1,parseInt(p[2],10));
+    return isNaN(d)?null:d;
+  }
   planFor(poNo){
     if(!this._plan||!poNo)return null;
     if(this._plan[poNo])return this._plan[poNo];
@@ -400,7 +480,11 @@ class App extends Component {
     // orderDate = po.date_order/so.date_order — มีให้ทั้ง import/export เสมอ ใช้เป็น fallback
     // จัดกลุ่มปี/ไตรมาสเมื่อยังไม่มี etd/eta (โดยเฉพาะ export ที่ SQL ไม่มี date_planned เลย
     // ทำให้ eta ว่างเปล่าตลอด — ไม่มี orderDate ตัวนี้ export จะกลุ่มปีไม่ได้เลยสักรายการ)
-    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',type:normType(''),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
+    // ประเภทสินค้า (Packaging/Finished/Oversea) — เดิม normType('') เรียกด้วยค่าว่างเสมอ ทั้งที่ SQL_IMPORT
+    // ดึง goods_category มาอยู่แล้ว (r.goods_category) แค่ไม่เคยถูกอ่านใช้ ทำให้ทุก import PO ถูกจัดเป็น
+    // 'oversea' หมดโดยไม่สนใจหมวดจริง — ปุ่มกรอง Packaging/Finished ในหน้า Import Board เลยกรองไม่ได้ผลจริง
+    const catType=r.goods_category==='Packaging'?'pk':r.goods_category==='Finished Goods'?'fg':'oversea';
+    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',type:normType(catType),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
       _odooState:r.odoo_state||'',_receiptStatus:r.receipt_status||r.delivery_status||''};
   }
   mapTracking(r){
@@ -410,11 +494,17 @@ class App extends Component {
     const wf=(r.state&&r.state!=='draft')?r.state:r.odoo_state;
     const stageMap=board==='export'?{draft:'draft',sent:'draft',order_confirmed:'packing',production:'packing',packing:'packing',booking_confirmed:'booking',etd:'shipped',sale:'shipped',eta_arrived:'arrived',closed:'arrived',done:'arrived'}:{draft:'po',purchase:'po',sent:'po',booking_confirmed:'booking',etd:'transit',atd:'transit',eta:'arrived',ata:'arrived',customs_clearance:'customs',duty_payment:'customs',goods_received:'received',done:'received'};
     const stage=r.stage||stageMap[wf]||(board==='export'?'draft':'po');
-    const odooRate=parseFloat(r.rate)||0;
+    const rawRate=parseFloat(r.rate)||0;
+    // records ที่ถูกสร้าง/แก้ผ่านแอป (setStageFor/saveEdit/splitShipment/submitCreate) เขียน rate เป็นหน่วย
+    // "บาทต่อ 1 หน่วยเงินตรา" ตรงตัวอยู่แล้ว (ผ่าน mapPo แปลงมาแล้วรอบนึง) — ต่างจาก record ที่ seed มาจาก
+    // Odoo ดิบๆ ซึ่ง rate เป็น "หน่วยเงินตราต่อ 1 บาท" (ต้อง 1/rate) เดิม mapTracking กลับด้านให้เสมอโดยไม่ดู
+    // ที่มา ทำให้ record ที่เคยแก้ผ่านแอปแล้วมาเจอ path fallback นี้ (Odoo+snapshot ล่มพร้อมกัน) ค่าบาทเพี้ยน
+    // ผิดกำลังสอง (~1000 เท่า) — เช็ค _rateIsThb ที่ผู้เขียนแต่ละจุดใส่ไว้แล้วก่อนตัดสินใจว่าต้องกลับด้านไหม
+    const rate=r._rateIsThb?(rawRate>0?rawRate:1):(rawRate>0?1/rawRate:1);
     // id ต้องไม่มีวันเป็น undefined — record ที่บันทึกผ่านฟอร์มแก้ไข/สร้างในแอปไม่มี r.id/r.odoo_id
     // (มีแค่ po_so) ถ้าปล่อยเป็น undefined หลาย record จะชนกัน ทำให้คลิกแล้วเปิดผิด PO
     const id=r.id||r.odoo_id||('t_'+(r.po_so||Math.random()));
-    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:odooRate>0?1/odooRate:1,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,_fallback:true};
+    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total??r.amount)||0,rate,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,_fallback:true};
   }
 
   allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
@@ -436,10 +526,13 @@ class App extends Component {
     if(this.state.saving)return;
     const f=this.state.form;this.setState({saving:true});
     const rate=this.fxRate(f.cur);
-    const ns={_board:f.board,id:'new_'+Date.now(),poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    const id='t_'+(f.poNo||('new_'+Date.now()));
+    const ns={_board:f.board,id,poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,_synthetic:true};
     this.setState({shipments:[ns].concat(this.allShipments()),creating:false,tab:f.board,view:'kanban'});
     const ov={...this._overrides};
-    ov[ns.poNo]={po_so:ns.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    // _synthetic:true — PO นี้ไม่มีอยู่จริงใน Odoo ต้องให้ applyOverrides() เก็บไว้เป็นรายการเดี่ยวๆ
+    // ไม่งั้นตอนโหลดข้อมูลรอบถัดไป (auto-refresh ทุก 3 นาที) รายการนี้จะหายไปเงียบๆ เพราะไม่มี PO ให้ merge ทับ
+    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
     this._overrides=ov;
     try{await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ov[ns.poNo])});this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');}
     catch(e){this.showToast('บันทึกออฟไลน์ชั่วคราว','info');}
@@ -448,11 +541,15 @@ class App extends Component {
 
   startEdit(){
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
-    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||''};
+    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
     this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
   setEdit(k,v){this.setState(s=>({editForm:{...s.editForm,[k]:v}}));}
+  // เปลี่ยนสกุลเงินของ shipment ที่แยกเอง ต้องคำนวณ rate ใหม่เสมอ (เหมือน submitCreate ทำตอนสร้าง) —
+  // เดิม setEdit('cur',...) เปลี่ยนแค่ cur แต่ rate เก่ายังค้างอยู่ ทำให้ totalCostThb คำนวณผิดทันทีที่บันทึก
+  // (เช่น เปลี่ยนจาก CNY เป็น USD แต่ rate ยังเป็นอัตรา CNY เดิม มูลค่าบาทจะเพี้ยนหลายเท่าโดยไม่มีอะไรเตือน)
+  setEditCurrency(cur){this.setState(s=>({editForm:{...s.editForm,cur,rate:this.fxRate(cur)}}));}
   // ติ๊ก Over-receipt = ของถึงโกดังจริงแล้ว → ปิดงานทันที (ไม่ต้องไล่ผ่าน booking/customs)
   // ปลดติ๊ก = ไม่บังคับสถานะคืน ให้ผู้ใช้เลือกเอง เพราะไม่รู้ว่าที่ถูกต้องคือขั้นไหน
   toggleOverReceipt(checked){
@@ -464,6 +561,66 @@ class App extends Component {
       }
       return {editForm:ef};
     });
+  }
+  // ── ลาก-วางการ์ดข้ามคอลัมน์ Kanban เพื่อปรับสถานะจริงของ PO โดยไม่ต้องเปิดทีละใบ ──
+  onDropCard(newStage){
+    const id=this._dragId;this._dragId=null;this.setState({dragOverKey:null});
+    if(!id)return;
+    const s=this.allShipments().find(x=>x.id===id);
+    if(!s||s.stage===newStage)return;
+    this.setStageFor(s,newStage);
+  }
+  async setStageFor(s,newStage){
+    const stages=s._board==='export'?EXP_STAGES:IMP_STAGES;
+    const terminal=stages[stages.length-1].key===newStage;
+    // overReceipt = "รับของเกินสั่ง" คนละความหมายกับ "ลากมาลงคอลัมน์สุดท้ายแล้ว" — ห้ามตั้งเป็น true อัตโนมัติ
+    // (บั๊กเดิม copy-paste มาจาก actualDate ด้านล่าง ทำให้ลากการ์ดปกติไปคอลัมน์สุดท้ายแล้วขึ้นป้าย "เกิน" ผิดๆ)
+    // ต้องใส่ _synthetic/_splitBase ต่อให้ตรงกับของเดิมเสมอ ไม่งั้น shipment ที่แยกเอง/สร้างเองจะหลุดสถานะนั้นไปตอนลาก
+    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_ts:Date.now(),type:s._board,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    const ov={...this._overrides};ov[s.poNo]=o;this._overrides=ov;
+    const rows=this.allShipments().map(x=>x.poNo===s.poNo?this.applyOne(x,o):x);
+    this.setState({shipments:rows});
+    try{const res=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
+      this.showToast(res.ok?('ย้าย '+s.poNo+' → '+stageMeta(s._board,newStage).label):('บันทึกไม่สำเร็จ: HTTP '+res.status),res.ok?'success':'error');
+    }catch(e){this.showToast('บันทึกไม่สำเร็จ: '+e.message,'error');}
+  }
+  // ── แยก PO ที่ถูกส่งเป็นหลายรอบออกเป็น shipment ย่อยบน Kanban ──
+  // ตั้งชื่อ PO ต่อท้ายด้วย " (n)" (convention เดียวกับที่ strip()/applyPlan ใช้จับคู่ PO เดิมอยู่แล้ว)
+  // ค่ามูลค่า/ต้นทุนเริ่มที่ 0 เสมอ — ต้อง กรอกเองว่าล็อตนี้เป็นสัดส่วนเท่าไหร่ ไม่งั้นยอดจะนับซ้ำกับ PO ต้นฉบับ
+  splitShipment(){
+    const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
+    const base=this.strip(s._splitBase||s.poNo);
+    const siblings=this.allShipments().filter(x=>this.strip(x._splitBase||x.poNo)===base);
+    const n=siblings.length+1;
+    const poNo=base+' ('+n+')';
+    const id='t_'+poNo;
+    const o={po_so:poNo,id,_board:s._board,_edited:true,_synthetic:true,_rateIsThb:true,_splitBase:base,_ts:Date.now(),type:s._board,company:s.company,party:s.party,cur:s.cur,amount:0,rate:s.rate,stage:s._board==='export'?'draft':'po',mode:s.mode||'sea',seaType:s.seaType||'',containerQty:0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:'',bl_awb:'',container:'',vessel:'',forwarder:'',etd:'',eta:s.eta||'',actualDate:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,bills:[],overReceipt:false,note:'แยกจาก PO '+base+' — ชุดที่ '+n};
+    const ov={...this._overrides};ov[poNo]=o;this._overrides=ov;
+    const ns=this.mapSynthetic(o);
+    this.setState({shipments:[ns].concat(this.allShipments()),detailId:ns.id,tab:s._board,view:'kanban'},()=>this.startEdit());
+    // เดิม fire-and-forget (.catch(()=>{})) — บันทึกไม่ผ่านก็ไม่มีใครรู้ เพราะ toast "สร้างสำเร็จ" ขึ้นไปแล้ว
+    // ทั้งที่ยังไม่รู้ผลจริง ตอนนี้รอผลจาก server ก่อนค่อยบอกผู้ใช้ ให้สอดคล้องกับจุดอื่นที่บันทึกข้อมูล (saveEdit ฯลฯ)
+    fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)})
+      .then(res=>{this.showToast(res.ok?('สร้าง shipment ย่อย '+poNo+' แล้ว — กรอกมูลค่า/ค่าใช้จ่ายของล็อตนี้เอง'):('บันทึกไม่สำเร็จ: HTTP '+res.status),res.ok?'success':'error');})
+      .catch(e=>this.showToast('บันทึกไม่สำเร็จ: '+e.message,'error'));
+  }
+  // ── ลบ shipment ที่แยกเอง — เฉพาะรายการ _synthetic เท่านั้น (PO จริงจาก Odoo ลบไม่ได้) ──
+  // server จะปฏิเสธเสมอถ้ายังไม่ได้ตั้ง DELETE_PASSWORD ใน .env — ต้องให้เจ้าของระบบเปิดใช้งานก่อน
+  openDeleteDialog(poNo){this.setState({deleteDialog:{poNo,password:'',busy:false,error:''}});}
+  closeDeleteDialog(){this.setState({deleteDialog:null});}
+  async confirmDelete(){
+    const d=this.state.deleteDialog;if(!d||d.busy)return;
+    this.setState({deleteDialog:{...d,busy:true,error:''}});
+    try{
+      const res=await fetch('/api/tracking/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_so:d.poNo,password:(d.password||'').trim()})});
+      const j=await res.json().catch(()=>({}));
+      if(!res.ok){this.setState({deleteDialog:{...d,busy:false,error:j.error||('HTTP '+res.status)}});return;}
+      const ov={...this._overrides};delete ov[d.poNo];this._overrides=ov;
+      const rows=this.allShipments().filter(s=>s.poNo!==d.poNo);
+      const closeDetail=this.state.detailId&&rows.every(r=>r.id!==this.state.detailId);
+      this.setState({shipments:rows,deleteDialog:null,detailId:closeDetail?null:this.state.detailId,editing:false,editForm:null});
+      this.showToast('ลบ '+d.poNo+' แล้ว','success');
+    }catch(e){this.setState({deleteDialog:{...d,busy:false,error:e.message}});}
   }
   async loadVendors(){
     if(this.state.vendors)return;
@@ -511,7 +668,9 @@ class App extends Component {
     const f=this.state.editForm;if(!f||this.state.savingEdit)return;
     this.setState({savingEdit:true});
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
-    const o={po_so:f.poNo,_board:f.board,_edited:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
+    // shipment ที่แยกเอง (_synthetic) ไม่มี PO จริงใน Odoo — มูลค่า/สกุลเงินต้องรับจากฟอร์มนี้โดยตรง
+    // ของ PO จริง มูลค่ามาจาก Odoo เสมอ ไม่ให้ฟอร์มนี้ทับ (ไม่มีช่องแก้ในฟอร์มอยู่แล้ว ค่าจะเท่าเดิม)
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_ts:Date.now(),type:f.board,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
     const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
     this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
@@ -553,6 +712,54 @@ class App extends Component {
     const today=new Date().toISOString().slice(0,10);
     XLSX.writeFile(wb,'logistics-'+tab+'-'+today+'.xlsx');
     this.showToast('ดาวน์โหลด Excel แล้ว ('+list.length+' รายการ)','success');
+  }
+
+  // ── AI ตรวจเอกสาร (layer 4): อัปโหลดเอกสาร shipment → เรียก /api/verify-shipment ──
+  onVerifyFilesAdd(fileList){
+    const incoming=Array.from(fileList||[]);
+    if(!incoming.length)return;
+    this.setState(s=>({verifyFiles:[...s.verifyFiles,...incoming],verifyResult:null,verifyError:null}));
+  }
+  removeVerifyFile(idx){
+    this.setState(s=>({verifyFiles:s.verifyFiles.filter((_,i)=>i!==idx)}));
+  }
+  async submitVerify(){
+    const {verifyFiles}=this.state;
+    if(!verifyFiles.length){this.showToast('กรุณาเลือกไฟล์ก่อน','info');return;}
+    this.setState({verifyLoading:true,verifyResult:null,verifyError:null});
+    const fd=new FormData();
+    fd.append('mode','import');
+    verifyFiles.forEach(f=>fd.append('files',f,f.name));
+    try{
+      const r=await fetchTimeout('/api/verify-shipment',{method:'POST',body:fd},240000);
+      const j=await r.json();
+      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      this.setState({verifyResult:j,verifyLoading:false});
+    }catch(e){
+      this.setState({verifyLoading:false,verifyError:e.name==='AbortError'?'หมดเวลารอ (เกิน 4 นาที) — ลองใหม่หรือลดจำนวนไฟล์':e.message});
+    }
+  }
+  exportVerifyExcel(){
+    if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
+    const j=this.state.verifyResult;if(!j)return;
+    const rows=[
+      ...j.sections.correct.map(t=>({สถานะ:'✅ ถูกต้อง',รายการ:t})),
+      ...j.sections.review.map(t=>({สถานะ:'🟡 ควรตรวจสอบ',รายการ:t})),
+      ...j.sections.errors.map(t=>({สถานะ:'❌ ต้องแก้ไข',รายการ:t})),
+    ];
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.json_to_sheet(rows);
+    ws['!cols']=[{wch:14},{wch:90}];
+    XLSX.utils.book_append_sheet(wb,ws,'ตรวจเอกสาร');
+    if(j.taxCheck){
+      const wsTax=XLSX.utils.json_to_sheet([j.taxCheck]);
+      XLSX.utils.book_append_sheet(wb,wsTax,'ภาษีนำเข้า');
+    }
+    const wsSum=XLSX.utils.json_to_sheet([{สรุป:j.summary}]);
+    wsSum['!cols']=[{wch:100}];
+    XLSX.utils.book_append_sheet(wb,wsSum,'สรุป');
+    XLSX.writeFile(wb,'verify-shipment-'+new Date().toISOString().slice(0,10)+'.xlsx');
+    this.showToast('ดาวน์โหลด Excel แล้ว','success');
   }
 
   // ── รายการต้องติดตาม: ETA เลยกำหนด หรือใกล้ถึงใน 3 วัน ──
@@ -643,7 +850,7 @@ class App extends Component {
     const {tab,isNarrow}=this.state;
     const impAll=this.imports(),expAll=this.exports();
     return <div style={{display:'flex',alignItems:'center',gap:'2px',padding:'0 22px',background:'#fff',borderBottom:'1px solid #e8dde4',flexShrink:0,overflowX:'auto'}}>
-      {[{key:'import',label:'Import Board',icon:'down',count:impAll.length},{key:'export',label:'Export Board',icon:'up',count:expAll.length},{key:'dashboard',label:'Dashboard',icon:'chart',count:false}].map(t=>{
+      {[{key:'import',label:'Import Board',icon:'down',count:impAll.length},{key:'export',label:'Export Board',icon:'up',count:expAll.length},{key:'dashboard',label:'Dashboard',icon:'chart',count:false},{key:'verify',label:'ตรวจเอกสาร',icon:'check',count:false}].map(t=>{
         const active=tab===t.key;
         return <button key={t.key} onClick={()=>this.setState({tab:t.key,detailId:null})} style={{display:'flex',alignItems:'center',gap:'7px',padding:'13px 16px 12px',border:0,borderBottom:active?'2px solid #c91253':'2px solid transparent',background:'transparent',color:active?'#c91253':'#5b6371',fontFamily:'inherit',fontSize:'13.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap',marginBottom:'-1px'}}>
           <Ico name={t.icon} size={16} sw={1.8}/>
@@ -687,14 +894,26 @@ class App extends Component {
   }
 
   renderKanban(tab){
-    const {isNarrow}=this.state;
+    const {isNarrow,dragOverKey}=this.state;
     const list=this.filtered(tab);
     const stages=tab==='export'?EXP_STAGES:IMP_STAGES;
+    // จัดกลุ่ม PO ที่ถูกแยกเป็น shipment ย่อย (poNo ต่อท้าย " (n)") ไว้ด้วยกัน เพื่อโชว์ป้าย "1/2","2/2"
+    // ต้องนับจากทุกรายการ (ไม่ใช่แค่ list ที่ผ่านตัวกรอง/ค้นหา) ไม่งั้นถ้าค้นหา/กรองจนเห็นแค่บางตัวในกลุ่ม
+    // ป้ายจะโชว์เลขผิด (เช่น "1/1" ทั้งที่จริงมี 2 shipment แต่อีกตัวโดนตัวกรองซ่อนไว้)
+    const groups={};
+    (tab==='export'?this.exports():this.imports()).forEach(s=>{const b=this.strip(s._splitBase||s.poNo);(groups[b]=groups[b]||[]).push(s);});
+    Object.values(groups).forEach(g=>g.sort((a,b)=>{const oa=/\((\d+)\)$/.exec(a.poNo),ob=/\((\d+)\)$/.exec(b.poNo);return (oa?parseInt(oa[1],10):1)-(ob?parseInt(ob[1],10):1);}));
     return <div style={{flex:1,overflowX:'auto',overflowY:'hidden',minHeight:0,padding:'0 22px 22px',scrollSnapType:isNarrow?'x mandatory':'none'}}>
       <div style={{display:'flex',gap:'13px',height:'100%',alignItems:'stretch'}}>
         {stages.map(stg=>{
           const cards=list.filter(s=>s.stage===stg.key);
-          return <div key={stg.key} style={{flex:isNarrow?'0 0 78vw':'1 1 0',minWidth:isNarrow?'78vw':'178px',scrollSnapAlign:isNarrow?'start':'none',background:'#fbf8fa',border:'1px solid #ece3e8',borderRadius:'14px',display:'flex',flexDirection:'column',minHeight:0}}>
+          const isOver=dragOverKey===stg.key;
+          return <div key={stg.key}
+            onDragOver={e=>e.preventDefault()}
+            onDragEnter={e=>{e.preventDefault();if(dragOverKey!==stg.key)this.setState({dragOverKey:stg.key});}}
+            onDragLeave={()=>{if(this.state.dragOverKey===stg.key)this.setState({dragOverKey:null});}}
+            onDrop={e=>{e.preventDefault();this.onDropCard(stg.key);}}
+            style={{flex:isNarrow?'0 0 78vw':'1 1 0',minWidth:isNarrow?'78vw':'178px',scrollSnapAlign:isNarrow?'start':'none',background:isOver?stg.color+'14':'#fbf8fa',border:isOver?'1.5px dashed '+stg.color:'1px solid #ece3e8',borderRadius:'14px',display:'flex',flexDirection:'column',minHeight:0,transition:'background .12s'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',padding:'11px 12px 10px',borderBottom:'1px solid '+stg.color+'22',background:stg.color+'0d',borderRadius:'14px 14px 0 0'}}>
               <div style={{display:'flex',alignItems:'center',gap:'8px',minWidth:0}}>
                 <span style={{width:'8px',height:'8px',borderRadius:'50%',background:stg.color,flexShrink:0}}/>
@@ -705,10 +924,19 @@ class App extends Component {
             <div style={{flex:1,overflowY:'auto',padding:'4px 9px 9px',display:'flex',flexDirection:'column',gap:'8px'}}>
               {cards.map(s=>{
                 const sm=stageMeta(tab,s.stage);
-                return <div key={s.id} onClick={()=>this.setState({detailId:s.id})} style={{background:'#fff',border:'1px solid #ece3e8',borderLeft:'3px solid '+sm.color,borderRadius:'0 9px 9px 0',padding:'10px 12px',cursor:'pointer'}}>
+                const grp=groups[this.strip(s._splitBase||s.poNo)]||[s];
+                const isSplit=grp.length>1;
+                const splitIdx=isSplit?grp.findIndex(x=>x.id===s.id)+1:0;
+                return <div key={s.id} draggable
+                  onDragStart={e=>{this._dragId=s.id;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',s.id);}catch(er){}}}
+                  onDragEnd={()=>{this._dragId=null;this.setState({dragOverKey:null});}}
+                  onClick={()=>this.setState({detailId:s.id})}
+                  title="ลากไปวางคอลัมน์อื่นเพื่อปรับสถานะจริง"
+                  style={{background:'#fff',border:'1px solid #ece3e8',borderLeft:'3px solid '+sm.color,borderRadius:'0 9px 9px 0',padding:'10px 12px',cursor:'grab'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px'}}>
                     <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11px',fontWeight:600,color:sm.color}}>{s.poNo}</span>
                     <span style={{display:'flex',alignItems:'center',gap:'4px'}}>
+                      {isSplit&&<span title={'PO นี้แบ่งส่งเป็น '+grp.length+' shipment'} style={{display:'inline-flex',alignItems:'center',padding:'1px 6px',borderRadius:'5px',fontSize:'9.5px',fontWeight:700,background:'#dbeafe',color:'#1d4ed8'}}>{splitIdx}/{grp.length}</span>}
                       {s.overReceipt&&<span title="รับของเกินสั่ง" style={{display:'inline-flex',alignItems:'center',padding:'1px 6px',borderRadius:'5px',fontSize:'9.5px',fontWeight:700,background:'#fef3c7',color:'#b45309'}}>เกิน</span>}
                       <span style={coBadgeSty(s.company)}>{s.company}</span>
                     </span>
@@ -786,15 +1014,21 @@ class App extends Component {
     const {isNarrow}=this.state;
     const impAll=this.imports(),expAll=this.exports();
     const impVal=impAll.reduce((a,s)=>a+s.amount*s.rate,0),expVal=expAll.reduce((a,s)=>a+s.amount*s.rate,0);
-    const activeImp=impAll.filter(s=>['booking','transit','arrived','customs'].includes(s.stage)).length;
+    // กำลังขนส่ง = เฉพาะสถานะที่ของยังเคลื่อนที่จริง (booking/transit) — arrived/customs คือของถึงท่า/อยู่พิธีการแล้ว ไม่ใช่ "กำลังขนส่ง"
+    // รอดำเนินการ = customs (รอเคลียร์พิธีการ) หรือ po (ยังไม่ได้ book) — ไม่ทับซ้อนกับ activeImp ด้านบนแล้ว
+    const activeImp=impAll.filter(s=>['booking','transit'].includes(s.stage)).length;
     const pendingImp=impAll.filter(s=>s.stage==='customs'||s.stage==='po').length;
     const kpis=[
-      {accent:'linear-gradient(90deg,#c91253,#e8408e)',icon:'down',iconBg:'#fce7f3',iconColor:'#c91253',value:impAll.length,label:'Import ทั้งหมด',sub:fmtBaht(impVal)+' มูลค่ารวม',delta:'▲ 12%',dc:'#15803d'},
-      {accent:'linear-gradient(90deg,#7c3aed,#a78bfa)',icon:'up',iconBg:'#ede9fe',iconColor:'#7c3aed',value:expAll.length,label:'Export ทั้งหมด',sub:fmtBaht(expVal)+' มูลค่ารวม',delta:'▲ 6%',dc:'#15803d'},
-      {accent:'linear-gradient(90deg,#f59e0b,#ea580c)',icon:'ship',iconBg:'#fff7ed',iconColor:'#d97706',value:activeImp,label:'กำลังขนส่ง',sub:'อยู่ระหว่างทาง',delta:'▲ 3',dc:'#15803d'},
-      {accent:'linear-gradient(90deg,#059669,#10b981)',icon:'check',iconBg:'#f0fdf4',iconColor:'#059669',value:pendingImp,label:'รอดำเนินการ',sub:'ศุลกากร / PO ใหม่',delta:'▼ 1',dc:'#b91c1c'}
+      {accent:'linear-gradient(90deg,#c91253,#e8408e)',icon:'down',iconBg:'#fce7f3',iconColor:'#c91253',value:impAll.length,label:'Import ทั้งหมด',sub:fmtBaht(impVal)+' มูลค่ารวม'},
+      {accent:'linear-gradient(90deg,#7c3aed,#a78bfa)',icon:'up',iconBg:'#ede9fe',iconColor:'#7c3aed',value:expAll.length,label:'Export ทั้งหมด',sub:fmtBaht(expVal)+' มูลค่ารวม'},
+      {accent:'linear-gradient(90deg,#f59e0b,#ea580c)',icon:'ship',iconBg:'#fff7ed',iconColor:'#d97706',value:activeImp,label:'กำลังขนส่ง',sub:'อยู่ระหว่างทาง'},
+      {accent:'linear-gradient(90deg,#059669,#10b981)',icon:'check',iconBg:'#f0fdf4',iconColor:'#059669',value:pendingImp,label:'รอดำเนินการ',sub:'ศุลกากร / PO ใหม่'}
     ];
-    const pmax=Math.max(1,...IMP_STAGES.map(stg=>impAll.filter(s=>s.stage===stg.key).length));
+    // pmax เดิมรวมสถานะ received (จบขั้นตอน) เข้ามาด้วย ทำให้ค่าสูงสุดเป็นของ received เสมอ (ในข้อมูลจริง ~277
+    // เทียบกับสถานะอื่นหลักหน่วย) แท่งอื่นทุกแท่งเลยแคบจนดูเหมือน 0 ทั้งที่มีข้อมูล — คิด pmax จากสถานะที่ยังไหลอยู่
+    // เท่านั้น (ตัด received ตัวสุดท้ายออก) แล้วให้แท่ง received เต็มความกว้างเป็นพิเศษแทน (ดูจุดใช้งานด้านล่าง)
+    const pmaxInFlight=Math.max(1,...IMP_STAGES.slice(0,-1).map(stg=>impAll.filter(s=>s.stage===stg.key).length));
+    const emax=Math.max(1,...EXP_STAGES.map(stg=>expAll.filter(s=>s.stage===stg.key).length));
     const costAll=impAll.filter(s=>costSum(s)>0);
     const costSrc=costAll.slice(0,7);
     // แถว "รวมทั้งหมด" ต้องรวมจาก costAll (ทุกรายการที่มีต้นทุน) ไม่ใช่ costSrc (7 แถวที่โชว์)
@@ -804,43 +1038,123 @@ class App extends Component {
     // ── สรุป Transit Time เทียบ KPI (import + sea freight) ──
     const tstat=transitStats(impAll);
 
+    // ── Top ผู้ขาย/ลูกค้าตามมูลค่า — ใช้ totalCostThb (มูลค่าสินค้า+ต้นทุนนำเข้า แปลงเป็นบาท) เหมือนตารางต้นทุน/กราฟไตรมาสด้านล่าง เพื่อให้ตัวเลขสอดคล้องกันทั้งหน้า ──
+    const topByParty=(list)=>{
+      const map={};
+      list.forEach(s=>{const k=s.party||'—';const e=map[k]=map[k]||{party:k,value:0,count:0};e.value+=totalCostThb(s);e.count+=1;});
+      return Object.values(map).sort((a,b)=>b.value-a.value).slice(0,10);
+    };
+    const topVendors=topByParty(impAll);
+    const topCustomers=topByParty(expAll);
+
+    // ── Company Split เดิมเทียบ KOB vs BTV ด้วย "จำนวนรายการ" (.length) เท่านั้น — เพิ่มมุมมอง "มูลค่า"
+    // ควบคู่กันไป โดยรวม totalCostThb(s) ต่อบริษัท ใช้อนุสัญญาเดียวกับ topByParty ด้านบน (มูลค่าแปลงเป็นบาทแล้ว) ──
+    const companySplit=[{label:'Import',list:impAll},{label:'Export',list:expAll}].map(c=>{
+      const kobList=c.list.filter(s=>s.company==='KOB'),btvList=c.list.filter(s=>s.company==='BTV');
+      return {label:c.label,kob:kobList.length,btv:btvList.length,
+        kobVal:kobList.reduce((a,s)=>a+totalCostThb(s),0),btvVal:btvList.reduce((a,s)=>a+totalCostThb(s),0)};
+    });
+
+    // ── สัดส่วนสกุลเงินก่อนแปลงเป็นบาท (FX exposure) — จงใจไม่แปลงเป็นบาทตรงนี้ เพื่อดูยอดค้าง/ยอดรับตามสกุลเงินต้นฉบับจริง
+    // แยก import/export เพราะ mix สกุลเงินอาจต่างกัน (เช่น import CNY เยอะ, export USD เยอะ) แสดง % จาก "จำนวนรายการ"
+    // ต่อสกุลเงิน (ไม่ใช่ผลรวมยอดเงิน เพราะยอดเงินคนละสกุลบวกกันตรงๆไม่ได้ความหมาย) ──
+    const curSplit=(list)=>{
+      const map={};
+      list.forEach(s=>{const k=s.cur||'—';const e=map[k]=map[k]||{cur:k,amount:0,count:0};e.amount+=(s.amount||0);e.count+=1;});
+      const rows=Object.values(map).sort((a,b)=>b.count-a.count);
+      const totCount=rows.reduce((a,r)=>a+r.count,0)||1;
+      return rows.map(r=>({...r,pct:r.count/totCount*100}));
+    };
+    const impCurRows=curSplit(impAll),expCurRows=curSplit(expAll);
+
+    // ── PO/SO ที่ค้างนาน: นับจาก orderDate (วันที่สั่งซื้อ) ถึงวันนี้ เฉพาะรายการที่ยังไม่จบสถานะ (received/arrived) ──
+    // orderDate มาจาก mapPo (po.date_order/so.date_order) เป็นหลัก — รายการที่ไม่มี orderDate (เช่นข้อมูล fallback บางแหล่ง) จะข้ามไป ไม่นับเป็นค้างนานเพราะวัดไม่ได้
+    // ใช้ _today()/_dt() (เที่ยงคืนท้องถิ่น + Math.round) แบบเดียวกับที่อื่นในไฟล์นี้ — เดิมใช้ Date.now() ดิบๆ
+    // (มีเวลาปนอยู่) + Math.floor ทำให้นับวันได้ไม่ตรงกับจุดตัด 45/30 วัน ต่างกันได้ ±1 วันแล้วแต่เวลาที่เปิดหน้าเว็บ
+    const todayMid=this._today();
+    const daysSince=(s)=>{const d=this._dt(s.orderDate);return d?Math.round((todayMid-d)/86400000):null;};
+    const impBacklog=impAll.map(s=>({s,days:daysSince(s)})).filter(x=>x.days!=null&&x.s.stage!=='received'&&x.days>45).sort((a,b)=>b.days-a.days);
+    const expBacklog=expAll.map(s=>({s,days:daysSince(s)})).filter(x=>x.days!=null&&x.s.stage!=='arrived'&&x.days>30).sort((a,b)=>b.days-a.days);
+
     // ── สัดส่วนต้นทุนตามปี: Import vs Export ──
     const yearMap={};
     impAll.forEach(s=>{const y=yearOf(s);if(y==null)return;(yearMap[y]=yearMap[y]||{imp:0,exp:0}).imp+=totalCostThb(s);});
     expAll.forEach(s=>{const y=yearOf(s);if(y==null)return;(yearMap[y]=yearMap[y]||{imp:0,exp:0}).exp+=totalCostThb(s);});
     // label = ค.ศ. นำ + (พ.ศ. ตามหลัง) เช่น "2025 (พ.ศ. 2568)" — เดิมเอาเลข พ.ศ. แบบสั้น (68/69)
     // ไปแสดงเป็นตัวเลขนำหน้าโดยไม่ตั้งใจ ทำให้อ่านสับสนว่าเป็นปีอะไร
-    const yearRows=Object.keys(yearMap).map(Number).sort((a,b)=>a-b).map(y=>{
+    const nowYear=new Date().getFullYear();
+    // ตัดปีที่ยังไม่เริ่ม (อนาคตล้วนๆ เช่น PO ที่ตั้งวันที่ล่วงหน้าข้ามปี) ออกจากกราฟเทรนด์ — ไม่ใช่ข้อมูลจริงที่เกิดขึ้นแล้ว
+    const yearRows=Object.keys(yearMap).map(Number).filter(y=>y<=nowYear).sort((a,b)=>a-b).map(y=>{
       const v=yearMap[y],tot=v.imp+v.exp||1;
       return {year:y,label:y+' (พ.ศ. '+(y+543)+')',imp:v.imp,exp:v.exp,tot:v.imp+v.exp,impPct:v.imp/tot*100,expPct:v.exp/tot*100};
     });
-    const nowYear=new Date().getFullYear();
-    const yearLatestPartial=yearRows.length>0&&yearRows[yearRows.length-1].year===nowYear;
+    // เดิมเช็คแค่ตำแหน่งแถวสุดท้าย ถ้ามีข้อมูลปีถัดไปแทรกมา (เช่น PO ล่วงหน้า) แถวปีปัจจุบันจะไม่ใช่แถวสุดท้ายแล้ว
+    // ทำให้ป้ายเตือนไม่ขึ้นทั้งที่ควรขึ้น — เช็คจากปีจริงแทนตำแหน่ง
+    const yearLatestPartial=yearRows.some(y=>y.year===nowYear);
 
     // ── เทียบต้นทุนตามไตรมาส (1 ปี = 3 ไตรมาส: Q1 ม.ค.-เม.ย., Q2 พ.ค.-ส.ค., Q3 ก.ย.-ธ.ค.) ──
     const qMap={};
     // เก็บทั้งค่าใช้จ่าย (imp/exp) และจำนวน shipment (impN/expN) ต่อไตรมาสในรอบเดียว
     const addQ=(s,costField,countField)=>{const q=quarterOf(s);if(!q)return;const e=qMap[q.key]=qMap[q.key]||{y:q.y,q:q.q,label:q.label,imp:0,exp:0,impN:0,expN:0};e[costField]+=totalCostThb(s);e[countField]+=1;};
     impAll.forEach(s=>addQ(s,'imp','impN')); expAll.forEach(s=>addQ(s,'exp','expN'));
-    const qRows=Object.keys(qMap).map(k=>qMap[k]).sort((a,b)=>a.y-b.y||a.q-b.q);
+    const nowQ=quarterOf({etd:new Date().toISOString().slice(0,10)});
+    // ตัดไตรมาสที่ยังไม่เริ่ม (อนาคตล้วนๆ) ออกจากกราฟเทรนด์ ด้วยเหตุผลเดียวกับปี — PO ล่วงหน้าไม่ใช่เทรนด์จริง
+    const qRows=Object.keys(qMap).map(k=>qMap[k])
+      .filter(r=>!(nowQ&&(r.y>nowQ.y||(r.y===nowQ.y&&r.q>nowQ.q))))
+      .sort((a,b)=>a.y-b.y||a.q-b.q);
     const qMax=Math.max(1,...qRows.map(r=>Math.max(r.imp,r.exp)));
     const qMaxN=Math.max(1,...qRows.map(r=>Math.max(r.impN,r.expN)));
-    const nowQ=quarterOf({etd:new Date().toISOString().slice(0,10)});
-    const qLatestPartial=qRows.length>0&&nowQ&&qRows[qRows.length-1].key===nowQ.key;
+    // มูลค่าเฉลี่ยต่อออเดอร์ต่อไตรมาส = ต้นทุนรวม (imp/exp) หารด้วยจำนวน shipment (impN/expN) ของไตรมาสนั้น
+    qRows.forEach(r=>{r.impAvg=r.impN>0?r.imp/r.impN:0;r.expAvg=r.expN>0?r.exp/r.expN:0;});
+    const qAvgMax=Math.max(1,...qRows.map(r=>Math.max(r.impAvg,r.expAvg)));
+    // หาแถวไตรมาสปัจจุบันจากค่าปี/ไตรมาสจริง (ไม่ใช่ตำแหน่งแถวสุดท้าย) เพื่อติดป้าย "ยังไม่ครบช่วงเวลา" ให้ถูกแถวเสมอ
+    const qCurrentRow=nowQ?qRows.find(r=>r.y===nowQ.y&&r.q===nowQ.q):null;
+    const qLatestPartial=!!qCurrentRow;
     return <div style={{flex:1,overflowY:'auto',padding:'22px'}}>
       <div style={{maxWidth:'1240px',margin:'0 auto',display:'flex',flexDirection:'column',gap:'18px'}}>
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'repeat(2,1fr)':'repeat(4,1fr)',gap:isNarrow?'12px':'16px'}}>
           {kpis.map(k=><div key={k.label} style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'18px 18px 16px',position:'relative',overflow:'hidden'}}>
             <div style={{position:'absolute',top:0,left:0,right:0,height:'3px',background:k.accent}}/>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{display:'flex',alignItems:'center'}}>
               <span style={{display:'flex',alignItems:'center',justifyContent:'center',width:'38px',height:'38px',borderRadius:'11px',background:k.iconBg,color:k.iconColor}}><Ico name={k.icon} size={18} sw={1.8}/></span>
-              <span style={{fontSize:'12px',fontWeight:600,color:k.dc}}>{k.delta}</span>
             </div>
             <div style={{fontSize:'27px',fontWeight:700,color:'#14181f',marginTop:'14px',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{k.value}</div>
             <div style={{fontSize:'12.5px',color:'#7a818d',marginTop:'6px'}}>{k.label}</div>
             <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'4px'}}>{k.sub}</div>
           </div>)}
         </div>
+        {(()=>{
+          const ir=this.state.integrityReport,loading=this.state.integrityLoading;
+          const clean=ir&&Array.isArray(ir.findings)&&ir.findings.length===0;
+          const dirty=ir&&Array.isArray(ir.findings)&&ir.findings.length>0;
+          // ต่อยอดจากรอบตรวจสอบมือที่เจอบั๊ก currency_rate 8 จุด — เช็คซ้ำอัตโนมัติทุก 24 ชม. ที่ server
+          // (ดู runIntegrityCheck ใน api-server.js) เพื่อไม่ต้องรอให้คนสังเกตตัวเลขผิดปกติเองอีก
+          return <div style={{background:'#fff',border:'1px solid '+(dirty?'#fecaca':'#e8dde4'),borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'10px'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'10px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+                <span style={{width:'9px',height:'9px',borderRadius:'50%',background:dirty?'#dc2626':clean?'#16a34a':'#a99fa8',flexShrink:0}}/>
+                <span style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>ผลตรวจสอบข้อมูลอัตโนมัติ</span>
+                {ir&&ir.ranAt&&<span style={{fontSize:'11px',color:'#a99fa8'}}>ตรวจล่าสุด {new Date(ir.ranAt).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น. · เช็ค {ir.importChecked+ir.exportChecked} รายการ</span>}
+              </div>
+              <button onClick={()=>this.loadIntegrityReport(true)} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังตรวจ…':'ตรวจสอบตอนนี้'}</button>
+            </div>
+            {!ir&&!loading&&<div style={{fontSize:'12px',color:'#a99fa8'}}>ยังไม่มีผลตรวจสอบ</div>}
+            {clean&&<div style={{fontSize:'12.5px',color:'#15803d',display:'flex',alignItems:'center',gap:'6px'}}><Ico name="check" size={14} sw={2.2}/>ไม่พบความผิดปกติ — ข้อมูลสกุลเงินสอดคล้องกันทุกรายการ</div>}
+            {dirty&&<div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
+              {ir.findings.slice(0,8).map((f,i)=>(
+                <div key={i} style={{fontSize:'12px',color:'#991b1b',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'8px',padding:'8px 11px'}}>{f.message}</div>
+              ))}
+              {ir.findings.length>8&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {ir.findings.length-8} รายการ</div>}
+            </div>}
+            {ir&&Array.isArray(ir.autoCorrected)&&ir.autoCorrected.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:dirty?'4px':'0'}}>
+              <div style={{fontSize:'11.5px',fontWeight:600,color:'#1e5fa8',display:'flex',alignItems:'center',gap:'6px'}}><Ico name="sync" size={13} sw={2}/>ซ่อมค่าอัตราแลกเปลี่ยนอัตโนมัติ {ir.autoCorrected.length} รายการ — แอปแสดงถูกแล้ว แต่ควรตามไปแก้ที่ Odoo</div>
+              {ir.autoCorrected.slice(0,8).map((f,i)=>(
+                <div key={i} style={{fontSize:'12px',color:'#1e40af',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'8px 11px'}}>{f.message}</div>
+              ))}
+              {ir.autoCorrected.length>8&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {ir.autoCorrected.length-8} รายการ</div>}
+            </div>}
+          </div>;
+        })()}
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1.7fr 1fr',gap:isNarrow?'14px':'16px'}}>
           <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
             <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'18px'}}>
@@ -848,10 +1162,15 @@ class App extends Component {
               <div style={{fontSize:'12px',color:'#a99fa8'}}>{impAll.length} รายการ</div>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
-              {IMP_STAGES.map(stg=>{const c=impAll.filter(s=>s.stage===stg.key).length;return(
+              {IMP_STAGES.map((stg,i)=>{const c=impAll.filter(s=>s.stage===stg.key).length;
+                // สถานะสุดท้าย (received) ตั้งใจให้เต็มแท่งเสมอ — ไม่งั้นจำนวนที่มากกว่าสถานะอื่นมากจะไปดึง pmax
+                // จนแท่งที่เหลือแบนหายไป (ดูที่มาของ pmaxInFlight ด้านบน)
+                const isTerminal=i===IMP_STAGES.length-1;
+                const pct=isTerminal?100:Math.min(100,c/pmaxInFlight*100);
+                return(
                 <div key={stg.key} style={{display:'grid',gridTemplateColumns:'120px 1fr 34px',alignItems:'center',gap:'12px'}}>
                   <span style={{fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
-                  <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,c/pmax*100)+'%',background:stg.color,transition:'width .5s'}}/></span>
+                  <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,pct)+'%',background:stg.color,transition:'width .5s'}}/></span>
                   <span style={{fontSize:'12px',fontWeight:600,color:'#14181f',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{c}</span>
                 </div>
               );})}
@@ -860,20 +1179,119 @@ class App extends Component {
           <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
             <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Company Split</div>
             <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'20px'}}>KOB เทียบ BTV</div>
-            {[{label:'Import',kob:impAll.filter(s=>s.company==='KOB').length,btv:impAll.filter(s=>s.company==='BTV').length},{label:'Export',kob:expAll.filter(s=>s.company==='KOB').length,btv:expAll.filter(s=>s.company==='BTV').length}].map(c=>{
-              const tot=c.kob+c.btv||1;
+            {companySplit.map(c=>{
+              const tot=c.kob+c.btv||1,totVal=c.kobVal+c.btvVal||1;
               return <div key={c.label} style={{marginBottom:'18px'}}>
                 <div style={{display:'flex',justifyContent:'space-between',marginBottom:'7px'}}><span style={{fontSize:'13px',fontWeight:600,color:'#14181f'}}>{c.label}</span><span style={{fontSize:'12px',color:'#a99fa8'}}>{c.kob+c.btv} รายการ</span></div>
+                <div style={{fontSize:'10.5px',color:'#a99fa8',marginBottom:'3px'}}>ตามจำนวนรายการ</div>
                 <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
                   <span style={{width:(c.kob/tot*100)+'%',background:'#c91253',transition:'width .5s'}}/>
                   <span style={{width:(c.btv/tot*100)+'%',background:'#7c3aed',transition:'width .5s'}}/>
                 </div>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'#a99fa8',marginTop:'5px'}}><span>KOB {c.kob}</span><span>BTV {c.btv}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'#a99fa8',marginTop:'5px',marginBottom:'10px'}}><span>KOB {c.kob}</span><span>BTV {c.btv}</span></div>
+                <div style={{fontSize:'10.5px',color:'#a99fa8',marginBottom:'3px'}}>ตามมูลค่า</div>
+                <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
+                  <span style={{width:(c.kobVal/totVal*100)+'%',background:'#c91253',transition:'width .5s'}}/>
+                  <span style={{width:(c.btvVal/totVal*100)+'%',background:'#7c3aed',transition:'width .5s'}}/>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'#a99fa8',marginTop:'5px'}}><span>KOB {fmtBaht(c.kobVal)}</span><span>BTV {fmtBaht(c.btvVal)}</span></div>
               </div>;
             })}
             <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371'}}>
               <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>KOB</span>
               <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>BTV</span>
+            </div>
+          </div>
+        </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สัดส่วนสกุลเงิน (ก่อนแปลงเป็นบาท)</div>
+          <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>ยอดต้นฉบับตามสกุลเงินจริง ยังไม่แปลงเป็นบาท — ไว้ดูความเสี่ยงอัตราแลกเปลี่ยน (FX exposure)</div>
+          <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
+            {[{title:'Import',rows:impCurRows},{title:'Export',rows:expCurRows}].map(col=>(
+              <div key={col.title}>
+                <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',marginBottom:'8px'}}>{col.title}</div>
+                {col.rows.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba',padding:'10px 0'}}>ไม่มีข้อมูล</div>}
+                {col.rows.map((r,i)=>(
+                  <div key={r.cur} style={{padding:'8px 0',borderTop:i>0?'1px solid #f0e9ed':'none'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:'5px'}}>
+                      <span style={{fontSize:'12.5px',fontWeight:600,color:'#14181f'}}>{r.cur}</span>
+                      <span style={{fontSize:'12px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(r.amount,r.cur)} <span style={{color:'#a99fa8'}}>({r.count} รายการ)</span></span>
+                    </div>
+                    <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,r.pct)+'%',background:curColor(r.cur),transition:'width .5s'}}/></span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'18px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Export Pipeline</div>
+            <div style={{fontSize:'12px',color:'#a99fa8'}}>{expAll.length} รายการ</div>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
+            {EXP_STAGES.map(stg=>{const c=expAll.filter(s=>s.stage===stg.key).length;return(
+              <div key={stg.key} style={{display:'grid',gridTemplateColumns:'120px 1fr 34px',alignItems:'center',gap:'12px'}}>
+                <span style={{fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
+                <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,c/emax*100)+'%',background:stg.color,transition:'width .5s'}}/></span>
+                <span style={{fontSize:'12px',fontWeight:600,color:'#14181f',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{c}</span>
+              </div>
+            );})}
+          </div>
+        </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Top ผู้ขาย/ลูกค้าตามมูลค่า</div>
+          <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>เรียงตามมูลค่ารวมแปลงเป็นบาท (฿) สูงสุด 10 อันดับ</div>
+          <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
+            {[{title:'Import: ผู้ขายอันดับต้น',rows:topVendors,color:'#c91253'},{title:'Export: ลูกค้าอันดับต้น',rows:topCustomers,color:'#7c3aed'}].map(col=>(
+              <div key={col.title}>
+                <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',marginBottom:'8px'}}>{col.title}</div>
+                {col.rows.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba',padding:'10px 0'}}>ไม่มีข้อมูล</div>}
+                {col.rows.map((r,i)=>(
+                  <div key={r.party} style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderTop:i>0?'1px solid #f0e9ed':'none'}}>
+                    <span style={{width:'18px',fontSize:'11px',fontWeight:700,color:'#a99fa8',flexShrink:0}}>{i+1}</span>
+                    <span style={{flex:1,fontSize:'12.5px',color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={r.party}>{r.party}</span>
+                    <span style={{fontSize:'11px',color:'#a99fa8',flexShrink:0,whiteSpace:'nowrap'}}>{r.count} รายการ</span>
+                    <span style={{fontSize:'12.5px',fontWeight:600,color:col.color,flexShrink:0,fontVariantNumeric:'tabular-nums',minWidth:'78px',textAlign:'right'}}>{fmtBaht(r.value)}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>PO/SO ที่ค้างนาน</div>
+          <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>นับจากวันที่สั่งซื้อ (orderDate) ถึงวันนี้ เฉพาะรายการที่ยังไม่จบสถานะ</div>
+          <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
+            <div>
+              <div style={{display:'flex',alignItems:'baseline',gap:'9px',marginBottom:'12px'}}>
+                <span style={{fontSize:'22px',fontWeight:700,color:impBacklog.length?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{impBacklog.length}</span>
+                <span style={{fontSize:'12.5px',color:'#5b6371'}}>PO ค้างเกิน 45 วัน</span>
+              </div>
+              {impBacklog.length===0&&<div style={{fontSize:'12px',color:'#15803d',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'10px',padding:'10px 14px'}}>ไม่มีรายการค้างนาน</div>}
+              {impBacklog.slice(0,5).map(({s,days})=>(
+                <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid #f0e9ed'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'#14181f',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
+                  <span style={{flex:1,fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
+                  <span style={stageBadgeSty('import',s.stage)}><span style={stageDotSty('import',s.stage)}/>{stageMeta('import',s.stage).label}</span>
+                  <span style={{fontSize:'11.5px',fontWeight:700,color:'#dc2626',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div style={{display:'flex',alignItems:'baseline',gap:'9px',marginBottom:'12px'}}>
+                <span style={{fontSize:'22px',fontWeight:700,color:expBacklog.length?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{expBacklog.length}</span>
+                <span style={{fontSize:'12.5px',color:'#5b6371'}}>SO ค้างเกิน 30 วัน</span>
+              </div>
+              {expBacklog.length===0&&<div style={{fontSize:'12px',color:'#15803d',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'10px',padding:'10px 14px'}}>ไม่มีรายการค้างนาน</div>}
+              {expBacklog.slice(0,5).map(({s,days})=>(
+                <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid #f0e9ed'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'#14181f',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
+                  <span style={{flex:1,fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
+                  <span style={stageBadgeSty('export',s.stage)}><span style={stageDotSty('export',s.stage)}/>{stageMeta('export',s.stage).label}</span>
+                  <span style={{fontSize:'11.5px',fontWeight:700,color:'#dc2626',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -897,11 +1315,13 @@ class App extends Component {
               <div style={{fontSize:'12px',color:'#7a818d',marginTop:'3px'}}>ยังไม่มีข้อมูลวัด</div>
             </div>
           </div>
-          {tstat.measured>0&&<div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
+          {/* % on-time เป็นสถิติที่มีความหมายก็ต่อเมื่อฐานตัวอย่างมากพอ — n<10 ถือว่าเล็กเกินไป (เช่น measured=1 จะโชว์ 0%/100% ที่ทำให้เข้าใจผิดว่าเป็น KPI จริง) */}
+          {tstat.measured>=10&&<div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
             <span style={{width:(tstat.onTime/tstat.measured*100)+'%',background:'#16a34a',transition:'width .5s'}}/>
             <span style={{width:(tstat.late/tstat.measured*100)+'%',background:'#dc2626',transition:'width .5s'}}/>
           </div>}
-          {tstat.measured>0&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'6px'}}>ตรงเวลา {Math.round(tstat.onTime/tstat.measured*100)}% ของรายการที่วัดได้</div>}
+          {tstat.measured>=10&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'6px'}}>ตรงเวลา {Math.round(tstat.onTime/tstat.measured*100)}% ของรายการที่วัดได้</div>}
+          {tstat.measured>0&&tstat.measured<10&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'6px'}}>ตัวอย่างยังน้อยเกินไปที่จะสรุปเป็น % ได้ (วัดได้ {tstat.measured} จาก {impAll.length} รายการ)</div>}
         </div>
         <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',overflow:'hidden'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
@@ -976,7 +1396,20 @@ class App extends Component {
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
           {qRows.length>0&&this.renderBarChart(qRows,'imp','exp',qMax,fmtBaht,(a,b)=>Math.round(a).toLocaleString('en-US')+' : '+Math.round(b).toLocaleString('en-US')+' บาท')}
-          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสล่าสุดยังไม่ครบช่วงเวลา ({qRows[qRows.length-1].label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
+          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
+        </div>
+        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>มูลค่าเฉลี่ยต่อออเดอร์ตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'12px',color:'#a99fa8'}}>ต้นทุนรวมแปลงเป็นบาท (฿) หารด้วยจำนวน shipment ต่อไตรมาส</div>
+          </div>
+          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371',marginBottom:'18px'}}>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>Import</span>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
+          </div>
+          {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
+          {qRows.length>0&&this.renderBarChart(qRows,'impAvg','expAvg',qAvgMax,fmtBaht,(a,b)=>Math.round(a).toLocaleString('en-US')+' : '+Math.round(b).toLocaleString('en-US')+' บาท/ออเดอร์')}
+          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
         <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
@@ -989,14 +1422,14 @@ class App extends Component {
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
           {qRows.length>0&&this.renderBarChart(qRows,'impN','expN',qMaxN,v=>v+' รายการ',(a,b)=>a+' : '+b+' shipment')}
-          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสล่าสุดยังไม่ครบช่วงเวลา ({qRows[qRows.length-1].label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
+          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
       </div>
     </div>;
   }
 
   renderDetail(){
-    const {detailId,editing,editForm,vendors,expenseBusy,costSrc,savingEdit,billPicker,billList,billLoading,billQuery,selBills}=this.state;
+    const {detailId,editing,editForm,vendors,expenseBusy,costSrc,savingEdit,billPicker,billList,billLoading,billQuery,selBills,deleteDialog,poLines,poLinesLoading,poLinesError}=this.state;
     if(!detailId)return null;
     const sel=this.allShipments().find(s=>s.id===detailId);if(!sel)return null;
     // เดิมเช็ค sel.id.startsWith('SO') ซึ่งใช้ได้แค่กับรูปแบบ id ของ sample data เท่านั้น —
@@ -1027,11 +1460,44 @@ class App extends Component {
         <div style={{flex:1,overflowY:'auto',padding:'20px 22px'}}>
           <div style={{fontSize:'13px',color:'#5b6371',marginBottom:'6px'}}>{sel.party}</div>
           {(()=>{const ov=(this._overrides||{})[sel.poNo];return (ov&&ov._ts)?<div style={{fontSize:'10.5px',color:'#a99fa8',marginBottom:'14px'}}>แก้ไขล่าสุด {new Date(ov._ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</div>:<div style={{marginBottom:'14px'}}/>;})()}
+          {(()=>{
+            const base=this.strip(sel._splitBase||sel.poNo);
+            const siblings=this.allShipments().filter(x=>this.strip(x._splitBase||x.poNo)===base);
+            if(siblings.length<2)return null;
+            return <div style={{display:'flex',flexDirection:'column',gap:'8px',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'10px',padding:'12px 14px',marginBottom:'16px'}}>
+              <div style={{fontSize:'12px',fontWeight:600,color:'#1d4ed8'}}>PO นี้แบ่งส่งเป็น {siblings.length} shipment — ตรวจมูลค่า/ค่าใช้จ่ายแต่ละอันไม่ให้นับซ้ำกับต้นฉบับ</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:'6px'}}>
+                {siblings.map(sb=>(
+                  <button key={sb.id} onClick={()=>this.setState({detailId:sb.id,editing:false,editForm:null})} style={{padding:'5px 10px',borderRadius:'8px',border:sb.id===sel.id?'1.5px solid #1d4ed8':'1px solid #bfdbfe',background:sb.id===sel.id?'#dbeafe':'#fff',color:'#1d4ed8',fontFamily:"'IBM Plex Mono',monospace",fontSize:'11px',fontWeight:600,cursor:'pointer'}}>{sb.poNo}</button>
+                ))}
+              </div>
+            </div>;
+          })()}
           {!editing&&<>
             <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#faf6f8',border:'1px solid #f0e9ed',borderRadius:'12px',padding:'14px 16px',marginBottom:'18px'}}>
               <div style={{minWidth:0,flex:1}}><div style={{fontSize:'11px',color:'#a99fa8'}}>ต้นทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.origin||'—'}</div></div>
               <span style={{display:'flex',color:'#c91253',flexShrink:0}}><Ico name="arrow" size={18} sw={1.9}/></span>
               <div style={{minWidth:0,flex:1,textAlign:'right'}}><div style={{fontSize:'11px',color:'#a99fa8'}}>ปลายทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.dest||'—'}</div></div>
+            </div>
+            <SectionTitle>รายการสินค้า{sel._splitBase?(' (จาก PO ต้นฉบับ '+sel._splitBase+')'):''}</SectionTitle>
+            <div style={{marginBottom:'20px'}}>
+              {poLinesLoading&&<div style={{fontSize:'12px',color:'#a99fa8',padding:'10px 0'}}>กำลังโหลดรายการสินค้า…</div>}
+              {!poLinesLoading&&poLinesError&&<div style={{fontSize:'11.5px',color:'#b91c1c',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'8px',padding:'9px 12px'}}>โหลดรายการสินค้าไม่สำเร็จ: {poLinesError}</div>}
+              {!poLinesLoading&&!poLinesError&&Array.isArray(poLines)&&poLines.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba',padding:'10px 0'}}>ไม่มีข้อมูลรายการสินค้า</div>}
+              {!poLinesLoading&&!poLinesError&&Array.isArray(poLines)&&poLines.length>0&&<div style={{maxHeight:'260px',overflowY:'auto',border:'1px solid #f0e9ed',borderRadius:'10px'}}>
+                {poLines.map((it,i)=>(
+                  <div key={it.id||i} style={{display:'flex',justifyContent:'space-between',gap:'10px',padding:'9px 12px',borderTop:i?'1px solid #f0e9ed':'none'}}>
+                    <div style={{minWidth:0,flex:1}}>
+                      <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.product_name||'—'}</div>
+                      <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'2px'}}>{it.sku?('SKU '+it.sku+' · '):''}{Math.round(parseFloat(it.qty)||0).toLocaleString('en-US')} {it.uom||''}</div>
+                    </div>
+                    <div style={{textAlign:'right',flexShrink:0}}>
+                      <div style={{fontSize:'12px',fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(it.price_subtotal,sel.cur)}</div>
+                      <div style={{fontSize:'10.5px',color:'#a99fa8',fontVariantNumeric:'tabular-nums'}}>@{fmtAmt(it.price_unit,sel.cur)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>}
             </div>
             <SectionTitle>ข้อมูลขนส่ง</SectionTitle>
             <div style={{display:'flex',flexDirection:'column',gap:'11px',marginBottom:'16px'}}>
@@ -1095,6 +1561,18 @@ class App extends Component {
                   {PORTS_DEST.map(p=><option key={p} value={p}>{p}</option>)}
                 </select></div>
             </div>
+            {ef._synthetic&&<>
+              <SectionTitle>มูลค่าสินค้า (shipment ที่แยกเอง)</SectionTitle>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'18px'}}>
+                <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>สกุลเงิน</div>
+                  <select value={ef.cur||'THB'} onChange={e=>this.setEditCurrency(e.target.value)} style={SEL}>
+                    <option value="CNY">CNY ¥</option><option value="USD">USD $</option><option value="THB">THB ฿</option><option value="SGD">SGD S$</option>
+                  </select></div>
+                <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>มูลค่าสินค้าของล็อตนี้</div>
+                  <input value={ef.amount===''||ef.amount==null?'':ef.amount} onChange={e=>this.setEdit('amount',e.target.value)} type="number" placeholder="0" style={INP}/></div>
+              </div>
+              <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'-10px',marginBottom:'18px'}}>ใส่เฉพาะสัดส่วนของล็อตนี้ ไม่ใช่มูลค่าเต็มของ PO ต้นฉบับ — ไม่งั้นยอดรวมจะนับซ้ำ</div>
+            </>}
             <SectionTitle>Ship Mode</SectionTitle>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'18px'}}>
               <ShipModeFields v={ef} set={(k,v)=>this.setEdit(k,v)}/>
@@ -1155,6 +1633,8 @@ class App extends Component {
         </div>
         <div style={{padding:'14px 22px',borderTop:'1px solid #e8dde4',display:'flex',gap:'10px'}}>
           {!editing&&<>
+            <button onClick={()=>this.splitShipment()} title="แยกเป็น shipment ย่อยใหม่ (PO เดียวกัน ส่งคนละรอบ)" style={{width:'40px',height:'40px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#1d4ed8',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="split" size={16} sw={1.8}/></button>
+            {sel._synthetic&&<button onClick={()=>this.openDeleteDialog(sel.poNo)} title="ลบ shipment ย่อยนี้ (ต้องมีรหัสผ่านผู้มีอำนาจ)" style={{width:'40px',height:'40px',border:'1.5px solid #fecaca',borderRadius:'10px',background:'#fff',color:'#dc2626',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="trash" size={16} sw={1.8}/></button>}
             <button onClick={()=>this.setState({detailId:null})} style={{flex:1,height:'40px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ปิด</button>
             <button onClick={()=>this.startEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="edit" size={15} sw={1.8}/>แก้ไข</button>
           </>}
@@ -1165,9 +1645,32 @@ class App extends Component {
         </div>
       </div>
       {billPicker&&this.renderBillPicker()}
+      {deleteDialog&&this.renderDeleteDialog()}
     </>;
   }
 
+  renderDeleteDialog(){
+    const d=this.state.deleteDialog;if(!d)return null;
+    return <>
+      <div onClick={()=>!d.busy&&this.closeDeleteDialog()} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.5)',zIndex:70,animation:'kobFadeIn .2s ease'}}/>
+      <div style={{position:'fixed',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:'360px',maxWidth:'90vw',background:'#fff',borderRadius:'14px',zIndex:71,boxShadow:'0 20px 60px rgba(20,24,31,.25)',padding:'22px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'10px'}}>
+          <span style={{color:'#dc2626',display:'flex'}}><Ico name="trash" size={18} sw={1.8}/></span>
+          <div style={{fontSize:'15px',fontWeight:700,color:'#14181f'}}>ลบ shipment ย่อย</div>
+        </div>
+        <div style={{fontSize:'12.5px',color:'#5b6371',marginBottom:'14px'}}>ยืนยันลบ <b style={{fontFamily:"'IBM Plex Mono',monospace"}}>{d.poNo}</b> — ลบแล้วกู้คืนไม่ได้ ต้องใส่รหัสผ่านของผู้มีอำนาจลบ</div>
+        {/* type="text" ไม่ mask ตัวอักษร — ตั้งใจไม่ใช้ type="password" เพราะ Chrome autofill/password
+            manager จะแทรกแซงค่าที่พิมพ์จริงได้ (ค่าที่ submit ไม่ตรงกับที่เห็นบนจอ) ทำให้ลบไม่สำเร็จ
+            ทั้งที่ดูเหมือนพิมพ์รหัสถูกแล้ว — รหัสนี้เป็น PIN ใช้ร่วมกันในทีม ไม่ใช่รหัสผ่านล็อกอินส่วนตัว */}
+        <input type="text" autoComplete="off" value={d.password} onChange={e=>this.setState({deleteDialog:{...d,password:e.target.value,error:''}})} onKeyDown={e=>e.key==='Enter'&&this.confirmDelete()} placeholder="รหัสผ่านผู้มีอำนาจลบ" autoFocus style={INP}/>
+        {d.error&&<div style={{fontSize:'11.5px',color:'#dc2626',marginTop:'8px'}}>{d.error}</div>}
+        <div style={{display:'flex',gap:'10px',marginTop:'16px'}}>
+          <button onClick={()=>this.closeDeleteDialog()} style={{flex:1,height:'38px',border:'1.5px solid #e8dde4',borderRadius:'9px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
+          <button onClick={()=>this.confirmDelete()} disabled={d.busy||!d.password} style={{flex:1,height:'38px',border:0,borderRadius:'9px',background:'#dc2626',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:(d.busy||!d.password)?'default':'pointer',opacity:(d.busy||!d.password)?0.6:1}}>{d.busy?'กำลังลบ…':'ยืนยันลบ'}</button>
+        </div>
+      </div>
+    </>;
+  }
   renderBillPicker(){
     const {billList,billLoading,billQuery,billError,selBills}=this.state;
     const q=(billQuery||'').trim().toLowerCase();
@@ -1218,7 +1721,12 @@ class App extends Component {
                   {used&&<span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:'#fef3c7',color:'#b45309'}}>ใช้กับ {used} แล้ว</span>}
                 </div>
               </div>
-              <span style={{fontSize:'13px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums',flexShrink:0}}>฿{Math.round(b.amount).toLocaleString()}</span>
+              <span style={{textAlign:'right',flexShrink:0}}>
+                <div style={{fontSize:'13px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(b.amount).toLocaleString()}</div>
+                {/* โชว์ยอดต้นฉบับ+อัตราแลกเปลี่ยนเมื่อบิลไม่ใช่ THB — กันประวัติ bug ที่เคยเอายอดสกุลต่างประเทศมานับเป็นบาทตรงๆ
+                    โดยไม่มีอะไรฟ้องเลยว่าแปลงหรือยัง ให้ผู้ใช้เช็คด้วยตาได้ว่าเลขบาทสมเหตุสมผลกับยอดเดิมไหม */}
+                {b.origAmount!=null&&<div style={{fontSize:'10px',color:'#a99fa8',marginTop:'2px'}}>{fmtAmt(b.origAmount,b.currency)} × {b.fxRate.toFixed(2)}</div>}
+              </span>
             </div>;
           })}
         </div>
@@ -1340,6 +1848,66 @@ class App extends Component {
     </>;
   }
 
+  // ── AI ตรวจเอกสาร: หน้าอัปโหลด + ผลลัพธ์ ──
+  renderVerify(){
+    const {verifyFiles,verifyLoading,verifyResult,verifyError}=this.state;
+    const box={border:'1px solid #e8dde4',borderRadius:'12px',background:'#fff',padding:'20px'};
+    return <div style={{flex:1,overflow:'auto',padding:'22px',display:'flex',flexDirection:'column',gap:'16px',maxWidth:'820px'}}>
+      <div>
+        <div style={{fontSize:'15px',fontWeight:700,color:'#14181f'}}>ตรวจเอกสาร shipment ด้วย AI</div>
+        <div style={{fontSize:'12.5px',color:'#7a818d',marginTop:'4px'}}>อัปโหลด Invoice / Packing List / Bill of Lading / Form E-D-AK / ใบขนสินค้าขาเข้า แล้วให้ AI ตรวจไขว้ให้ (รองรับเฉพาะ import ในตอนนี้)</div>
+      </div>
+      <div style={box}>
+        <div onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();this.onVerifyFilesAdd(e.dataTransfer.files);}}
+             style={{border:'2px dashed #e8dde4',borderRadius:'10px',padding:'28px',textAlign:'center'}}>
+          <div style={{color:'#7a818d',fontSize:'13px',marginBottom:'10px'}}>ลากไฟล์มาวางที่นี่ หรือ</div>
+          <label style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 16px',borderRadius:'8px',background:'#f3edf0',color:'#c91253',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>
+            <Ico name="plus" size={14} sw={2}/> เลือกไฟล์
+            <input type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style={{display:'none'}}
+                   onChange={e=>{this.onVerifyFilesAdd(e.target.files);e.target.value='';}}/>
+          </label>
+        </div>
+        {verifyFiles.length>0&&<div style={{marginTop:'14px',display:'flex',flexDirection:'column',gap:'6px'}}>
+          {verifyFiles.map((f,i)=><div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'7px 11px',borderRadius:'7px',background:'#f7f3f5',fontSize:'12.5px'}}>
+            <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{f.name}</span>
+            <button onClick={()=>this.removeVerifyFile(i)} style={{border:0,background:'transparent',color:'#a99fa8',cursor:'pointer',fontSize:'15px',lineHeight:1,padding:'0 4px'}}>×</button>
+          </div>)}
+        </div>}
+        <button onClick={()=>this.submitVerify()} disabled={verifyLoading}
+                style={{marginTop:'16px',display:'flex',alignItems:'center',gap:'8px',padding:'10px 20px',border:0,borderRadius:'9px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:verifyLoading?'default':'pointer',opacity:verifyLoading?0.75:1}}>
+          {verifyLoading&&<span style={{display:'flex',animation:'kobSpin 1s linear infinite'}}><Ico name="sync" size={15} sw={2}/></span>}
+          {verifyLoading?'กำลังตรวจสอบ… อาจใช้เวลา 30 วิ - 2 นาที':'เริ่มตรวจสอบ'}
+        </button>
+      </div>
+      {verifyError&&<div style={{...box,borderColor:'#fca5a5',background:'#fef2f2',color:'#dc2626',fontSize:'13px'}}>{verifyError}</div>}
+      {verifyResult&&<div style={box}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'14px'}}>
+          <div style={{fontSize:'13.5px',fontWeight:700,color:'#14181f'}}>ผลตรวจสอบ</div>
+          <button onClick={()=>this.exportVerifyExcel()} style={{display:'flex',alignItems:'center',gap:'6px',padding:'6px 13px',borderRadius:'8px',border:'1px solid #e8dde4',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>
+            <Ico name="dl" size={14} sw={1.8}/> Export Excel
+          </button>
+        </div>
+        {[
+          {icon:'✅',title:'ส่วนที่ถูกต้อง',items:verifyResult.sections.correct,color:'#16a34a'},
+          {icon:'🟡',title:'ค่าประมาณการในร่าง / ประเด็นที่ควรตรวจสอบ',items:verifyResult.sections.review,color:'#d97706'},
+          {icon:'❌',title:'ข้อผิดพลาดที่ต้องแก้ไข',items:verifyResult.sections.errors,color:'#dc2626'},
+        ].map((sec,i)=><div key={i} style={{marginBottom:'16px'}}>
+          <div style={{fontSize:'12.5px',fontWeight:700,color:sec.color,marginBottom:'7px'}}>{sec.icon} {sec.title} ({sec.items.length})</div>
+          {sec.items.length?<ul style={{margin:0,paddingLeft:'20px',display:'flex',flexDirection:'column',gap:'5px'}}>
+            {sec.items.map((t,j)=><li key={j} style={{fontSize:'12.5px',color:'#3a4150'}}>{t}</li>)}
+          </ul>:<div style={{fontSize:'12px',color:'#a99fa8'}}>— ไม่มี —</div>}
+        </div>)}
+        <div>
+          <div style={{fontSize:'12.5px',fontWeight:700,color:'#14181f',marginBottom:'7px'}}>📋 สรุป + ข้อเสนอแนะ</div>
+          <div style={{fontSize:'12.5px',color:'#3a4150',lineHeight:1.6}}>{verifyResult.summary}</div>
+        </div>
+        {verifyResult.meta&&verifyResult.meta.filesSkipped&&verifyResult.meta.filesSkipped.length>0&&<div style={{marginTop:'14px',padding:'10px 12px',borderRadius:'7px',background:'#fffbeb',fontSize:'11.5px',color:'#92400e'}}>
+          ข้ามไฟล์ {verifyResult.meta.filesSkipped.length} ไฟล์: {verifyResult.meta.filesSkipped.map(f=>f.name+' ('+f.reason+')').join(', ')}
+        </div>}
+      </div>}
+    </div>;
+  }
+
   render(){
     const {tab,view,toast}=this.state;
     const isBoard=tab==='import'||tab==='export';
@@ -1354,6 +1922,7 @@ class App extends Component {
           </div>
         </>}
         {tab==='dashboard'&&this.renderDashboard()}
+        {tab==='verify'&&this.renderVerify()}
       </div>
       {this.renderDetail()}
       {this.renderCreateForm()}

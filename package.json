@@ -1,0 +1,17 @@
+{
+  "name": "logistics-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Logistics Tracking API server (KOB & BTV) — plain Node http, Odoo/Postgres, AI document verification",
+  "main": "api-server.js",
+  "scripts": {
+    "start": "node api-server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "busboy": "^1.6.0",
+    "nodemailer": "^9.0.3",
+    "pg": "^8.11.0",
+    "xlsx": "^0.18.5"
+  }
+}

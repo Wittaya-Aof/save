@@ -7,5 +7,7 @@ backups/
 tracking_data.json
 tracking_audit.jsonl
 odoo_snapshot.json
+integrity_seen.json
+integrity_digest.json
 _temp_page.html
 _extracted_source.html

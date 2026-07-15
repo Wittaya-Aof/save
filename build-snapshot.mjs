@@ -5,6 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { IMPORT_INNER, EXPORT_INNER, ORDER_COLS } from './odoo-queries.js';
 
 // อ่าน .env
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -95,55 +96,15 @@ async function pull(label, innerSelect, orderCols) {
   return out;
 }
 
-// ── inner SELECT (คอลัมน์เท่าที่แอปใช้ ใช้ FROM/WHERE เดียวกับ SQL_IMPORT/EXPORT) ──
-const IMPORT_INNER = `
-  SELECT po.id, po.name AS po_number,
-    CASE po.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
-    rp.name AS supplier, po.state AS odoo_state,
-    to_char(po.date_order,'YYYY-MM-DD') AS date_order,
-    to_char(po.date_planned,'YYYY-MM-DD') AS date_planned,
-    po.amount_total, cu.name AS currency, po.currency_rate,
-    po.receipt_status, po.origin, cat.top_cat AS goods_category
-  FROM purchase_order po
-  JOIN res_company rc ON rc.id = po.company_id
-  JOIN res_partner rp ON rp.id = po.partner_id
-  JOIN res_currency cu ON cu.id = po.currency_id
-  LEFT JOIN res_country rco ON rco.id = rp.country_id
-  LEFT JOIN LATERAL (
-    SELECT split_part(pc.complete_name, ' / ', 1) AS top_cat
-    FROM purchase_order_line pol
-    JOIN product_product pp ON pp.id = pol.product_id
-    JOIN product_template pt ON pt.id = pp.product_tmpl_id
-    JOIN product_category pc ON pc.id = pt.categ_id
-    WHERE pol.order_id = po.id GROUP BY 1 ORDER BY SUM(pol.price_subtotal) DESC NULLS LAST LIMIT 1
-  ) cat ON true
-  WHERE po.company_id IN (1,2) AND po.state NOT IN ('cancel')
-    AND po.date_order >= NOW() - INTERVAL '2 years'
-    AND (rco.code IS NOT NULL AND rco.code != 'TH' OR (rco.code IS NULL AND cu.name NOT IN ('THB')))
-    AND cat.top_cat IN ('Packaging','Finished Goods','Raw Materials')`;
-
-const EXPORT_INNER = `
-  SELECT so.id, so.name AS so_number,
-    CASE so.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
-    rp.name AS customer, so.state AS odoo_state,
-    to_char(so.date_order,'YYYY-MM-DD') AS date_order,
-    so.amount_total, cu.name AS currency,
-    so.delivery_status, so.origin, rco.code AS country_code
-  FROM sale_order so
-  JOIN res_company rc ON rc.id = so.company_id
-  JOIN res_partner rp ON rp.id = so.partner_id
-  JOIN res_currency cu ON cu.id = so.currency_id
-  LEFT JOIN res_country rco ON rco.id = rp.country_id
-  WHERE so.company_id IN (1,2) AND so.state NOT IN ('cancel','draft')
-    AND so.date_order >= NOW() - INTERVAL '2 years'
-    AND (rco.code IS NOT NULL AND rco.code != 'TH' OR (rco.code IS NULL AND cu.name NOT IN ('THB')))`;
+// IMPORT_INNER/EXPORT_INNER/ORDER_COLS มาจาก odoo-queries.js (แชร์กับ api-server.js) แล้ว —
+// เดิมก็อปปี้ SQL ชุดนี้แยกไว้ในไฟล์นี้เองด้วย เสี่ยงแก้เงื่อนไขกรองฝั่งเดียวแล้วอีกฝั่งข้อมูลไม่ตรงกัน
 
 (async () => {
   console.log('เชื่อม MCP proxy…');
   await connect();
   console.log('✓ เชื่อมต่อสำเร็จ — เริ่มดึงข้อมูล');
-  const imp = await pull('import', IMPORT_INNER, 'r.date_order AS _ord, r.id AS _id');
-  const exp = await pull('export', EXPORT_INNER, 'r.date_order AS _ord, r.id AS _id');
+  const imp = await pull('import', IMPORT_INNER, ORDER_COLS);
+  const exp = await pull('export', EXPORT_INNER, ORDER_COLS);
   const now = new Date().toISOString();
   const snapshot = { _ts: { import: now, export: now }, import: imp, export: exp };
   fs.writeFileSync(path.join(ROOT, 'odoo_snapshot.json'), JSON.stringify(snapshot), 'utf8');
