@@ -118,6 +118,9 @@ const MCP_URL = process.env.MCP_URL, MCP_TOKEN = process.env.MCP_TOKEN;
 // NCOLS*CHUNK = งบ base64 ต่อแถว (24*50=1200 ตัว ≈ 900 byte JSON ดิบ) — เผื่อแถวที่มีชื่อผู้ขาย/สินค้ายาว
 // หรือ currency_rate ทศนิยมเยอะ ไม่ให้ตัดขาดจน parse ไม่ผ่าน (เดิม 16 คอลัมน์ = 600 byte เสี่ยงพอดีกับแถวยาวๆ)
 const MCP_NCOLS = 24, MCP_CHUNK = 50, MCP_PAGE = 120;
+// แถวที่ JSON ใหญ่กว่า import/export (เช่น bill picker ที่มี lines[] ต่อบิล) — วัดจริงแล้ว bill สูงสุด ~1440
+// base64 chars, PO ~512 → 40 คอลัมน์ (2000) มี headroom พอ ทดสอบผ่าน MCP tool จริงแล้วว่าไม่ถูกตัดแนวนอน
+const MCP_NCOLS_WIDE = 40;
 // กันยิง MCP ถี่เกินไปตอน direct หลุดยาว (ทุก request ที่ไม่ force จะเช็คก่อน) — ลองใหม่ได้ทุก 1 นาที/key
 const MCP_RETRY_INTERVAL = 60000;
 // snapshot อายุไม่เกินนี้ถือว่า "ยังสด" แม้รอบนี้จะโดน throttle ไม่ได้ fetch จริง (กัน UI ขึ้นเตือนหลอก)
@@ -169,9 +172,9 @@ async function mcpRunSql(sid, sql) {
 }
 // SELECT ที่คืนแต่ละแถวเป็น base64 หั่น NCOLS คอลัมน์ — MCP tool ตัดข้อความที่ ~58 ตัว/ช่อง
 // เข้ารหัส base64 ทั้งแถวเป็น JSON เดียวแล้วหั่นเป็นคอลัมน์เล็กๆ กันตัด ประกอบคืนฝั่งนี้ (lossless)
-function mcpWrap(innerSelect, orderCols, off) {
+function mcpWrap(innerSelect, orderCols, off, ncols = MCP_NCOLS) {
   const cols = [];
-  for (let i = 0; i < MCP_NCOLS; i++) cols.push(`substring(b,${i * MCP_CHUNK + 1},${MCP_CHUNK}) AS c${i}`);
+  for (let i = 0; i < ncols; i++) cols.push(`substring(b,${i * MCP_CHUNK + 1},${MCP_CHUNK}) AS c${i}`);
   const orderBy = orderCols.split(',').map(s => s.trim().split(' AS ')[1] + ' DESC NULLS LAST').join(', ');
   return `
     SELECT ${cols.join(', ')} FROM (
@@ -206,10 +209,10 @@ function decodeB64Rows(b64rows, label) {
 }
 // maxRows (ถ้าใส่) หยุด paginate เมื่อถึงจำนวนนี้ — mirror LIMIT ของ SQL_IMPORT/SQL_EXPORT (2000/500)
 // ไม่งั้น path นี้ไม่มี cap เลย ต่างจาก direct pg ที่ถูกจำกัดไว้ ทำให้ชุดข้อมูลระหว่าง 2 ทางไม่ตรงกัน
-async function mcpPull(sid, innerSelect, orderCols, maxRows) {
+async function mcpPull(sid, innerSelect, orderCols, maxRows, ncols = MCP_NCOLS) {
   const out = [];
   for (let off = 0; ; off += MCP_PAGE) {
-    const text = await mcpRunSql(sid, mcpWrap(innerSelect, orderCols, off));
+    const text = await mcpRunSql(sid, mcpWrap(innerSelect, orderCols, off, ncols));
     const b64rows = mcpParseTable(text);
     if (!b64rows.length) break;
     out.push(...decodeB64Rows(b64rows, 'off=' + off));
@@ -1199,99 +1202,135 @@ const server = http.createServer(async (req, res) => {
       const LOGI_PATTERN = 'dhl|kerry|pantos|yusen|sino.?trans|sitc|maersk|oocl|cma|evergreen|nippon|nyk|\\mups\\M|fedex|tnt|schenker|expeditors|ceva|dsv|geodis|panalpina|ขนส่ง|forwarder|freight|logistic|shipping|customs|ศุลกากร|broker|clearing|express|cargo|insurance|ประกันภัย|ชิปปิ้ง|marine|transport';
       // product category ของค่าใช้จ่ายนำเข้าใน Odoo (Expense / ... / Import Expenses)
       const IMPORT_CAT = '%Import Expens%';
-      // DB เพิ่งล่ม → ตอบ 503 ทันที ไม่ปล่อยให้ query ค้างรอ timeout 6 วิ
-      if (dbLikelyDown()) { jsonErr(res, 503, 'Odoo ไม่พร้อมใช้งานชั่วคราว'); return; }
+      // เดิม endpoint นี้ยิง db.query ตรงอย่างเดียว + ตอบ 503 ทันทีเมื่อ circuit เปิด ไม่มี fallback เลย
+      // ทำให้ bill picker ตายสนิทเมื่อ RDS ตรงต่อไม่ได้ (dynamic IP หลุดบ่อย) ทั้งที่ MCP bridge ยังต่อได้
+      // แก้: เพิ่มชั้น MCP bridge fallback แบบเดียวกับ import/export หลัก (liveOrSnapshot) — ลอง direct ก่อน
+      // ถ้า circuit เปิด/ล้มเหลว → ผ่าน MCP bridge (base64 wrap แบบ mcpPull) จะ 503 ก็ต่อเมื่อทั้งสองทางล่มจริง
+      const args = [`%${q}%`];
+      // direct pg: ใช้ $1 parameterized (ปลอดภัยจาก injection) — MCP: ฝัง literal ที่ escape ' แล้ว (MCP รับ SQL เป็น text)
+      const billSearchDirect = q ? `AND (rp.name ILIKE $1 OR am.ref::text ILIKE $1 OR (am.invoice_origin)::text ILIKE $1 OR am.name::text ILIKE $1)` : '';
+      const poSearchDirect   = q ? `AND (rp.name ILIKE $1 OR po.name ILIKE $1 OR po.origin ILIKE $1)` : '';
+      const qLit = "'%" + q.replace(/'/g, "''") + "%'";
+      const billSearchMcp = q ? `AND (rp.name ILIKE ${qLit} OR am.ref::text ILIKE ${qLit} OR (am.invoice_origin)::text ILIKE ${qLit} OR am.name::text ILIKE ${qLit})` : '';
+      const poSearchMcp   = q ? `AND (rp.name ILIKE ${qLit} OR po.name ILIKE ${qLit} OR po.origin ILIKE ${qLit})` : '';
+
+      // ตัว SQL body รับ search clause เป็นพารามิเตอร์ ใช้ร่วมกันทั้ง direct และ MCP (จุดเดียว ไม่ drift)
+      // (1) Vendor Bills: partner เข้า pattern หรือ line เป็นสินค้าหมวด Import Expenses
+      const billSql = (search) => `
+        SELECT
+          am.id,
+          am.name::text             AS bill_name,
+          (am.invoice_origin)::text AS invoice_origin,
+          am.ref::text,
+          am.amount_total,
+          am.amount_tax,
+          cu.name::text             AS currency,
+          COALESCE(NULLIF(am.inverse_currency_rate,0), 1.0/NULLIF(am.invoice_currency_rate,0)) AS rate_thb,
+          rp.name::text             AS partner,
+          am.invoice_date::text     AS doc_date,
+          COALESCE(aml_s.lines_json, '[]'::json) AS lines
+        FROM account_move am
+        JOIN res_currency cu ON cu.id = am.currency_id
+        JOIN res_partner  rp ON rp.id = am.partner_id
+        LEFT JOIN LATERAL (
+          SELECT json_agg(json_build_object('name', aml.name, 'amount', aml.price_subtotal)
+            ORDER BY aml.price_subtotal DESC) AS lines_json
+          FROM account_move_line aml
+          WHERE aml.move_id = am.id AND aml.display_type = 'product'
+        ) aml_s ON true
+        WHERE am.company_id IN (1,2)
+          ${coFilter}
+          AND am.move_type = 'in_invoice'
+          AND am.state = 'posted'
+          AND am.invoice_date >= NOW() - INTERVAL '${months} months'
+          AND (
+            rp.name ~* '${LOGI_PATTERN}'
+            OR EXISTS (
+              SELECT 1 FROM account_move_line aml2
+              JOIN product_product  pp2 ON pp2.id = aml2.product_id
+              JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
+              JOIN product_category pc2 ON pc2.id = pt2.categ_id
+              WHERE aml2.move_id = am.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
+            )
+          )
+          ${search}
+        ORDER BY am.invoice_date DESC
+        LIMIT 300`;
+
+      // (2) Expense POs: หมวด Import Expenses หรือ partner โลจิสติกส์ — รอออกบิล
+      const poSql = (search) => `
+        SELECT
+          po.id,
+          po.name::text        AS po_number,
+          po.origin::text,
+          po.amount_total,
+          cu.name::text        AS currency,
+          1.0/NULLIF(po.currency_rate,0) AS rate_thb,
+          rp.name::text        AS partner,
+          po.date_order::text  AS doc_date,
+          prod.main_product,
+          prod.cat_name
+        FROM purchase_order po
+        JOIN res_partner  rp ON rp.id = po.partner_id
+        JOIN res_currency cu ON cu.id = po.currency_id
+        LEFT JOIN LATERAL (
+          SELECT (pt.name)::text AS main_product, pc.complete_name::text AS cat_name
+          FROM purchase_order_line pol
+          JOIN product_product  pp ON pp.id = pol.product_id
+          JOIN product_template pt ON pt.id = pp.product_tmpl_id
+          JOIN product_category pc ON pc.id = pt.categ_id
+          WHERE pol.order_id = po.id
+          ORDER BY pol.price_subtotal DESC LIMIT 1
+        ) prod ON true
+        WHERE po.company_id IN (1,2)
+          ${coFilterPo}
+          AND po.state NOT IN ('cancel')
+          AND po.date_order >= NOW() - INTERVAL '${months} months'
+          AND (
+            rp.name ~* '${LOGI_PATTERN}'
+            OR EXISTS (
+              SELECT 1 FROM purchase_order_line pol2
+              JOIN product_product  pp2 ON pp2.id = pol2.product_id
+              JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
+              JOIN product_category pc2 ON pc2.id = pt2.categ_id
+              WHERE pol2.order_id = po.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
+            )
+          )
+          ${search}
+        ORDER BY po.date_order DESC
+        LIMIT 300`;
+
+      // MCP path หั่นคอลัมน์ตาม doc_date/id (ต้องมีใน SELECT ทั้งสอง query) — ใช้ NCOLS_WIDE เพราะ bill มี lines[]
+      const BILL_ORDER = 'r.doc_date AS _ord, r.id AS _id';
+      let billRows, poRows, via = null;
+      // ลอง direct ก่อน (ข้ามถ้า circuit เพิ่งเปิด — จะได้ไม่รอ timeout เปล่าๆ)
+      if (!dbLikelyDown()) {
+        try {
+          billRows = (await db.query(billSql(billSearchDirect), q ? args : [])).rows;
+          poRows   = (await db.query(poSql(poSearchDirect),     q ? args : [])).rows;
+          markDbUp(); via = 'direct';
+        } catch (e) {
+          if (/timeout|ETIMEDOUT|ECONNREFUSED|ECONNRESET|terminated/.test(e.message)) markDbDown();
+          console.error('[API] logistics-bills direct หลุด → ลอง MCP bridge:', e.message);
+        }
+      }
+      // fallback ผ่าน MCP bridge — เส้นทางเดียวกับที่ import/export ใช้ตอน RDS ตรงต่อไม่ได้
+      if (!via) {
+        if (!(MCP_URL && MCP_TOKEN)) { jsonErr(res, 503, 'Odoo ไม่พร้อมใช้งานชั่วคราว (RDS ตรงต่อไม่ได้ และไม่ได้ตั้งค่า MCP bridge)'); return; }
+        try {
+          const sid = await mcpConnect();
+          billRows = await mcpPull(sid, billSql(billSearchMcp), BILL_ORDER, 300, MCP_NCOLS_WIDE);
+          poRows   = await mcpPull(sid, poSql(poSearchMcp),     BILL_ORDER, 300, MCP_NCOLS_WIDE);
+          via = 'mcp';
+          console.log('[API] logistics-bills ผ่าน MCP bridge สำเร็จ — bills:', billRows.length, 'po:', poRows.length, '(direct ใช้ไม่ได้)');
+        } catch (mcpErr) {
+          console.error('[API] logistics-bills MCP bridge ก็หลุด:', mcpErr.message);
+          jsonErr(res, 503, 'โหลดรายการบิลไม่สำเร็จ (ทั้ง RDS ตรงและ MCP bridge ต่อไม่ได้): ' + mcpErr.message);
+          return;
+        }
+      }
+
       try {
-        const args = [`%${q}%`];
-        const billSearch = q ? `AND (rp.name ILIKE $1 OR am.ref::text ILIKE $1 OR (am.invoice_origin)::text ILIKE $1 OR am.name::text ILIKE $1)` : '';
-        const poSearch   = q ? `AND (rp.name ILIKE $1 OR po.name ILIKE $1 OR po.origin ILIKE $1)` : '';
-
-        // (1) Vendor Bills: partner เข้า pattern หรือ line เป็นสินค้าหมวด Import Expenses
-        const billRows = (await db.query(`
-          SELECT
-            am.id,
-            am.name::text             AS bill_name,
-            (am.invoice_origin)::text AS invoice_origin,
-            am.ref::text,
-            am.amount_total,
-            am.amount_tax,
-            cu.name::text             AS currency,
-            COALESCE(NULLIF(am.inverse_currency_rate,0), 1.0/NULLIF(am.invoice_currency_rate,0)) AS rate_thb,
-            rp.name::text             AS partner,
-            am.invoice_date::text     AS doc_date,
-            COALESCE(aml_s.lines_json, '[]'::json) AS lines
-          FROM account_move am
-          JOIN res_currency cu ON cu.id = am.currency_id
-          JOIN res_partner  rp ON rp.id = am.partner_id
-          LEFT JOIN LATERAL (
-            SELECT json_agg(json_build_object('name', aml.name, 'amount', aml.price_subtotal)
-              ORDER BY aml.price_subtotal DESC) AS lines_json
-            FROM account_move_line aml
-            WHERE aml.move_id = am.id AND aml.display_type = 'product'
-          ) aml_s ON true
-          WHERE am.company_id IN (1,2)
-            ${coFilter}
-            AND am.move_type = 'in_invoice'
-            AND am.state = 'posted'
-            AND am.invoice_date >= NOW() - INTERVAL '${months} months'
-            AND (
-              rp.name ~* '${LOGI_PATTERN}'
-              OR EXISTS (
-                SELECT 1 FROM account_move_line aml2
-                JOIN product_product  pp2 ON pp2.id = aml2.product_id
-                JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
-                JOIN product_category pc2 ON pc2.id = pt2.categ_id
-                WHERE aml2.move_id = am.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
-              )
-            )
-            ${billSearch}
-          ORDER BY am.invoice_date DESC
-          LIMIT 300
-        `, q ? args : [])).rows;
-
-        // (2) Expense POs: หมวด Import Expenses หรือ partner โลจิสติกส์ — รอออกบิล
-        const poRows = (await db.query(`
-          SELECT
-            po.id,
-            po.name::text        AS po_number,
-            po.origin::text,
-            po.amount_total,
-            cu.name::text        AS currency,
-            1.0/NULLIF(po.currency_rate,0) AS rate_thb,
-            rp.name::text        AS partner,
-            po.date_order::text  AS doc_date,
-            prod.main_product,
-            prod.cat_name
-          FROM purchase_order po
-          JOIN res_partner  rp ON rp.id = po.partner_id
-          JOIN res_currency cu ON cu.id = po.currency_id
-          LEFT JOIN LATERAL (
-            SELECT (pt.name)::text AS main_product, pc.complete_name::text AS cat_name
-            FROM purchase_order_line pol
-            JOIN product_product  pp ON pp.id = pol.product_id
-            JOIN product_template pt ON pt.id = pp.product_tmpl_id
-            JOIN product_category pc ON pc.id = pt.categ_id
-            WHERE pol.order_id = po.id
-            ORDER BY pol.price_subtotal DESC LIMIT 1
-          ) prod ON true
-          WHERE po.company_id IN (1,2)
-            ${coFilterPo}
-            AND po.state NOT IN ('cancel')
-            AND po.date_order >= NOW() - INTERVAL '${months} months'
-            AND (
-              rp.name ~* '${LOGI_PATTERN}'
-              OR EXISTS (
-                SELECT 1 FROM purchase_order_line pol2
-                JOIN product_product  pp2 ON pp2.id = pol2.product_id
-                JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
-                JOIN product_category pc2 ON pc2.id = pt2.categ_id
-                WHERE pol2.order_id = po.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
-              )
-            )
-            ${poSearch}
-          ORDER BY po.date_order DESC
-          LIMIT 300
-        `, q ? args : [])).rows;
 
         // ── จำแนกประเภท ──
         // บิลที่มีหลาย line ปนกัน (เช่น freight+insurance ใบเดียว) → แยกตามยอดของแต่ละ line
@@ -1373,12 +1412,12 @@ const server = http.createServer(async (req, res) => {
         });
         out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-        markDbUp();
-        jsonOk(res, { ok: true, count: out.length, months, bills: out });
+        // via บอกว่าดึงมาจาก direct หรือ MCP bridge (markDbUp/markDbDown จัดการไปแล้วในขั้นดึงข้อมูล)
+        jsonOk(res, { ok: true, count: out.length, months, via, bills: out });
       } catch(e) {
-        if (/timeout|ETIMEDOUT|ECONNREFUSED|ECONNRESET|terminated/.test(e.message)) markDbDown();
-        console.error('[API] logistics-bills:', e.message);
-        jsonErr(res, 503, 'โหลดรายการบิลไม่สำเร็จ: ' + e.message);
+        // ถึงตรงนี้แปลว่าดึงข้อมูลสำเร็จแล้ว (direct หรือ MCP) — error ที่นี่คือขั้นประมวลผล ไม่ใช่ DB หลุด
+        console.error('[API] logistics-bills ประมวลผล:', e.message);
+        jsonErr(res, 500, 'ประมวลผลรายการบิลไม่สำเร็จ: ' + e.message);
       }
       return;
     }
