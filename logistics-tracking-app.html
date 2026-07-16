@@ -1112,6 +1112,9 @@ class App extends Component {
     const daysSince=(s)=>{const d=this._dt(s.orderDate);return d?Math.round((todayMid-d)/86400000):null;};
     const impBacklog=impAll.map(s=>({s,days:daysSince(s)})).filter(x=>x.days!=null&&x.s.stage!=='received'&&x.days>45).sort((a,b)=>b.days-a.days);
     const expBacklog=expAll.map(s=>({s,days:daysSince(s)})).filter(x=>x.days!=null&&x.s.stage!=='arrived'&&x.days>30).sort((a,b)=>b.days-a.days);
+    // PO ที่รับเข้าคลังครบแล้ว (stage สุดท้าย) แต่ยังไม่มีค่าใช้จ่ายนำเข้าบันทึกไว้เลย (costSum=0) — แทบไม่มี
+    // PO นำเข้าจริงที่ไม่มีค่าขนส่ง/พิธีการเลย น่าจะเป็นสัญญาณว่าลืมบันทึกมากกว่าไม่มีค่าใช้จ่ายจริง
+    const missingCost=impAll.filter(s=>s.stage==='received'&&costSum(s)===0);
 
     // ── สัดส่วนต้นทุนตามปี: Import vs Export ──
     const yearMap={};
@@ -1160,6 +1163,42 @@ class App extends Component {
             <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'4px'}}>{k.sub}</div>
           </div>)}
         </div>
+        {(()=>{
+          // สรุปข้อยกเว้นรวมจุดเดียว — ไม่คำนวณซ้ำ ดึงจากตัวเลขที่มีอยู่แล้ว (integrity/aging/missingCost)
+          // ให้ manager กวาดตาดูจุดเดียวว่ามีอะไรต้องตามไหม ก่อนลงรายละเอียดในแต่ละ panel ด้านล่าง
+          const ir=this.state.integrityReport;
+          const curFindings=(ir&&Array.isArray(ir.findings))?ir.findings.length:0;
+          const agingCount=impBacklog.length+expBacklog.length;
+          const items=[
+            {n:curFindings,label:'ความผิดปกติสกุลเงิน',key:'currency'},
+            {n:agingCount,label:'PO/SO ค้างนาน',key:'aging'},
+            {n:missingCost.length,label:'รับของแล้วแต่ยังไม่บันทึกค่าใช้จ่าย',key:'cost'},
+          ];
+          const totalEx=items.reduce((a,x)=>a+x.n,0);
+          return <div style={{background:'#fff',border:'1px solid '+(totalEx?'#fecaca':'#e8dde4'),borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'12px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+              <span style={{width:'9px',height:'9px',borderRadius:'50%',background:totalEx?'#dc2626':'#16a34a',flexShrink:0}}/>
+              <span style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สรุปข้อยกเว้นที่ควรตรวจสอบ</span>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'repeat(3,1fr)',gap:isNarrow?'10px':'14px'}}>
+              {items.map(x=>(
+                <div key={x.key} style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 14px',borderRadius:'10px',background:x.n?'#fef2f2':'#f0fdf4',border:'1px solid '+(x.n?'#fecaca':'#bbf7d0')}}>
+                  <span style={{fontSize:'20px',fontWeight:700,color:x.n?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{x.n}</span>
+                  <span style={{fontSize:'12px',color:'#5b6371'}}>{x.label}</span>
+                </div>
+              ))}
+            </div>
+            {missingCost.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'2px'}}>
+              {missingCost.slice(0,5).map(s=>(
+                <div key={s.id} onClick={()=>this.setState({tab:'import',detailId:s.id,view:'kanban'})} style={{fontSize:'12px',color:'#991b1b',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'8px',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>{s.poNo}</span>
+                  <span>{s.party}</span>
+                </div>
+              ))}
+              {missingCost.length>5&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {missingCost.length-5} รายการ</div>}
+            </div>}
+          </div>;
+        })()}
         {(()=>{
           const ir=this.state.integrityReport,loading=this.state.integrityLoading;
           const clean=ir&&Array.isArray(ir.findings)&&ir.findings.length===0;
