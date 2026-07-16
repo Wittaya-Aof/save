@@ -733,12 +733,10 @@ class App extends Component {
   // อัตราแลกเปลี่ยน: ใช้ค่าจริงจาก Odoo ก่อน ถ้าไม่มีจึงใช้ค่า default
   fxRate(cur){const v=this._fx&&this._fx[cur];return (v&&v>0)?v:rateGuess(cur);}
 
-  // ── Export Excel: รายการตาม filter ปัจจุบัน + สรุปต้นทุน ──
-  exportExcel(tab){
-    if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
-    const list=this.filtered(tab);
-    if(!list.length){this.showToast('ไม่มีรายการให้ export','info');return;}
-    const rows=list.map(s=>{
+  // แปลง shipment list → แถว Excel — ใช้ร่วมกันทั้งปุ่ม export ต่อบอร์ด (exportExcel) และ
+  // รายงานสรุปสำหรับบัญชี (exportAccountingReport) กันสองที่คำนวณคอลัมน์ไม่ตรงกัน
+  buildExcelRows(list,tab){
+    return list.map(s=>{
       const ti=transitInfo(s);
       return {
       'PO/SO':s.poNo,'บริษัท':s.company,'ผู้ขาย/ลูกค้า':s.party,
@@ -754,6 +752,13 @@ class App extends Component {
       'Transit จริง (วัน)':ti?ti.days:'','KPI มาตรฐาน (วัน)':ti&&ti.kpi?ti.kpi.days:'',
       'ผลเทียบ KPI':ti&&ti.kpi?(ti.days-ti.kpi.days<=0?'ตรง/เร็วกว่า':('ล่าช้า '+(ti.days-ti.kpi.days)+' วัน')):'',
     };});
+  }
+  // ── Export Excel: รายการตาม filter ปัจจุบัน + สรุปต้นทุน ──
+  exportExcel(tab){
+    if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
+    const list=this.filtered(tab);
+    if(!list.length){this.showToast('ไม่มีรายการให้ export','info');return;}
+    const rows=this.buildExcelRows(list,tab);
     const ws=XLSX.utils.json_to_sheet(rows);
     ws['!cols']=Object.keys(rows[0]).map(k=>({wch:Math.max(k.length+2,12)}));
     const wb=XLSX.utils.book_new();
@@ -761,6 +766,30 @@ class App extends Component {
     const today=new Date().toISOString().slice(0,10);
     XLSX.writeFile(wb,'logistics-'+tab+'-'+today+'.xlsx');
     this.showToast('ดาวน์โหลด Excel แล้ว ('+list.length+' รายการ)','success');
+  }
+  // ── รายงานสรุปต้นทุนสำหรับบัญชี: รวม Import+Export ทุกสถานะ (ไม่ยึด filter หน้าจอ) + sheet สรุปรายไตรมาส ──
+  // ต่างจาก exportExcel ปกติ (ต่อบอร์ด, ตาม filter ที่เลือกอยู่) — อันนี้ทำไว้ให้ใช้กระทบยอดกับบัญชีโดยเฉพาะ
+  // จึงต้องครบทุกรายการเสมอ ไม่ขึ้นกับว่าผู้ใช้กรองหน้าจออะไรค้างไว้ตอนกด
+  exportAccountingReport(qRows){
+    if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
+    const impRows=this.buildExcelRows(this.allShipments().filter(s=>s._board==='import'),'import');
+    const expRows=this.buildExcelRows(this.allShipments().filter(s=>s._board==='export'),'export');
+    const qSummary=qRows.map(r=>({
+      'ไตรมาส':r.label,
+      'Import ต้นทุนรวม (฿)':Math.round(r.imp),'Import จำนวนรายการ':r.impN,'Import เฉลี่ยต่อออเดอร์ (฿)':Math.round(r.impAvg),
+      'Export ต้นทุนรวม (฿)':Math.round(r.exp),'Export จำนวนรายการ':r.expN,'Export เฉลี่ยต่อออเดอร์ (฿)':Math.round(r.expAvg),
+    }));
+    const wb=XLSX.utils.book_new();
+    if(qSummary.length){
+      const wsQ=XLSX.utils.json_to_sheet(qSummary);
+      wsQ['!cols']=Object.keys(qSummary[0]).map(k=>({wch:Math.max(k.length+2,14)}));
+      XLSX.utils.book_append_sheet(wb,wsQ,'สรุปรายไตรมาส');
+    }
+    if(impRows.length){const ws=XLSX.utils.json_to_sheet(impRows);ws['!cols']=Object.keys(impRows[0]).map(k=>({wch:Math.max(k.length+2,12)}));XLSX.utils.book_append_sheet(wb,ws,'Import รายละเอียด');}
+    if(expRows.length){const ws=XLSX.utils.json_to_sheet(expRows);ws['!cols']=Object.keys(expRows[0]).map(k=>({wch:Math.max(k.length+2,12)}));XLSX.utils.book_append_sheet(wb,ws,'Export รายละเอียด');}
+    const today=new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb,'logistics-accounting-report-'+today+'.xlsx');
+    this.showToast('ดาวน์โหลดรายงานสรุปแล้ว ('+(impRows.length+expRows.length)+' รายการ)','success');
   }
 
   // ── AI ตรวจเอกสาร (layer 4): อัปโหลดเอกสาร shipment → เรียก /api/verify-shipment ──
@@ -1188,9 +1217,12 @@ class App extends Component {
           ];
           const totalEx=items.reduce((a,x)=>a+x.n,0);
           return <div style={{background:'#fff',border:'1px solid '+(totalEx?'#fecaca':'#e8dde4'),borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'12px'}}>
-            <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
-              <span style={{width:'9px',height:'9px',borderRadius:'50%',background:totalEx?'#dc2626':'#16a34a',flexShrink:0}}/>
-              <span style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สรุปข้อยกเว้นที่ควรตรวจสอบ</span>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',flexWrap:'wrap'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                <span style={{width:'9px',height:'9px',borderRadius:'50%',background:totalEx?'#dc2626':'#16a34a',flexShrink:0}}/>
+                <span style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สรุปข้อยกเว้นที่ควรตรวจสอบ</span>
+              </div>
+              <button onClick={()=>this.exportAccountingReport(qRows)} title="ดาวน์โหลด Excel: Import+Export ทุกรายการ + สรุปรายไตรมาส สำหรับกระทบยอดกับบัญชี" style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#15803d',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}><Ico name="dl" size={13} sw={2}/>Export รายงานบัญชี</button>
             </div>
             <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'repeat(3,1fr)',gap:isNarrow?'10px':'14px'}}>
               {items.map(x=>(
