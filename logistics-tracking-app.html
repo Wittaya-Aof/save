@@ -289,7 +289,7 @@ class App extends Component {
   constructor(props){
     super(props);
     const w=typeof window!=='undefined'?window.innerWidth:1280;
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false};
     this._plan=null; this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   componentDidMount(){
@@ -304,6 +304,18 @@ class App extends Component {
     },180000); // ทุก 3 นาที
     this.loadIntegrityReport(false);
     this.loadAuditLog();
+    this.loadVendorScorecard();
+  }
+  // อัตราส่งตรงเวลา+ความล่าช้าเฉลี่ยต่อผู้ขาย จาก stock_picking (scheduled_date เทียบ date_done จริง) —
+  // cache ฝั่ง server 1 ชม.ตาม cachedQuery ปกติ ไม่ต้อง force ทุกครั้งที่เปิดหน้า
+  async loadVendorScorecard(){
+    this.setState({vendorScorecardLoading:true});
+    try{
+      const r=await fetchTimeout('/api/vendor-scorecard',{headers:{Accept:'application/json'}},15000);
+      const j=await r.json();
+      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      this.setState({vendorScorecard:j.rows,vendorScorecardLoading:false});
+    }catch(e){this.setState({vendorScorecardLoading:false});}
   }
   componentWillUnmount(){window.removeEventListener('resize',this._onResize);clearInterval(this._autoRefresh);}
   // ประวัติการแก้ไขล่าสุด (สำหรับ manager ดูภาพรวม) — endpoint เดิม /api/tracking/history รองรับอยู่แล้ว
@@ -1355,6 +1367,40 @@ class App extends Component {
             ))}
           </div>
         </div>
+        {(()=>{
+          // ผสานผลตรงเวลา (จาก server, stock_picking) กับมูลค่ารวม (client-side, ใช้ค่าเดียวกับ topVendors
+          // ด้านบนเพื่อความสอดคล้อง) เข้าด้วยกันด้วยชื่อผู้ขาย — เรียงตามมูลค่ารวมมากสุดก่อน (ผู้ขายที่สำคัญที่สุด)
+          const sc=this.state.vendorScorecard,loading=this.state.vendorScorecardLoading;
+          const spendMap={};topVendors.forEach(v=>{spendMap[v.party]=v;});
+          // topVendors ตัดไว้แค่ 10 อันดับ — ผู้ขายใน scorecard ที่ไม่ติด top 10 มูลค่าจะไม่มี spend row คู่กัน
+          // (ยังโชว์ค่าตรงเวลาได้ตามปกติ แค่ไม่มีคอลัมน์มูลค่า)
+          const merged=(sc||[]).map(v=>({...v,spend:spendMap[v.vendor]?spendMap[v.vendor].value:null}))
+            .sort((a,b)=>(b.spend||0)-(a.spend||0));
+          return <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Vendor Scorecard — อัตราส่งตรงเวลา</div>
+            <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>เทียบ scheduled_date กับวันที่ส่งจริงจาก Odoo · เฉพาะผู้ขายที่มีข้อมูลอย่างน้อย 2 ครั้ง</div>
+            {loading&&!sc&&<div style={{fontSize:'12px',color:'#a99fa8'}}>กำลังโหลด…</div>}
+            {!loading&&sc&&sc.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba'}}>ยังไม่มีข้อมูลเพียงพอ</div>}
+            {sc&&sc.length>0&&<div style={{overflowX:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12.5px'}}>
+                <thead><tr style={{background:'#faf6f8'}}>{['ผู้ขาย','จำนวนครั้ง','ตรงเวลา','ล่าช้าเฉลี่ย','มูลค่ารวม'].map((h,i)=>(
+                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>{merged.slice(0,15).map((v,i)=>{
+                  const rate=v.deliveries>0?Math.round(v.on_time/v.deliveries*100):0;
+                  const delay=parseFloat(v.avg_delay_days)||0;
+                  return <tr key={v.vendor} style={{borderTop:i?'1px solid #f0e9ed':'none'}}>
+                    <td style={{padding:'9px 12px',color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} title={v.vendor}>{v.vendor}</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',color:'#5b6371'}}>{v.deliveries}</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:rate>=80?'#15803d':rate>=50?'#c2410c':'#dc2626'}}>{rate}%</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',color:delay>3?'#dc2626':'#5b6371'}}>{delay>0?'+':''}{delay.toLocaleString('en-US',{maximumFractionDigits:1})} วัน</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{v.spend!=null?fmtBaht(v.spend):'—'}</td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>}
+          </div>;
+        })()}
         <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>PO/SO ที่ค้างนาน</div>
           <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>นับจากวันที่สั่งซื้อ (orderDate) ถึงวันนี้ เฉพาะรายการที่ยังไม่จบสถานะ</div>

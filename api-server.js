@@ -990,6 +990,47 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── Vendor scorecard: อัตราส่งตรงเวลา + ความล่าช้าเฉลี่ยต่อผู้ขาย (เฉพาะผู้ขายต่างประเทศที่แอปติดตามอยู่
+    // — filter เดียวกับ SQL_IMPORT ไม่งั้นจะปนผู้ขายในประเทศที่ไม่เกี่ยวกับ shipment ต่างประเทศเข้ามาด้วย) ──
+    // scheduled_date/date_done มีให้ตรงบน stock_picking อยู่แล้ว ไม่ต้องคำนวณเองจาก stock_move
+    if (reqUrl === '/api/vendor-scorecard' && method === 'GET') {
+      try {
+        const rows = await cachedQuery('vendor-scorecard', `
+          SELECT rp.name AS vendor, COUNT(*) AS deliveries,
+            COUNT(*) FILTER (WHERE sp.date_done <= sp.scheduled_date) AS on_time,
+            ROUND(AVG(EXTRACT(EPOCH FROM (sp.date_done - sp.scheduled_date))/86400)::numeric, 1) AS avg_delay_days
+          FROM stock_picking sp
+          JOIN purchase_order po ON po.name = sp.origin
+          JOIN res_partner rp ON rp.id = po.partner_id
+          LEFT JOIN res_country rco ON rco.id = rp.country_id
+          JOIN res_currency cu ON cu.id = po.currency_id
+          WHERE po.company_id IN (1, 2) AND sp.state = 'done'
+            -- ตัด scheduled_date/date_done ที่เพี้ยนสุดขั้ว (เจอจริง: ปี 2299 — data-entry ผิดใน Odoo)
+            -- ไม่งั้นค่าเฉลี่ยความล่าช้าจะพังทั้งวงเพราะ outlier เดียว
+            AND sp.scheduled_date BETWEEN NOW() - INTERVAL '3 years' AND NOW() + INTERVAL '3 years'
+            AND sp.date_done      BETWEEN NOW() - INTERVAL '3 years' AND NOW() + INTERVAL '3 years'
+            AND po.date_order >= NOW() - INTERVAL '2 years'
+            AND (rco.code IS NOT NULL AND rco.code != 'TH' OR (rco.code IS NULL AND cu.name NOT IN ('THB')))
+            AND EXISTS (
+              SELECT 1 FROM purchase_order_line pol
+              JOIN product_product  pp ON pp.id = pol.product_id
+              JOIN product_template pt ON pt.id = pp.product_tmpl_id
+              JOIN product_category pc ON pc.id = pt.categ_id
+              WHERE pol.order_id = po.id AND split_part(pc.complete_name,' / ',1) IN ('Packaging','Finished Goods','Raw Materials')
+            )
+          GROUP BY rp.name
+          HAVING COUNT(*) >= 2
+          ORDER BY deliveries DESC
+          LIMIT 200
+        `);
+        jsonOk(res, { ok: true, count: rows.length, rows });
+      } catch (e) {
+        console.error('[API] vendor-scorecard:', e.message);
+        jsonErr(res, 500, e.message);
+      }
+      return;
+    }
+
     if (reqUrl === '/api/expense-pos' && method === 'GET') {
       const co = new URL('http://x'+reqUrl+
         (req.url.includes('?')?req.url.slice(req.url.indexOf('?')):'')
