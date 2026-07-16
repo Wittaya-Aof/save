@@ -162,6 +162,25 @@ function typeMeta(t){
 function normType(t){t=(t||'').toLowerCase();if(t==='pk'||t==='fg'||t==='oversea')return t;return 'oversea';}
 function coBadgeSty(co){const kob=co==='KOB';return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:700,background:kob?'#fce7f3':'#ede9fe',color:kob?'#c91253':'#6d28d9'};}
 function billCatLabel(c){return ({freight:'ค่าขนส่ง',clearance:'พิธีการ',insurance:'ประกันภัย',duty:'อากร',vat:'VAT'})[c]||'อื่นๆ';}
+// ป้ายชื่อฟิลด์ภาษาไทยสำหรับ audit log — เดิม auditLog เก็บแค่ชื่อฟิลด์ดิบ (เช่น "cur","freight")
+// ไม่ friendly สำหรับ manager มาดู แปลเฉพาะฟิลด์ที่มีความหมายทางธุรกิจ ที่เหลือ fallback เป็นชื่อดิบ
+const AUDIT_FIELD_LABELS={cur:'สกุลเงิน',amount:'มูลค่า',rate:'อัตราแลกเปลี่ยน',stage:'สถานะ',eta:'ETA',etd:'ETD',
+  actualDate:'วันที่รับเข้าคลังจริง',freight:'ค่าขนส่ง',clearance:'ค่าพิธีการ',insurance:'ค่าประกันภัย',duty:'อากรขาเข้า',
+  vat:'ภาษีมูลค่าเพิ่ม',bl:'เลข BL/AWB',bl_awb:'เลข BL/AWB',container:'ตู้คอนเทนเนอร์',vessel:'เรือ/เที่ยว',
+  forwarder:'ตัวแทนขนส่ง',note:'หมายเหตุ',overReceipt:'รับเกิน',dest:'ปลายทาง',origin:'ต้นทาง',party:'คู่ค้า',
+  courierCo:'บริษัทขนส่ง',containerQty:'จำนวนตู้'};
+// เฉพาะฟิลด์ที่มีความหมายทางธุรกิจ — กรอง internal state ทิ้ง (ขึ้นต้น _ หรืออยู่ในลิสต์กันเอง)
+const AUDIT_SKIP_FIELDS=new Set(['po_so','id','_ts','_board','_edited','_rateIsThb','_synthetic','_splitBase','type','company','mode','seaType','bills']);
+function auditEntrySummary(e){
+  if(e.action==='create')return 'สร้างรายการใหม่';
+  if(e.action==='delete')return 'ลบรายการ';
+  if(e.action==='delete_denied')return 'พยายามลบแต่รหัสผ่านผิด';
+  if(e.action==='replace_all')return 'แทนที่ข้อมูลทั้งชุด';
+  const meaningful=(e.fields||[]).filter(f=>!AUDIT_SKIP_FIELDS.has(f)&&!f.startsWith('_'));
+  if(!meaningful.length)return 'แก้ไข (ไม่มีฟิลด์สำคัญเปลี่ยน)';
+  const labels=meaningful.slice(0,5).map(f=>AUDIT_FIELD_LABELS[f]||f);
+  return 'แก้ไข: '+labels.join(', ')+(meaningful.length>5?' และอีก '+(meaningful.length-5)+' ช่อง':'');
+}
 // สถานะดิบจาก Odoo — แสดงคู่กับสถานะที่ระบบตีความ (stage) เพื่อให้ตรวจสอบไขว้กันได้
 function odooStateLabel(s){return ({draft:'ร่าง (draft)',sent:'ส่ง RFQ แล้ว',to_approve:'รออนุมัติ',purchase:'ยืนยันแล้ว (purchase)',done:'ล็อกแล้ว (done)',cancel:'ยกเลิก'})[s]||s||'—';}
 function receiptStatusLabel(s){return ({pending:'ยังไม่รับของ',partial:'รับบางส่วน',full:'รับครบแล้ว'})[s]||s||'—';}
@@ -270,7 +289,7 @@ class App extends Component {
   constructor(props){
     super(props);
     const w=typeof window!=='undefined'?window.innerWidth:1280;
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyLoading:false,verifyResult:null,verifyError:null};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false};
     this._plan=null; this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   componentDidMount(){
@@ -284,8 +303,26 @@ class App extends Component {
       this.loadData();
     },180000); // ทุก 3 นาที
     this.loadIntegrityReport(false);
+    this.loadAuditLog();
   }
   componentWillUnmount(){window.removeEventListener('resize',this._onResize);clearInterval(this._autoRefresh);}
+  // ประวัติการแก้ไขล่าสุด (สำหรับ manager ดูภาพรวม) — endpoint เดิม /api/tracking/history รองรับอยู่แล้ว
+  // (ไม่ใส่ po = คืนทุกรายการล่าสุด) แค่ยังไม่เคยมี UI ฝั่งนี้เรียกใช้แบบภาพรวมมาก่อน
+  async loadAuditLog(){
+    this.setState({auditLoading:true});
+    try{
+      const r=await fetchTimeout('/api/tracking/history?limit=40',{headers:{Accept:'application/json'}},12000);
+      const j=await r.json();
+      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      this.setState({auditLog:j.entries,auditLoading:false});
+    }catch(e){this.setState({auditLoading:false});}
+  }
+  // เปิด PO/SO ที่คลิกจาก audit log — หาใน shipment ปัจจุบันด้วย poNo แล้วสลับ tab+เปิด detail
+  jumpToAuditEntry(poSo){
+    const found=this.allShipments().find(s=>s.poNo===poSo);
+    if(!found){this.showToast('ไม่พบรายการนี้แล้ว (อาจถูกลบหรือรวมไปแล้ว)','info');return;}
+    this.setState({tab:found._board,detailId:found.id,view:'kanban'});
+  }
   // ผลตรวจสอบข้อมูลอัตโนมัติจาก server (รอบ 24 ชม. + เช็คตอน server เพิ่งเปิด) — force=true = สั่งตรวจใหม่ทันที
   async loadIntegrityReport(force){
     this.setState({integrityLoading:true});
@@ -1152,6 +1189,26 @@ class App extends Component {
                 <div key={i} style={{fontSize:'12px',color:'#1e40af',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'8px 11px'}}>{f.message}</div>
               ))}
               {ir.autoCorrected.length>8&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {ir.autoCorrected.length-8} รายการ</div>}
+            </div>}
+          </div>;
+        })()}
+        {(()=>{
+          const log=this.state.auditLog,loading=this.state.auditLoading;
+          return <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'10px'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'10px'}}>
+              <span style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>ประวัติการแก้ไขล่าสุด</span>
+              <button onClick={()=>this.loadAuditLog()} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังโหลด…':'รีเฟรช'}</button>
+            </div>
+            {!log&&!loading&&<div style={{fontSize:'12px',color:'#a99fa8'}}>ยังไม่มีประวัติ</div>}
+            {log&&log.length===0&&<div style={{fontSize:'12px',color:'#a99fa8'}}>ยังไม่มีการแก้ไขใดๆ</div>}
+            {log&&log.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'2px',maxHeight:'320px',overflowY:'auto'}}>
+              {log.map((e,i)=>(
+                <div key={i} onClick={()=>this.jumpToAuditEntry(e.po_so)} style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'150px 150px 1fr',gap:isNarrow?'2px':'12px',padding:'8px 6px',borderBottom:i<log.length-1?'1px solid #f5f0f3':'none',cursor:'pointer',fontSize:'12px'}}>
+                  <span style={{color:'#a99fa8',whiteSpace:'nowrap'}}>{new Date(e.ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</span>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600,color:'#c91253',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{e.po_so}</span>
+                  <span style={{color:'#5b6371'}}>{auditEntrySummary(e)}</span>
+                </div>
+              ))}
             </div>}
           </div>;
         })()}
