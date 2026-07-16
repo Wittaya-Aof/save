@@ -282,7 +282,7 @@ function sampleExports(){return [
 function defaultForm(board){
   return {board:board||'import',company:'KOB',poNo:'',party:'',type:'oversea',mode:'sea',seaType:'FCL20',containerQty:'',courierCo:'',
     cur:'CNY',amount:'',origin:'',dest:'LAEM CHABANG, THAILAND',
-    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',actualDate:'',freight:'',clearance:'',insurance:'',duty:'',vat:''};
+    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',actualDate:'',freight:'',clearance:'',insurance:'',duty:'',vat:'',expectedCost:''};
 }
 
 class App extends Component {
@@ -454,7 +454,7 @@ class App extends Component {
   applyOne(s,o){
     const m={...s};
     ['origin','dest','bl','container','vessel','forwarder','etd','eta','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
-    ['freight','clearance','insurance','duty','vat','containerQty'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
+    ['freight','clearance','insurance','duty','vat','expectedCost','containerQty'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
     // มูลค่าสินค้า (amount/cur/rate) มาจาก Odoo เสมอสำหรับ PO จริง ห้าม override ทับ —
     // ยกเว้น shipment ที่แยกเอง (_synthetic) ซึ่งไม่มี PO จริงคู่กัน มูลค่าต้องรับจากฟอร์มแก้ไขเท่านั้น
     if(o._synthetic){
@@ -601,7 +601,7 @@ class App extends Component {
 
   startEdit(){
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
-    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',expectedCost:s.expectedCost||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
     this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
@@ -730,7 +730,7 @@ class App extends Component {
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
     // shipment ที่แยกเอง (_synthetic) ไม่มี PO จริงใน Odoo — มูลค่า/สกุลเงินต้องรับจากฟอร์มนี้โดยตรง
     // ของ PO จริง มูลค่ามาจาก Odoo เสมอ ไม่ให้ฟอร์มนี้ทับ (ไม่มีช่องแก้ในฟอร์มอยู่แล้ว ค่าจะเท่าเดิม)
-    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_ts:Date.now(),type:f.board,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_ts:Date.now(),type:f.board,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),expectedCost:num(f.expectedCost),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
     const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
     this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
@@ -1167,6 +1167,9 @@ class App extends Component {
     // PO ที่รับเข้าคลังครบแล้ว (stage สุดท้าย) แต่ยังไม่มีค่าใช้จ่ายนำเข้าบันทึกไว้เลย (costSum=0) — แทบไม่มี
     // PO นำเข้าจริงที่ไม่มีค่าขนส่ง/พิธีการเลย น่าจะเป็นสัญญาณว่าลืมบันทึกมากกว่าไม่มีค่าใช้จ่ายจริง
     const missingCost=impAll.filter(s=>s.stage==='received'&&costSum(s)===0);
+    // เกินงบที่คาดการณ์ไว้เกิน 10% — ใช้ได้เฉพาะ shipment ที่กรอก expectedCost ไว้แล้วเท่านั้น (ผู้ใช้กรอกเอง
+    // เพราะ Odoo ไม่มีประวัติราคาที่เสนอ/ประเมินไว้ก่อนหน้าให้ดึงมาใช้อัตโนมัติ)
+    const overBudget=[...impAll,...expAll].filter(s=>s.expectedCost>0&&(totalCostThb(s)-s.expectedCost)/s.expectedCost>0.1);
 
     // ── สัดส่วนต้นทุนตามปี: Import vs Export ──
     const yearMap={};
@@ -1225,6 +1228,7 @@ class App extends Component {
             {n:curFindings,label:'ความผิดปกติสกุลเงิน',key:'currency'},
             {n:agingCount,label:'PO/SO ค้างนาน',key:'aging'},
             {n:missingCost.length,label:'รับของแล้วแต่ยังไม่บันทึกค่าใช้จ่าย',key:'cost'},
+            {n:overBudget.length,label:'เกินงบที่คาดการณ์ไว้ >10%',key:'budget'},
           ];
           const totalEx=items.reduce((a,x)=>a+x.n,0);
           return <div style={{background:'#fff',border:'1px solid '+(totalEx?'#fecaca':'#e8dde4'),borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'12px'}}>
@@ -1235,7 +1239,7 @@ class App extends Component {
               </div>
               <button onClick={()=>this.exportAccountingReport(qRows)} title="ดาวน์โหลด Excel: Import+Export ทุกรายการ + สรุปรายไตรมาส สำหรับกระทบยอดกับบัญชี" style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#15803d',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}><Ico name="dl" size={13} sw={2}/>Export รายงานบัญชี</button>
             </div>
-            <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'repeat(3,1fr)',gap:isNarrow?'10px':'14px'}}>
+            <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'repeat(4,1fr)',gap:isNarrow?'10px':'14px'}}>
               {items.map(x=>(
                 <div key={x.key} style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 14px',borderRadius:'10px',background:x.n?'#fef2f2':'#f0fdf4',border:'1px solid '+(x.n?'#fecaca':'#bbf7d0')}}>
                   <span style={{fontSize:'20px',fontWeight:700,color:x.n?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{x.n}</span>
@@ -1251,6 +1255,15 @@ class App extends Component {
                 </div>
               ))}
               {missingCost.length>5&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {missingCost.length-5} รายการ</div>}
+            </div>}
+            {overBudget.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'2px'}}>
+              {overBudget.slice(0,5).map(s=>(
+                <div key={s.id} onClick={()=>this.setState({tab:s._board,detailId:s.id,view:'kanban'})} style={{fontSize:'12px',color:'#991b1b',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'8px',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>{s.poNo}</span>
+                  <span>ต้นทุนจริง {fmtBaht(totalCostThb(s))} เทียบคาดการณ์ {fmtBaht(s.expectedCost)}</span>
+                </div>
+              ))}
+              {overBudget.length>5&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {overBudget.length-5} รายการ</div>}
             </div>}
           </div>;
         })()}
@@ -1771,10 +1784,21 @@ class App extends Component {
                 <Row key={l} label={l} value={v}/>
               ))}
             </div>
-            <div style={{display:'flex',justifyContent:'space-between',gap:'12px',background:'#fce7f3',border:'1px solid #fbcfe8',borderRadius:'10px',padding:'12px 14px',marginBottom:'22px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',gap:'12px',background:'#fce7f3',border:'1px solid #fbcfe8',borderRadius:'10px',padding:'12px 14px',marginBottom:sel.expectedCost?'8px':'22px'}}>
               <span style={{fontSize:'13px',fontWeight:600,color:'#14181f'}}>ต้นทุนรวม</span>
               <span style={{fontSize:'14px',fontWeight:700,color:'#c91253',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(total)}</span>
             </div>
+            {(()=>{
+              // เทียบกับต้นทุนที่คาดการณ์ไว้ — ผู้ใช้ต้องกรอกเองตอนแก้ไข (Odoo ไม่มีประวัติราคาที่เสนอ/
+              // ประเมินไว้ก่อนหน้าเก็บไว้ให้) โชว์เฉพาะตอนมีการกรอกไว้แล้วเท่านั้น ไม่บังคับทุก shipment
+              if(!(sel.expectedCost>0))return null;
+              const diff=total-sel.expectedCost,pct=Math.round(diff/sel.expectedCost*100);
+              const over=diff>0;
+              return <div style={{display:'flex',justifyContent:'space-between',gap:'12px',background:over?'#fef2f2':'#f0fdf4',border:'1px solid '+(over?'#fecaca':'#bbf7d0'),borderRadius:'10px',padding:'10px 14px',marginBottom:'22px'}}>
+                <span style={{fontSize:'12px',color:'#5b6371'}}>เทียบต้นทุนที่คาดการณ์ไว้ ({fmtBaht(sel.expectedCost)})</span>
+                <span style={{fontSize:'13px',fontWeight:700,color:over?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{over?'+':''}{fmtBaht(diff)} ({over?'+':''}{pct}%)</span>
+              </div>;
+            })()}
             {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11.5px',color:'#a99fa8',marginBottom:'18px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
             {sel.note&&<div style={{fontSize:'12.5px',color:'#5b6371',background:'#faf6f8',border:'1px solid #f0e9ed',borderRadius:'10px',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}>{sel.note}</div>}
             <SectionTitle>ไทม์ไลน์</SectionTitle>
@@ -1863,6 +1887,10 @@ class App extends Component {
               ))}
             </div>
             {costSrc&&<div style={{fontSize:'11px',color:costSrc.includes('ไม่พบ')?'#b91c1c':'#15803d',marginTop:'4px'}}>{costSrc}</div>}
+            <div style={{marginTop:'16px'}}>
+              <div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>ต้นทุนที่คาดการณ์ไว้ (บาท) — กรอกไว้เทียบกับต้นทุนจริงภายหลัง (ไม่บังคับ)</div>
+              <input value={ef.expectedCost===''||ef.expectedCost==null?'':ef.expectedCost} onChange={e=>this.setEdit('expectedCost',e.target.value)} type="number" placeholder="ไม่ระบุ" style={INP}/>
+            </div>
             <div style={{fontSize:'11px',fontWeight:700,color:'#a99fa8',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ปรับสถานะ</div>
             <div style={{display:'flex',flexWrap:'wrap',gap:'7px'}}>
               {stages.map(stg=>{const active=curStage===stg.key;return(
