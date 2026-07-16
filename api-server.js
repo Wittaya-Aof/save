@@ -1031,6 +1031,51 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── GL reconciliation: PO ที่ Odoo ระบุว่า "invoiced" แล้ว แต่ยอดบิลจริง (posted, สกุลเงินเดียวกับ PO
+    // กันปัญหาเทียบข้ามสกุลเงินแบบที่เจอมาแล้วในเซสชันนี้) ต่างจาก po.amount_total เกิน 15% ──
+    // ขอบเขตเดียวกับ SQL_IMPORT (ผู้ขายต่างประเทศ + หมวด Packaging/Finished/Raw เท่านั้น) กัน PO ประเภท
+    // Expense (ค่าคอมมิชชั่น TikTok ฯลฯ) ที่ไม่เกี่ยวกับแอปนี้เลยปนเข้ามาเป็น noise (ตรวจสอบแล้วจริง)
+    // แยก 2 กลุ่มเพราะ root cause น่าจะต่างกัน: billed=0 (บิลจริงมีแต่ยอด 0 ทั้งที่ Odoo ว่า invoiced แล้ว —
+    // เจอ 64 เคส รูปแบบเดียวกันสม่ำเสมอ น่าจะเป็นเรื่องระบบ ไม่ใช่ error สุ่ม) กับ billed>0 แต่ยังต่างมาก
+    // (น่าจะเป็นการแบ่งจ่ายบางส่วนที่ยังไม่ครบ ไม่ใช่ error เสมอไป) — โชว์แยกกันเพื่อไม่ให้เข้าใจผิดว่าทั้งหมด
+    // เป็นบั๊กเดียวกัน ให้ทีมบัญชีไปตรวจสอบเองว่าเข้าเงื่อนไขไหนที่ผิดจริง
+    if (reqUrl === '/api/gl-reconciliation' && method === 'GET') {
+      try {
+        const rows = await cachedQuery('gl-reconciliation', `
+          SELECT po.name AS po_number, po.amount_total AS po_total, cu.name AS currency,
+            SUM(am.amount_total) AS billed_total,
+            ROUND((SUM(am.amount_total) - po.amount_total) / NULLIF(po.amount_total,0) * 100, 1) AS diff_pct
+          FROM purchase_order po
+          JOIN res_partner rp ON rp.id = po.partner_id
+          LEFT JOIN res_country rco ON rco.id = rp.country_id
+          JOIN res_currency cu ON cu.id = po.currency_id
+          JOIN account_move am ON am.invoice_origin = po.name AND am.state = 'posted' AND am.move_type = 'in_invoice'
+          JOIN res_currency am2c ON am2c.id = am.currency_id AND am2c.id = po.currency_id
+          WHERE po.company_id IN (1, 2) AND po.date_order >= NOW() - INTERVAL '2 years'
+            AND po.invoice_status = 'invoiced'
+            AND (rco.code IS NOT NULL AND rco.code != 'TH' OR (rco.code IS NULL AND cu.name NOT IN ('THB')))
+            AND EXISTS (
+              SELECT 1 FROM purchase_order_line pol
+              JOIN product_product  pp ON pp.id = pol.product_id
+              JOIN product_template pt ON pt.id = pp.product_tmpl_id
+              JOIN product_category pc ON pc.id = pt.categ_id
+              WHERE pol.order_id = po.id AND split_part(pc.complete_name,' / ',1) IN ('Packaging','Finished Goods','Raw Materials')
+            )
+          GROUP BY po.id, po.name, po.amount_total, cu.name
+          HAVING ABS(SUM(am.amount_total) - po.amount_total) / NULLIF(po.amount_total,0) > 0.15
+          ORDER BY ABS((SUM(am.amount_total) - po.amount_total) / NULLIF(po.amount_total,0)) DESC
+          LIMIT 300
+        `);
+        const zeroBilled = rows.filter(r => parseFloat(r.billed_total) === 0);
+        const partialMismatch = rows.filter(r => parseFloat(r.billed_total) > 0);
+        jsonOk(res, { ok: true, zeroBilled, partialMismatch, count: rows.length });
+      } catch (e) {
+        console.error('[API] gl-reconciliation:', e.message);
+        jsonErr(res, 500, e.message);
+      }
+      return;
+    }
+
     if (reqUrl === '/api/expense-pos' && method === 'GET') {
       const co = new URL('http://x'+reqUrl+
         (req.url.includes('?')?req.url.slice(req.url.indexOf('?')):'')

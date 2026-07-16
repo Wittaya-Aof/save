@@ -289,7 +289,7 @@ class App extends Component {
   constructor(props){
     super(props);
     const w=typeof window!=='undefined'?window.innerWidth:1280;
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false};
     this._plan=null; this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   componentDidMount(){
@@ -305,6 +305,17 @@ class App extends Component {
     this.loadIntegrityReport(false);
     this.loadAuditLog();
     this.loadVendorScorecard();
+    this.loadGlReconcile();
+  }
+  // เทียบยอด PO (invoiced ตาม Odoo แล้ว) กับยอดบิลจริงที่ผูกอยู่ — ดู comment เต็มที่ endpoint ฝั่ง server
+  async loadGlReconcile(){
+    this.setState({glReconcileLoading:true});
+    try{
+      const r=await fetchTimeout('/api/gl-reconciliation',{headers:{Accept:'application/json'}},15000);
+      const j=await r.json();
+      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      this.setState({glReconcile:j,glReconcileLoading:false});
+    }catch(e){this.setState({glReconcileLoading:false});}
   }
   // อัตราส่งตรงเวลา+ความล่าช้าเฉลี่ยต่อผู้ขาย จาก stock_picking (scheduled_date เทียบ date_done จริง) —
   // cache ฝั่ง server 1 ชม.ตาม cachedQuery ปกติ ไม่ต้อง force ทุกครั้งที่เปิดหน้า
@@ -1430,6 +1441,42 @@ class App extends Component {
                   </tr>;
                 })}</tbody>
               </table>
+            </div>}
+          </div>;
+        })()}
+        {(()=>{
+          // เทียบยอด PO ที่ Odoo ระบุว่า invoiced แล้ว กับยอดบิลจริงที่ผูกอยู่ (สกุลเงินเดียวกัน กันปัญหาเทียบ
+          // ข้ามสกุลเงิน) — แยก 2 กลุ่มเพราะ root cause น่าจะต่างกัน ไม่ควรเข้าใจว่าเป็นบั๊กเดียวกันหมด
+          const gl=this.state.glReconcile,loading=this.state.glReconcileLoading;
+          const zeroN=gl?gl.zeroBilled.length:0,partN=gl?gl.partialMismatch.length:0;
+          return <div style={{background:'#fff',border:'1px solid '+((zeroN+partN)?'#fde68a':'#e8dde4'),borderRadius:'15px',padding:'20px 22px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>กระทบยอดกับ Odoo (GL Reconciliation)</div>
+            <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>เทียบมูลค่า PO ที่ Odoo ระบุว่า "invoiced" แล้ว กับยอดใบวางบิลจริงที่ผูกไว้ (สกุลเงินเดียวกันเท่านั้น) · ต่างกันเกิน 15%</div>
+            {loading&&!gl&&<div style={{fontSize:'12px',color:'#a99fa8'}}>กำลังโหลด…</div>}
+            {gl&&zeroN===0&&partN===0&&<div style={{fontSize:'12.5px',color:'#15803d',display:'flex',alignItems:'center',gap:'6px'}}><Ico name="check" size={14} sw={2.2}/>ไม่พบ PO ที่ยอดต่างจากบิลจริงเกินเกณฑ์</div>}
+            {gl&&zeroN>0&&<div style={{marginBottom:partN>0?'16px':'0'}}>
+              <div style={{fontSize:'12px',fontWeight:600,color:'#b45309',marginBottom:'8px'}}>⚠ {zeroN} PO — Odoo ระบุว่า invoiced แล้ว แต่ใบวางบิลที่ผูกอยู่มียอด ฿0 ({zeroN>10?'พบรูปแบบนี้ซ้ำเยอะ น่าจะเป็นเรื่องระบบ ':''}ควรถามทีมบัญชีว่าเกิดจากอะไร)</div>
+              <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
+                {gl.zeroBilled.slice(0,6).map(r=>(
+                  <div key={r.po_number} onClick={()=>this.jumpToAuditEntry(r.po_number)} style={{fontSize:'12px',color:'#92400e',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>{r.po_number}</span>
+                    <span>{r.currency} {Math.round(r.po_total).toLocaleString('en-US')} → บิล 0</span>
+                  </div>
+                ))}
+                {zeroN>6&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {zeroN-6} รายการ</div>}
+              </div>
+            </div>}
+            {gl&&partN>0&&<div>
+              <div style={{fontSize:'12px',fontWeight:600,color:'#b45309',marginBottom:'8px'}}>⚠ {partN} PO — ยอดบิลจริงต่างจาก PO เกิน 15% (อาจเป็นการแบ่งจ่ายบางส่วนที่ยังไม่ครบ ควรตรวจสอบ)</div>
+              <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
+                {gl.partialMismatch.slice(0,6).map(r=>(
+                  <div key={r.po_number} onClick={()=>this.jumpToAuditEntry(r.po_number)} style={{fontSize:'12px',color:'#92400e',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:'8px',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>{r.po_number}</span>
+                    <span>{r.currency} {Math.round(r.po_total).toLocaleString('en-US')} → บิล {Math.round(r.billed_total).toLocaleString('en-US')} ({r.diff_pct}%)</span>
+                  </div>
+                ))}
+                {partN>6&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {partN-6} รายการ</div>}
+              </div>
             </div>}
           </div>;
         })()}
