@@ -1559,6 +1559,21 @@ class App extends Component {
                           {full?(verb+'ครบแล้ว'):(verb+'บางส่วน '+Math.round(fulfilled).toLocaleString('en-US')+'/'+Math.round(ordered).toLocaleString('en-US'))}
                         </div>;
                       })()}
+                      {(()=>{
+                        // ต้นทุนลงจอดต่อหน่วย (landed cost per unit) — กระจายค่าขนส่ง/พิธีการ/ประกัน/อากร/VAT
+                        // ของทั้ง PO (costSum) ลงแต่ละ SKU ตามสัดส่วนมูลค่าสินค้า (price_subtotal) ของ line นั้น
+                        // เทียบกับมูลค่าสินค้ารวมทั้ง PO (goods) — ใช้ข้อมูลที่มีอยู่แล้วทั้งหมด ไม่ query เพิ่ม
+                        // เฉพาะฝั่ง import (ต้นทุนนำเข้าเป็นแนวคิดฝั่งซื้อเข้า ไม่ใช่ขายออก) และต้องมี cost บันทึกไว้แล้ว
+                        if(sel._board!=='import')return null;
+                        const extra=costSum(sel);
+                        if(!(extra>0)||!(goods>0))return null;
+                        const lineValueThb=(parseFloat(it.price_subtotal)||0)*(sel.rate||0);
+                        const share=lineValueThb/goods;
+                        const qty=parseFloat(it.qty)||0;
+                        if(!(qty>0))return null;
+                        const perUnit=(lineValueThb+share*extra)/qty;
+                        return <div style={{fontSize:'10.5px',color:'#7a818d',marginTop:'2px'}}>ต้นทุนลงจอด ~฿{perUnit.toLocaleString('en-US',{maximumFractionDigits:2})}/หน่วย</div>;
+                      })()}
                     </div>
                     <div style={{textAlign:'right',flexShrink:0}}>
                       <div style={{fontSize:'12px',fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(it.price_subtotal,sel.cur)}</div>
