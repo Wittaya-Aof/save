@@ -168,7 +168,7 @@ const AUDIT_FIELD_LABELS={cur:'สกุลเงิน',amount:'มูลค่
   actualDate:'วันที่รับเข้าคลังจริง',freight:'ค่าขนส่ง',clearance:'ค่าพิธีการ',insurance:'ค่าประกันภัย',duty:'อากรขาเข้า',
   vat:'ภาษีมูลค่าเพิ่ม',bl:'เลข BL/AWB',bl_awb:'เลข BL/AWB',container:'ตู้คอนเทนเนอร์',vessel:'เรือ/เที่ยว',
   forwarder:'ตัวแทนขนส่ง',note:'หมายเหตุ',overReceipt:'รับเกิน',dest:'ปลายทาง',origin:'ต้นทาง',party:'คู่ค้า',
-  courierCo:'บริษัทขนส่ง',containerQty:'จำนวนตู้'};
+  courierCo:'บริษัทขนส่ง',containerQty:'จำนวนตู้',expectedCost:'ต้นทุนที่คาดการณ์ไว้'};
 // เฉพาะฟิลด์ที่มีความหมายทางธุรกิจ — กรอง internal state ทิ้ง (ขึ้นต้น _ หรืออยู่ในลิสต์กันเอง)
 const AUDIT_SKIP_FIELDS=new Set(['po_so','id','_ts','_board','_edited','_rateIsThb','_synthetic','_splitBase','type','company','mode','seaType','bills']);
 function auditEntrySummary(e){
@@ -449,7 +449,7 @@ class App extends Component {
   // สร้าง shipment object เต็มจาก override ที่เป็นรายการสังเคราะห์ (แยก shipment/สร้างใหม่)
   // แยกจาก mapTracking() เพราะ field ที่ใช้ต่างกัน (cur/amount/rate ตรงตัว ไม่ใช่ convention rate กลับด้านแบบ Odoo)
   mapSynthetic(o){
-    return {_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_synthetic:true};
+    return {_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_synthetic:true};
   }
   applyOne(s,o){
     const m={...s};
@@ -587,12 +587,12 @@ class App extends Component {
     const f=this.state.form;this.setState({saving:true});
     const rate=this.fxRate(f.cur);
     const id='t_'+(f.poNo||('new_'+Date.now()));
-    const ns={_board:f.board,id,poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,_synthetic:true};
+    const ns={_board:f.board,id,poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,expectedCost:parseFloat(f.expectedCost)||0,_synthetic:true};
     this.setState({shipments:[ns].concat(this.allShipments()),creating:false,tab:f.board,view:'kanban'});
     const ov={...this._overrides};
     // _synthetic:true — PO นี้ไม่มีอยู่จริงใน Odoo ต้องให้ applyOverrides() เก็บไว้เป็นรายการเดี่ยวๆ
     // ไม่งั้นตอนโหลดข้อมูลรอบถัดไป (auto-refresh ทุก 3 นาที) รายการนี้จะหายไปเงียบๆ เพราะไม่มี PO ให้ merge ทับ
-    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0};
+    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,expectedCost:parseFloat(f.expectedCost)||0};
     this._overrides=ov;
     try{await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ov[ns.poNo])});this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');}
     catch(e){this.showToast('บันทึกออฟไลน์ชั่วคราว','info');}
@@ -1741,7 +1741,11 @@ class App extends Component {
                         // ของทั้ง PO (costSum) ลงแต่ละ SKU ตามสัดส่วนมูลค่าสินค้า (price_subtotal) ของ line นั้น
                         // เทียบกับมูลค่าสินค้ารวมทั้ง PO (goods) — ใช้ข้อมูลที่มีอยู่แล้วทั้งหมด ไม่ query เพิ่ม
                         // เฉพาะฝั่ง import (ต้นทุนนำเข้าเป็นแนวคิดฝั่งซื้อเข้า ไม่ใช่ขายออก) และต้องมี cost บันทึกไว้แล้ว
-                        if(sel._board!=='import')return null;
+                        // shipment ที่แยกเอง (_splitBase) โหลด poLines จาก PO ต้นฉบับเต็มใบเสมอ (loadPoLines ใช้
+                        // sel._splitBase||sel.poNo) แต่ goods (=sel.amount*sel.rate) เป็นแค่มูลค่าส่วนของล็อตนี้
+                        // เอง — เอา line ทั้งใบมาหารด้วยมูลค่าแค่บางส่วนจะได้สัดส่วนที่ผิด (สูงเกินจริง) ไม่มีทาง
+                        // รู้ว่า line ไหนอยู่ในล็อตนี้จริงๆ (แยกกันแค่ระดับมูลค่ารวม ไม่ได้แยกรายบรรทัด) จึงงดแสดง
+                        if(sel._board!=='import'||sel._splitBase)return null;
                         const extra=costSum(sel);
                         if(!(extra>0)||!(goods>0))return null;
                         const lineValueThb=(parseFloat(it.price_subtotal)||0)*(sel.rate||0);

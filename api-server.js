@@ -1018,7 +1018,9 @@ const server = http.createServer(async (req, res) => {
               JOIN product_category pc ON pc.id = pt.categ_id
               WHERE pol.order_id = po.id AND split_part(pc.complete_name,' / ',1) IN ('Packaging','Finished Goods','Raw Materials')
             )
-          GROUP BY rp.name
+          -- group ด้วย rp.id ด้วย ไม่ใช่แค่ชื่อ — res_partner มีชื่อซ้ำกันจริง (เจอ >20 คู่ตอนตรวจสอบ) ถ้า group
+          -- แค่ชื่ออย่างเดียว ผู้ขายคนละรายที่บังเอิญชื่อซ้ำจะถูกนับรวมยอดส่งตรงเวลาเป็นก้อนเดียวผิดๆ
+          GROUP BY rp.id, rp.name
           HAVING COUNT(*) >= 2
           ORDER BY deliveries DESC
           LIMIT 200
@@ -1043,13 +1045,19 @@ const server = http.createServer(async (req, res) => {
       try {
         const rows = await cachedQuery('gl-reconciliation', `
           SELECT po.name AS po_number, po.amount_total AS po_total, cu.name AS currency,
-            SUM(am.amount_total) AS billed_total,
-            ROUND((SUM(am.amount_total) - po.amount_total) / NULLIF(po.amount_total,0) * 100, 1) AS diff_pct
+            SUM(CASE WHEN am.move_type = 'in_refund' THEN -am.amount_total ELSE am.amount_total END) AS billed_total,
+            ROUND((SUM(CASE WHEN am.move_type = 'in_refund' THEN -am.amount_total ELSE am.amount_total END) - po.amount_total) / NULLIF(po.amount_total,0) * 100, 1) AS diff_pct
           FROM purchase_order po
           JOIN res_partner rp ON rp.id = po.partner_id
           LEFT JOIN res_country rco ON rco.id = rp.country_id
           JOIN res_currency cu ON cu.id = po.currency_id
-          JOIN account_move am ON am.invoice_origin = po.name AND am.state = 'posted' AND am.move_type = 'in_invoice'
+          -- company_id ต้องตรงกันด้วย (ไม่ใช่แค่ invoice_origin=po.name) — เผื่อไว้กัน PO number ชนกันข้ามบริษัท
+          -- (ตรวจสอบจริงแล้วว่า KOB/BTV ไม่มี prefix ชนกัน แต่กันไว้เป็น safety net ไม่เสียอะไร)
+          -- move_type รวม in_refund (ใบลดหนี้) ด้วย กลับเครื่องหมายลบ — เดิมนับแต่ in_invoice ทำให้ PO ที่มี
+          -- ใบลดหนี้หักล้างยอดจริงไปแล้วดูเหมือนยังไม่ตรงทั้งที่จริงๆ ตรงแล้ว (หรือในทางกลับกัน มองข้ามไปเลย
+          -- ถ้า invoice ถูกหักล้างเต็มจำนวนจนเหลือ 0 — พบจริง 2 เคสที่ไม่เคยถูกตรวจพบมาก่อนตอนทดสอบ)
+          JOIN account_move am ON am.invoice_origin = po.name AND am.company_id = po.company_id
+            AND am.state = 'posted' AND am.move_type IN ('in_invoice', 'in_refund')
           JOIN res_currency am2c ON am2c.id = am.currency_id AND am2c.id = po.currency_id
           WHERE po.company_id IN (1, 2) AND po.date_order >= NOW() - INTERVAL '2 years'
             AND po.invoice_status = 'invoiced'
@@ -1062,12 +1070,13 @@ const server = http.createServer(async (req, res) => {
               WHERE pol.order_id = po.id AND split_part(pc.complete_name,' / ',1) IN ('Packaging','Finished Goods','Raw Materials')
             )
           GROUP BY po.id, po.name, po.amount_total, cu.name
-          HAVING ABS(SUM(am.amount_total) - po.amount_total) / NULLIF(po.amount_total,0) > 0.15
-          ORDER BY ABS((SUM(am.amount_total) - po.amount_total) / NULLIF(po.amount_total,0)) DESC
+          HAVING ABS(SUM(CASE WHEN am.move_type = 'in_refund' THEN -am.amount_total ELSE am.amount_total END) - po.amount_total) / NULLIF(po.amount_total,0) > 0.15
+          ORDER BY ABS((SUM(CASE WHEN am.move_type = 'in_refund' THEN -am.amount_total ELSE am.amount_total END) - po.amount_total) / NULLIF(po.amount_total,0)) DESC
           LIMIT 300
         `);
+        // ใช้ !==0 ไม่ใช่ >0 กัน billed_total ติดลบ (ใบลดหนี้เกินยอด invoice) หลุดจากทั้งสองกลุ่มไปเงียบๆ
         const zeroBilled = rows.filter(r => parseFloat(r.billed_total) === 0);
-        const partialMismatch = rows.filter(r => parseFloat(r.billed_total) > 0);
+        const partialMismatch = rows.filter(r => parseFloat(r.billed_total) !== 0);
         jsonOk(res, { ok: true, zeroBilled, partialMismatch, count: rows.length });
       } catch (e) {
         console.error('[API] gl-reconciliation:', e.message);
@@ -1774,10 +1783,21 @@ const server = http.createServer(async (req, res) => {
           const data  = loadTracking();
           const byKey = new Map();
           data.forEach((r, i) => { const k = r.po_so || r.id; if (k != null && !byKey.has(k)) byKey.set(k, i); });
+          // เดิม endpoint นี้ merge JSON จาก client ตรงๆ โดยไม่ตรวจสอบเลย — ฟิลด์ตัวเลขที่ผิดปกติ (ติดลบ/ไม่ใช่
+          // ตัวเลข) จะถูกบันทึกเงียบๆ แล้วไปพังผลรวมต้นทุน/Dashboard ที่อื่นในภายหลังโดยไม่มี error ให้เห็น
+          const NUM_FIELDS = ['freight','clearance','insurance','duty','vat','expectedCost','amount','rate','containerQty'];
+          const invalidField = r => NUM_FIELDS.find(f => {
+            if (r[f] === undefined || r[f] === null || r[f] === '') return false;
+            const n = Number(r[f]);
+            return !Number.isFinite(n) || n < 0;
+          });
           let applied = 0;
+          const rejected = [];
           recs.forEach(r => {
             const key = r && (r.po_so || r.id);
             if (key == null) return;
+            const bad = invalidField(r);
+            if (bad) { rejected.push({ po_so: key, field: bad, value: r[bad] }); return; }
             const idx    = byKey.has(key) ? byKey.get(key) : -1;
             const before = idx >= 0 ? data[idx] : null;
             if (idx >= 0) data[idx] = { ...data[idx], ...r };
@@ -1789,7 +1809,8 @@ const server = http.createServer(async (req, res) => {
             applied++;
           });
           const ok = saveTracking(data);
-          jsonOk(res, { ok, applied, total: data.length });
+          if (rejected.length) console.error('[Upsert] ปฏิเสธค่าที่ผิดปกติ:', JSON.stringify(rejected));
+          jsonOk(res, { ok, applied, total: data.length, rejected });
         } catch(e) { jsonErr(res, 400, e.message); }
       });
       return;
