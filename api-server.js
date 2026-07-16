@@ -118,9 +118,11 @@ const MCP_URL = process.env.MCP_URL, MCP_TOKEN = process.env.MCP_TOKEN;
 // NCOLS*CHUNK = งบ base64 ต่อแถว (24*50=1200 ตัว ≈ 900 byte JSON ดิบ) — เผื่อแถวที่มีชื่อผู้ขาย/สินค้ายาว
 // หรือ currency_rate ทศนิยมเยอะ ไม่ให้ตัดขาดจน parse ไม่ผ่าน (เดิม 16 คอลัมน์ = 600 byte เสี่ยงพอดีกับแถวยาวๆ)
 const MCP_NCOLS = 24, MCP_CHUNK = 50, MCP_PAGE = 120;
-// แถวที่ JSON ใหญ่กว่า import/export (เช่น bill picker ที่มี lines[] ต่อบิล) — วัดจริงแล้ว bill สูงสุด ~1440
-// base64 chars, PO ~512 → 40 คอลัมน์ (2000) มี headroom พอ ทดสอบผ่าน MCP tool จริงแล้วว่าไม่ถูกตัดแนวนอน
-const MCP_NCOLS_WIDE = 40;
+// แถวที่ JSON ใหญ่กว่า import/export (เช่น bill picker ที่มี lines[] ต่อบิล) — บิลหมวด Import Expenses มี
+// line เยอะ วัดจริงแล้วสูงสุด ~3360 base64 chars (ไม่ใช่ 1440 ที่วัดครั้งแรกจาก query แคบ — 14 บิลเคยเกิน 40
+// คอลัมน์แล้วถูกตัดหายเงียบๆ) → 100 คอลัมน์ (5000) มี headroom ~49% ทดสอบผ่าน MCP tool จริงแล้วว่า render
+// ครบ ~67 คอลัมน์ได้ไม่ถูกตัดแนวนอน ถ้าอนาคตมีบิล line เยอะกว่านี้จนเกิน จะเห็น log "[MCP] แถวเสีย" (ไม่หายเงียบ)
+const MCP_NCOLS_WIDE = 100;
 // กันยิง MCP ถี่เกินไปตอน direct หลุดยาว (ทุก request ที่ไม่ force จะเช็คก่อน) — ลองใหม่ได้ทุก 1 นาที/key
 const MCP_RETRY_INTERVAL = 60000;
 // snapshot อายุไม่เกินนี้ถือว่า "ยังสด" แม้รอบนี้จะโดน throttle ไม่ได้ fetch จริง (กัน UI ขึ้นเตือนหลอก)
