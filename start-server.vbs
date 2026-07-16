@@ -6,8 +6,8 @@ Dim sh, Q, nodeExe, script, logf, cmd
 Set sh = CreateObject("WScript.Shell")
 Q = Chr(34)
 nodeExe = Q & "C:\Program Files\nodejs\node.exe" & Q
-script  = Q & "C:\Users\User\logistics-api\api-server.js" & Q
-logf    = Q & "C:\Users\User\logistics-api\server.log" & Q
+script  = Q & "C:\Users\User\Projects\logistics-api\api-server.js" & Q
+logf    = Q & "C:\Users\User\Projects\logistics-api\server.log" & Q
 ' ต้องครอบ quote รอบทั้งคำสั่ง (Q ... Q) เพราะ path node มีช่องว่าง
 ' ไม่งั้น cmd /c จะตัด quote ผิดแล้วมองว่า C:\Program ไม่มีอยู่
 cmd = "cmd /c " & Q & nodeExe & " " & script & " >> " & logf & " 2>&1" & Q
