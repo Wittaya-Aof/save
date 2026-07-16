@@ -1547,6 +1547,18 @@ class App extends Component {
                     <div style={{minWidth:0,flex:1}}>
                       <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.product_name||'—'}</div>
                       <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'2px'}}>{it.sku?('SKU '+it.sku+' · '):''}{Math.round(parseFloat(it.qty)||0).toLocaleString('en-US')} {it.uom||''}</div>
+                      {(()=>{
+                        // qty_fulfilled = qty_received (import) หรือ qty_delivered (export) — เพิ่งเพิ่มจาก server
+                        // แสดงเฉพาะกรณีที่น่าสนใจ: รับ/ส่งบางส่วน หรือเกินจำนวนสั่ง ไม่โชว์ตอนยังไม่รับเลย (0)
+                        // เพื่อไม่ให้รก เพราะ PO ที่ยังอยู่ระหว่างขนส่งเป็นค่าเริ่มต้นปกติอยู่แล้ว
+                        const ordered=parseFloat(it.qty)||0,fulfilled=parseFloat(it.qty_fulfilled);
+                        if(!(fulfilled>0))return null;
+                        const full=fulfilled>=ordered-1e-6;
+                        const verb=sel._board==='export'?'ส่ง':'รับ';
+                        return <div style={{fontSize:'10.5px',fontWeight:600,marginTop:'2px',color:full?'#15803d':'#c2410c'}}>
+                          {full?(verb+'ครบแล้ว'):(verb+'บางส่วน '+Math.round(fulfilled).toLocaleString('en-US')+'/'+Math.round(ordered).toLocaleString('en-US'))}
+                        </div>;
+                      })()}
                     </div>
                     <div style={{textAlign:'right',flexShrink:0}}>
                       <div style={{fontSize:'12px',fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(it.price_subtotal,sel.cur)}</div>

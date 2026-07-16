@@ -677,7 +677,8 @@ function poLineSelectBody(board, ponameSql) {
       COALESCE(pt.name->>'en_US', pt.name->>'th_TH', sol.name) AS product_name,
       pt.default_code AS sku, sol.product_uom_qty AS qty,
       COALESCE(uom.name->>'en_US', uom.name->>'th_TH') AS uom,
-      sol.price_unit, sol.price_subtotal, sol.price_total
+      sol.price_unit, sol.price_subtotal, sol.price_total,
+      sol.qty_delivered AS qty_fulfilled, sol.qty_invoiced
     FROM sale_order_line sol
     JOIN sale_order so ON so.id = sol.order_id
     LEFT JOIN product_product pp ON pp.id = sol.product_id
@@ -688,7 +689,10 @@ function poLineSelectBody(board, ponameSql) {
       COALESCE(pt.name->>'en_US', pt.name->>'th_TH', pol.name) AS product_name,
       pt.default_code AS sku, pol.product_qty AS qty,
       COALESCE(uom.name->>'en_US', uom.name->>'th_TH') AS uom,
-      pol.price_unit, pol.price_subtotal, pol.price_total
+      pol.price_unit, pol.price_subtotal, pol.price_total,
+      -- qty_received มีให้ตรงบน purchase_order_line อยู่แล้ว (ไม่ต้อง join stock_move) — ใช้ติดตามรับสินค้า
+      -- บางส่วน (partial receipt) ต่อ SKU ให้ manager เห็นว่า PO ไหนรับของไม่ครบยัง
+      pol.qty_received AS qty_fulfilled, pol.qty_invoiced
     FROM purchase_order_line pol
     JOIN purchase_order po ON po.id = pol.order_id
     LEFT JOIN product_product pp ON pp.id = pol.product_id
