@@ -522,128 +522,147 @@ async function odooKw(model, method, args = [], kwargs = {}) {
 // ─── Import PO query: Oversea only (country ≠ TH) ──────────────────────────
 // รวมเฉพาะ vendor ต่างประเทศ (Oversea, PK, FG)
 // ไม่รวม Domestic (country = TH / currency = THB)
+// currency_rate self-heal (ดึง rate จากใบวางบิลจริงแทนตอนที่ po/so.currency_rate เพี้ยน) เดิมทำเป็น
+// correlated subquery ตรงใน SELECT list ของแถวหลัก — ทำงานถูกแค่ตอน trigger เงื่อนไขน้อย/ไม่ trigger เลย
+// (import เจอ 1/317, export ควรเจอ 0/105) แต่กลับพัง query ทั้งตัว: **แค่การมี correlated subquery อยู่ใน
+// SELECT list ก็ทำให้ query planner ทิ้ง Memoize-based nested loop ที่มีประสิทธิภาพ (cache hit ~100%) ไปเลือก
+// plan ที่ cost ประมาณ 500 พันล้าน** (ยืนยันด้วย EXPLAIN จริง) ไม่ว่า subquery จะได้ execute จริงกี่ครั้งก็ตาม
+// — เป็นข้อจำกัดของ Postgres planner ไม่ใช่แค่เรื่อง "รันน้อยแปลว่าเร็ว" แก้โดยแยกงานซ่อม rate ออกเป็น CTE
+// ต่างหาก (fixed_rates) ที่ join กับ base หลัง base ถูก query เสร็จแล้ว — base scan ยังใช้ plan เดิมที่เร็วอยู่
+// ส่วน fixed_rates สแกน account_move (4 ล้านแถว ไม่มี index บน invoice_origin) แค่ "ครั้งเดียว" ไม่ว่าจะมี
+// แถวเพี้ยนกี่แถว (ต่างจาก correlated subquery ที่สแกนซ้ำต่อแถว) วัดจริงผ่าน MCP: 2.2-4s ทุกครั้ง (จากเดิม timeout)
 const SQL_IMPORT = `
-  SELECT
-    po.id,
-    po.name                   AS po_number,
-    po.company_id,
-    rc.name                   AS company_name,
-    CASE po.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
-    rp.name                   AS supplier,
-    po.state                  AS odoo_state,
-    po.date_order,
-    po.date_planned,
-    po.amount_total,
-    cu.name                   AS currency,
-    -- po.currency_rate ไม่ได้อัปเดตตามใบวางบิลที่สร้างทีหลัง PO (พบจริง: BTVPO2506-01022 ค้างเป็น 1
-    -- ทั้งที่ใบวางบิลจริงมี rate ถูกต้อง 0.2174) — เฉพาะตอน po.currency_rate ผิดปกติ (หาย/เป็น 1 พอดี)
-    -- ให้ดึง rate จากใบวางบิลจริง (account_move) ที่ผูกกับ PO นี้แทน ไม่กระทบ PO ปกติที่เหลือ
-    CASE
-      WHEN po.currency_rate IS NULL OR po.currency_rate <= 0 OR ABS(po.currency_rate - 1) < 1e-9
-      THEN COALESCE(
-        (SELECT am.invoice_currency_rate FROM account_move am
-         WHERE am.invoice_origin = po.name AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
-         ORDER BY am.invoice_date DESC LIMIT 1),
-        po.currency_rate
+  WITH base AS (
+    SELECT
+      po.id,
+      po.name                   AS po_number,
+      po.company_id,
+      rc.name                   AS company_name,
+      CASE po.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
+      rp.name                   AS supplier,
+      po.state                  AS odoo_state,
+      po.date_order,
+      po.date_planned,
+      po.amount_total,
+      cu.name                   AS currency,
+      po.currency_rate          AS raw_rate,
+      po.receipt_status,
+      po.origin,
+      po.notes,
+      'oversea'::text           AS source_type,
+      cat.top_cat               AS goods_category
+    FROM  purchase_order po
+    JOIN  res_company    rc  ON rc.id  = po.company_id
+    JOIN  res_partner    rp  ON rp.id  = po.partner_id
+    JOIN  res_currency   cu  ON cu.id  = po.currency_id
+    LEFT JOIN res_country rco ON rco.id = rp.country_id
+    -- Dominant product-category (by line value) drives PK / FG / Oversea classification
+    LEFT JOIN LATERAL (
+      SELECT split_part(pc.complete_name, ' / ', 1) AS top_cat
+      FROM purchase_order_line pol
+      JOIN product_product  pp ON pp.id = pol.product_id
+      JOIN product_template pt ON pt.id = pp.product_tmpl_id
+      JOIN product_category pc ON pc.id = pt.categ_id
+      WHERE pol.order_id = po.id
+      GROUP BY 1
+      ORDER BY SUM(pol.price_subtotal) DESC NULLS LAST
+      LIMIT 1
+    ) cat ON true
+    WHERE po.company_id IN (1, 2)
+      AND po.state NOT IN ('cancel')
+      AND po.date_order >= NOW() - INTERVAL '2 years'
+      AND (
+        rco.code IS NOT NULL AND rco.code != 'TH'
+        OR (rco.code IS NULL AND cu.name NOT IN ('THB'))
       )
-      ELSE po.currency_rate
-    END                       AS currency_rate,
-    -- ธงบอกว่าแถวนี้ "ซ่อมอัตโนมัติ" (ค่าที่ Odoo เพี้ยน แต่เราดึง rate จากใบวางบิลมาแทนได้) — โชว์เป็นข้อมูล
+      -- Actual imported goods only — Packaging / Finished Goods / Raw Materials.
+      -- Excludes Expense, KOL, POSM, Semi-Finished, CMN-EXP and category-less POs.
+      AND cat.top_cat IN ('Packaging', 'Finished Goods', 'Raw Materials')
+    ORDER BY po.date_order DESC
+    LIMIT 2000
+  ),
+  -- ต้องกัน currency<>'THB' ก่อนเสมอ — PO ที่ผู้ขายต่างประเทศแต่ตกลงจ่ายเป็น THB (rate=1 ถูกต้องอยู่แล้ว
+  -- ไม่ต้องแปลง) ไม่ควรถูกนับเป็น "เพี้ยน" (เจอจริงฝั่ง export 17/105 แถวเป็นแบบนี้ ก่อนแก้ 16 ก.ค. 2569)
+  bad_names AS (
+    SELECT po_number FROM base
+    WHERE currency <> 'THB' AND (raw_rate IS NULL OR raw_rate <= 0 OR ABS(raw_rate - 1) < 1e-9)
+  ),
+  fixed_rates AS (
+    SELECT DISTINCT ON (am.invoice_origin) am.invoice_origin, am.invoice_currency_rate
+    FROM account_move am
+    WHERE am.invoice_origin IN (SELECT po_number FROM bad_names)
+      AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
+    ORDER BY am.invoice_origin, am.invoice_date DESC
+  )
+  SELECT
+    base.id, base.po_number, base.company_id, base.company_name, base.company_code,
+    base.supplier, base.odoo_state, base.date_order, base.date_planned, base.amount_total,
+    base.currency,
+    COALESCE(fixed_rates.invoice_currency_rate, base.raw_rate) AS currency_rate,
+    -- ธงบอกว่าแถวนี้ "ซ่อมอัตโนมัติ" (ค่าที่ Odoo เพี้ยน แต่ดึง rate จากใบวางบิลมาแทนได้) — โชว์เป็นข้อมูล
     -- ไม่ใช่ปัญหา เพื่อไม่ให้บดบังความจริงว่า Odoo ต้นทางยังต้องแก้ (ดู runIntegrityCheck)
-    CASE
-      WHEN (po.currency_rate IS NULL OR po.currency_rate <= 0 OR ABS(po.currency_rate - 1) < 1e-9)
-       AND cu.name <> 'THB'
-       AND (SELECT am.invoice_currency_rate FROM account_move am
-            WHERE am.invoice_origin = po.name AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
-            ORDER BY am.invoice_date DESC LIMIT 1) IS NOT NULL
-      THEN 1 ELSE 0
-    END                       AS rate_auto_corrected,
-    po.receipt_status,
-    po.origin,
-    po.notes,
-    'oversea'::text           AS source_type,
-    cat.top_cat               AS goods_category
-  FROM  purchase_order po
-  JOIN  res_company    rc  ON rc.id  = po.company_id
-  JOIN  res_partner    rp  ON rp.id  = po.partner_id
-  JOIN  res_currency   cu  ON cu.id  = po.currency_id
-  LEFT JOIN res_country rco ON rco.id = rp.country_id
-  -- Dominant product-category (by line value) drives PK / FG / Oversea classification
-  LEFT JOIN LATERAL (
-    SELECT split_part(pc.complete_name, ' / ', 1) AS top_cat
-    FROM purchase_order_line pol
-    JOIN product_product  pp ON pp.id = pol.product_id
-    JOIN product_template pt ON pt.id = pp.product_tmpl_id
-    JOIN product_category pc ON pc.id = pt.categ_id
-    WHERE pol.order_id = po.id
-    GROUP BY 1
-    ORDER BY SUM(pol.price_subtotal) DESC NULLS LAST
-    LIMIT 1
-  ) cat ON true
-  WHERE po.company_id IN (1, 2)
-    AND po.state NOT IN ('cancel')
-    AND po.date_order >= NOW() - INTERVAL '2 years'
-    AND (
-      rco.code IS NOT NULL AND rco.code != 'TH'
-      OR (rco.code IS NULL AND cu.name NOT IN ('THB'))
-    )
-    -- Actual imported goods only — Packaging / Finished Goods / Raw Materials.
-    -- Excludes Expense, KOL, POSM, Semi-Finished, CMN-EXP and category-less POs.
-    AND cat.top_cat IN ('Packaging', 'Finished Goods', 'Raw Materials')
-  ORDER BY po.date_order DESC
-  LIMIT 2000
+    CASE WHEN fixed_rates.invoice_currency_rate IS NOT NULL THEN 1 ELSE 0 END AS rate_auto_corrected,
+    base.receipt_status, base.origin, base.notes, base.source_type, base.goods_category
+  FROM base
+  LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.po_number
+  ORDER BY base.date_order DESC
 `;
 
 const SQL_EXPORT = `
-  SELECT
-    so.id,
-    so.name                   AS so_number,
-    so.company_id,
-    rc.name                   AS company_name,
-    CASE so.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
-    rp.name                   AS customer,
-    so.state                  AS odoo_state,
-    so.date_order,
-    so.amount_total,
-    cu.name                   AS currency,
-    -- ป้องกันเคสเดียวกับฝั่ง PO (ดู SQL_IMPORT) แม้ยังไม่เจอจริงฝั่ง export ก็ตาม — กันไว้ก่อน
-    CASE
-      WHEN so.currency_rate IS NULL OR so.currency_rate <= 0 OR ABS(so.currency_rate - 1) < 1e-9
-      THEN COALESCE(
-        (SELECT am.invoice_currency_rate FROM account_move am
-         WHERE am.invoice_origin = so.name AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
-         ORDER BY am.invoice_date DESC LIMIT 1),
-        so.currency_rate
+  WITH base AS (
+    SELECT
+      so.id,
+      so.name                   AS so_number,
+      so.company_id,
+      rc.name                   AS company_name,
+      CASE so.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
+      rp.name                   AS customer,
+      so.state                  AS odoo_state,
+      so.date_order,
+      so.amount_total,
+      cu.name                   AS currency,
+      so.currency_rate          AS raw_rate,
+      so.delivery_status,
+      so.invoice_status,
+      so.origin,
+      rco.code                  AS country_code,
+      'oversea'::text           AS source_type
+    FROM  sale_order    so
+    JOIN  res_company   rc  ON rc.id  = so.company_id
+    JOIN  res_partner   rp  ON rp.id  = so.partner_id
+    JOIN  res_currency  cu  ON cu.id  = so.currency_id
+    LEFT JOIN res_country rco ON rco.id = rp.country_id
+    WHERE so.company_id IN (1, 2)
+      AND so.state NOT IN ('cancel', 'draft')
+      AND so.date_order >= NOW() - INTERVAL '2 years'
+      AND (
+        rco.code IS NOT NULL AND rco.code != 'TH'
+        OR (rco.code IS NULL AND cu.name NOT IN ('THB'))
       )
-      ELSE so.currency_rate
-    END                       AS currency_rate,
-    CASE
-      WHEN (so.currency_rate IS NULL OR so.currency_rate <= 0 OR ABS(so.currency_rate - 1) < 1e-9)
-       AND cu.name <> 'THB'
-       AND (SELECT am.invoice_currency_rate FROM account_move am
-            WHERE am.invoice_origin = so.name AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
-            ORDER BY am.invoice_date DESC LIMIT 1) IS NOT NULL
-      THEN 1 ELSE 0
-    END                       AS rate_auto_corrected,
-    so.delivery_status,
-    so.invoice_status,
-    so.origin,
-    rco.code                  AS country_code,
-    'oversea'::text           AS source_type
-  FROM  sale_order    so
-  JOIN  res_company   rc  ON rc.id  = so.company_id
-  JOIN  res_partner   rp  ON rp.id  = so.partner_id
-  JOIN  res_currency  cu  ON cu.id  = so.currency_id
-  LEFT JOIN res_country rco ON rco.id = rp.country_id
-  WHERE so.company_id IN (1, 2)
-    AND so.state NOT IN ('cancel', 'draft')
-    AND so.date_order >= NOW() - INTERVAL '2 years'
-    AND (
-      rco.code IS NOT NULL AND rco.code != 'TH'
-      OR (rco.code IS NULL AND cu.name NOT IN ('THB'))
-    )
-  ORDER BY so.date_order DESC
-  LIMIT 500
+    ORDER BY so.date_order DESC
+    LIMIT 500
+  ),
+  bad_names AS (
+    SELECT so_number FROM base
+    WHERE currency <> 'THB' AND (raw_rate IS NULL OR raw_rate <= 0 OR ABS(raw_rate - 1) < 1e-9)
+  ),
+  fixed_rates AS (
+    SELECT DISTINCT ON (am.invoice_origin) am.invoice_origin, am.invoice_currency_rate
+    FROM account_move am
+    WHERE am.invoice_origin IN (SELECT so_number FROM bad_names)
+      AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
+    ORDER BY am.invoice_origin, am.invoice_date DESC
+  )
+  SELECT
+    base.id, base.so_number, base.company_id, base.company_name, base.company_code,
+    base.customer, base.odoo_state, base.date_order, base.amount_total,
+    base.currency,
+    COALESCE(fixed_rates.invoice_currency_rate, base.raw_rate) AS currency_rate,
+    CASE WHEN fixed_rates.invoice_currency_rate IS NOT NULL THEN 1 ELSE 0 END AS rate_auto_corrected,
+    base.delivery_status, base.invoice_status, base.origin, base.country_code, base.source_type
+  FROM base
+  LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.so_number
+  ORDER BY base.date_order DESC
 `;
 
 // ─── รายการสินค้าใน PO/SO — ดึงตามต้องการตอนเปิดดูรายละเอียด ไม่ query ทุก PO ล่วงหน้า ──────
