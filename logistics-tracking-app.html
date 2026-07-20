@@ -544,7 +544,7 @@ class App extends Component {
     // ดึง goods_category มาอยู่แล้ว (r.goods_category) แค่ไม่เคยถูกอ่านใช้ ทำให้ทุก import PO ถูกจัดเป็น
     // 'oversea' หมดโดยไม่สนใจหมวดจริง — ปุ่มกรอง Packaging/Finished ในหน้า Import Board เลยกรองไม่ได้ผลจริง
     const catType=r.goods_category==='Packaging'?'pk':r.goods_category==='Finished Goods'?'fg':'oversea';
-    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',type:normType(catType),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
+    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',partyId:r.partner_id||null,type:normType(catType),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
       _odooState:r.odoo_state||'',_receiptStatus:r.receipt_status||r.delivery_status||''};
   }
   mapTracking(r){
@@ -1129,9 +1129,16 @@ class App extends Component {
     const tstat=transitStats(impAll);
 
     // ── Top ผู้ขาย/ลูกค้าตามมูลค่า — ใช้ totalCostThb (มูลค่าสินค้า+ต้นทุนนำเข้า แปลงเป็นบาท) เหมือนตารางต้นทุน/กราฟไตรมาสด้านล่าง เพื่อให้ตัวเลขสอดคล้องกันทั้งหน้า ──
+    // key ด้วย partyId (res_partner.id) เมื่อมี — กัน "ผู้ขายคนละรายชื่อซ้ำกัน" ถูกนับรวมยอดผิด (res_partner
+    // มี >20 คู่ชื่อซ้ำจริง ดู comment /api/vendor-scorecard) shipment ที่สร้างเอง/แก้เอง (_synthetic) ไม่มี
+    // partyId จริงจาก Odoo — fallback ไปกลุ่มตามชื่อเหมือนเดิมสำหรับกรณีนั้น
     const topByParty=(list)=>{
       const map={};
-      list.forEach(s=>{const k=s.party||'—';const e=map[k]=map[k]||{party:k,value:0,count:0};e.value+=totalCostThb(s);e.count+=1;});
+      list.forEach(s=>{
+        const k=s.partyId!=null?('id:'+s.partyId):('name:'+(s.party||'—'));
+        const e=map[k]=map[k]||{party:s.party||'—',partyId:s.partyId!=null?s.partyId:null,value:0,count:0};
+        e.value+=totalCostThb(s);e.count+=1;
+      });
       return Object.values(map).sort((a,b)=>b.value-a.value).slice(0,10);
     };
     const topVendors=topByParty(impAll);
@@ -1416,7 +1423,7 @@ class App extends Component {
                 <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',marginBottom:'8px'}}>{col.title}</div>
                 {col.rows.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba',padding:'10px 0'}}>ไม่มีข้อมูล</div>}
                 {col.rows.map((r,i)=>(
-                  <div key={r.party} style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderTop:i>0?'1px solid #f0e9ed':'none'}}>
+                  <div key={r.partyId!=null?r.partyId:r.party} style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderTop:i>0?'1px solid #f0e9ed':'none'}}>
                     <span style={{width:'18px',fontSize:'11px',fontWeight:700,color:'#a99fa8',flexShrink:0}}>{i+1}</span>
                     <span style={{flex:1,fontSize:'12.5px',color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={r.party}>{r.party}</span>
                     <span style={{fontSize:'11px',color:'#a99fa8',flexShrink:0,whiteSpace:'nowrap'}}>{r.count} รายการ</span>
@@ -1431,11 +1438,15 @@ class App extends Component {
           // ผสานผลตรงเวลา (จาก server, stock_picking) กับมูลค่ารวม (client-side, ใช้ค่าเดียวกับ topVendors
           // ด้านบนเพื่อความสอดคล้อง) เข้าด้วยกันด้วยชื่อผู้ขาย — เรียงตามมูลค่ารวมมากสุดก่อน (ผู้ขายที่สำคัญที่สุด)
           const sc=this.state.vendorScorecard,loading=this.state.vendorScorecardLoading;
-          const spendMap={};topVendors.forEach(v=>{spendMap[v.party]=v;});
+          // key ด้วย vendor_id เมื่อมี (ตรงกับ partyId ของ topByParty ด้านบน) — กันผู้ขายชื่อซ้ำกันจับคู่ spend ผิดคน
+          const spendMap={};topVendors.forEach(v=>{spendMap[v.partyId!=null?('id:'+v.partyId):('name:'+v.party)]=v;});
           // topVendors ตัดไว้แค่ 10 อันดับ — ผู้ขายใน scorecard ที่ไม่ติด top 10 มูลค่าจะไม่มี spend row คู่กัน
           // (ยังโชว์ค่าตรงเวลาได้ตามปกติ แค่ไม่มีคอลัมน์มูลค่า)
-          const merged=(sc||[]).map(v=>({...v,spend:spendMap[v.vendor]?spendMap[v.vendor].value:null}))
-            .sort((a,b)=>(b.spend||0)-(a.spend||0));
+          const merged=(sc||[]).map(v=>{
+            const key=v.vendor_id!=null?('id:'+v.vendor_id):('name:'+v.vendor);
+            const m=spendMap[key];
+            return {...v,spend:m?m.value:null};
+          }).sort((a,b)=>(b.spend||0)-(a.spend||0));
           return <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
             <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Vendor Scorecard — อัตราส่งตรงเวลา</div>
             <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>เทียบ scheduled_date กับวันที่ส่งจริงจาก Odoo · เฉพาะผู้ขายที่มีข้อมูลอย่างน้อย 2 ครั้ง</div>
@@ -1449,7 +1460,7 @@ class App extends Component {
                 <tbody>{merged.slice(0,15).map((v,i)=>{
                   const rate=v.deliveries>0?Math.round(v.on_time/v.deliveries*100):0;
                   const delay=parseFloat(v.avg_delay_days)||0;
-                  return <tr key={v.vendor} style={{borderTop:i?'1px solid #f0e9ed':'none'}}>
+                  return <tr key={v.vendor_id!=null?v.vendor_id:v.vendor} style={{borderTop:i?'1px solid #f0e9ed':'none'}}>
                     <td style={{padding:'9px 12px',color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} title={v.vendor}>{v.vendor}</td>
                     <td style={{padding:'9px 12px',textAlign:'right',color:'#5b6371'}}>{v.deliveries}</td>
                     <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:rate>=80?'#15803d':rate>=50?'#c2410c':'#dc2626'}}>{rate}%</td>

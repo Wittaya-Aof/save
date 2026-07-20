@@ -12,7 +12,7 @@ const IMPORT_INNER = `
   WITH base AS (
     SELECT po.id, po.name AS po_number,
       CASE po.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
-      rp.name AS supplier, po.state AS odoo_state,
+      rp.id AS partner_id, rp.name AS supplier, po.state AS odoo_state,
       po.date_order AS raw_date_order, po.date_planned AS raw_date_planned,
       po.amount_total, cu.name AS currency, po.currency_rate AS raw_rate,
       po.receipt_status, po.origin, cat.top_cat AS goods_category
@@ -47,7 +47,7 @@ const IMPORT_INNER = `
       AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
     ORDER BY am.invoice_origin, am.invoice_date DESC
   )
-  SELECT base.id, base.po_number, base.company_code, base.supplier, base.odoo_state,
+  SELECT base.id, base.po_number, base.company_code, base.partner_id, base.supplier, base.odoo_state,
     to_char(base.raw_date_order,'YYYY-MM-DD') AS date_order,
     to_char(base.raw_date_planned,'YYYY-MM-DD') AS date_planned,
     base.amount_total, base.currency,
@@ -61,7 +61,7 @@ const EXPORT_INNER = `
   WITH base AS (
     SELECT so.id, so.name AS so_number,
       CASE so.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
-      rp.name AS customer, so.state AS odoo_state,
+      rp.id AS partner_id, rp.name AS customer, so.state AS odoo_state,
       so.date_order AS raw_date_order,
       so.amount_total, cu.name AS currency, so.currency_rate AS raw_rate,
       so.delivery_status, so.origin, rco.code AS country_code
@@ -85,7 +85,7 @@ const EXPORT_INNER = `
       AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
     ORDER BY am.invoice_origin, am.invoice_date DESC
   )
-  SELECT base.id, base.so_number, base.company_code, base.customer, base.odoo_state,
+  SELECT base.id, base.so_number, base.company_code, base.partner_id, base.customer, base.odoo_state,
     to_char(base.raw_date_order,'YYYY-MM-DD') AS date_order,
     base.amount_total, base.currency,
     COALESCE(fixed_rates.invoice_currency_rate, base.raw_rate) AS currency_rate,

@@ -539,6 +539,7 @@ const SQL_IMPORT = `
       po.company_id,
       rc.name                   AS company_name,
       CASE po.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
+      rp.id                     AS partner_id,
       rp.name                   AS supplier,
       po.state                  AS odoo_state,
       po.date_order,
@@ -596,7 +597,7 @@ const SQL_IMPORT = `
   )
   SELECT
     base.id, base.po_number, base.company_id, base.company_name, base.company_code,
-    base.supplier, base.odoo_state, base.date_order, base.date_planned, base.amount_total,
+    base.partner_id, base.supplier, base.odoo_state, base.date_order, base.date_planned, base.amount_total,
     base.currency,
     COALESCE(fixed_rates.invoice_currency_rate, base.raw_rate) AS currency_rate,
     -- ธงบอกว่าแถวนี้ "ซ่อมอัตโนมัติ" (ค่าที่ Odoo เพี้ยน แต่ดึง rate จากใบวางบิลมาแทนได้) — โชว์เป็นข้อมูล
@@ -616,6 +617,7 @@ const SQL_EXPORT = `
       so.company_id,
       rc.name                   AS company_name,
       CASE so.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
+      rp.id                     AS partner_id,
       rp.name                   AS customer,
       so.state                  AS odoo_state,
       so.date_order,
@@ -655,7 +657,7 @@ const SQL_EXPORT = `
   )
   SELECT
     base.id, base.so_number, base.company_id, base.company_name, base.company_code,
-    base.customer, base.odoo_state, base.date_order, base.amount_total,
+    base.partner_id, base.customer, base.odoo_state, base.date_order, base.amount_total,
     base.currency,
     COALESCE(fixed_rates.invoice_currency_rate, base.raw_rate) AS currency_rate,
     CASE WHEN fixed_rates.invoice_currency_rate IS NOT NULL THEN 1 ELSE 0 END AS rate_auto_corrected,
@@ -999,7 +1001,7 @@ const server = http.createServer(async (req, res) => {
     if (reqUrl === '/api/vendor-scorecard' && method === 'GET') {
       try {
         const rows = await cachedQuery('vendor-scorecard', `
-          SELECT rp.name AS vendor, COUNT(*) AS deliveries,
+          SELECT rp.id AS vendor_id, rp.name AS vendor, COUNT(*) AS deliveries,
             COUNT(*) FILTER (WHERE sp.date_done <= sp.scheduled_date) AS on_time,
             ROUND(AVG(EXTRACT(EPOCH FROM (sp.date_done - sp.scheduled_date))/86400)::numeric, 1) AS avg_delay_days
           FROM stock_picking sp
@@ -1342,6 +1344,7 @@ const server = http.createServer(async (req, res) => {
       const billSql = (search) => `
         SELECT
           am.id,
+          am.move_type::text        AS move_type,
           am.name::text             AS bill_name,
           (am.invoice_origin)::text AS invoice_origin,
           am.ref::text,
@@ -1363,7 +1366,10 @@ const server = http.createServer(async (req, res) => {
         ) aml_s ON true
         WHERE am.company_id IN (1,2)
           ${coFilter}
-          AND am.move_type = 'in_invoice'
+          -- รวม in_refund (ใบลดหนี้) ด้วย กลับเครื่องหมายลบตอนประมวลผล — เดิมนับแต่ in_invoice ทำให้ผู้ใช้
+          -- เห็นแต่ยอดเต็มโดยไม่รู้ว่ามีใบลดหนี้หักล้างอยู่ (บั๊กรูปแบบเดียวกับที่เจอใน gl-reconciliation:
+          -- ยืนยันแล้วว่ามี in_refund จริง 2 ใบในขอบเขตนี้ ณ วันที่ตรวจสอบ)
+          AND am.move_type IN ('in_invoice', 'in_refund')
           AND am.state = 'posted'
           AND am.invoice_date >= NOW() - INTERVAL '${months} months'
           AND (
@@ -1491,19 +1497,24 @@ const server = http.createServer(async (req, res) => {
         // กับ bug currency_rate ของ export SO ที่แก้ไปก่อนหน้านี้ แต่เป็น "โรค" เดียวกัน: ดึงยอดสกุลเงินมาโดยไม่แปลง)
         const thbRate = r => { if (!r.currency || r.currency === 'THB') return 1; const v = parseFloat(r.rate_thb); return v > 0 ? v : 1; };
         billRows.forEach(r => {
-          const fx = thbRate(r);
-          const origAmount = parseFloat(r.amount_total) || 0;
+          const fx   = thbRate(r);
+          // ใบลดหนี้ (in_refund) เก็บยอดใน Odoo เป็นบวกเสมอ (ความหมาย "เครดิต" มาจาก move_type ไม่ใช่เครื่องหมาย)
+          // ต้องกลับเครื่องหมายลบเองตอนแสดงผล ไม่งั้นใบลดหนี้จะดูเหมือนบิลจ่ายเพิ่มอีกใบ
+          const sign = r.move_type === 'in_refund' ? -1 : 1;
+          const origAmount = (parseFloat(r.amount_total) || 0) * sign;
           const total = origAmount * fx;
-          const tax   = (parseFloat(r.amount_tax) || 0) * fx;
+          const tax   = (parseFloat(r.amount_tax) || 0) * fx * sign;
           const lines = Array.isArray(r.lines) ? r.lines : [];
           const text  = lines.map(l => l.name || '').join(' ');
           const c = zero5();
           // ลองแยกตาม line ก่อน — ใช้ได้เมื่อยอด line บวกรวมแล้วเป็นยอดจริง (ไม่หักล้างกัน)
+          // เฉพาะใบที่ total ไม่ติดลบ (ไม่ใช่ in_refund) — Math.max(0,...) ด้านล่างสมมติว่าแต่ละหมวดไม่ติดลบ
+          // สมมติฐานนี้ใช้ไม่ได้กับใบลดหนี้ (total ติดลบทั้งใบ) เลยส่งใบลดหนี้ไปทาง wholeBillCat แทนเสมอ
           let lineTotal = 0;
           const lineSums = zero5();
-          lines.forEach(l => { const a = (parseFloat(l.amount) || 0) * fx; lineTotal += a; lineSums[lineCat(l.name)] += a; });
+          lines.forEach(l => { const a = (parseFloat(l.amount) || 0) * fx * sign; lineTotal += a; lineSums[lineCat(l.name)] += a; });
           let cat;
-          if (lines.length && lineTotal > total * 0.5) {
+          if (lines.length && total >= 0 && lineTotal > total * 0.5) {
             // scale ยอด line (ก่อน VAT) ให้เท่ายอดจ่ายจริงทั้งใบ
             const f = total / lineTotal;
             Object.keys(lineSums).forEach(k => { c[k] = Math.max(0, lineSums[k] * f); });
@@ -2038,6 +2049,20 @@ const server = http.createServer(async (req, res) => {
 // ไว้กันเคสไฟล์เยอะ/เอกสารยาวผิดปกติที่อาจใช้เวลาเกิน 5 นาที
 server.requestTimeout = 6 * 60 * 1000;
 server.headersTimeout = 65 * 1000;
+
+// เซฟตี้เน็ต — process อยู่ในสถานะไม่แน่นอนหลัง uncaught exception เสมอ (ตาม Node docs) จึง log ให้เห็นสาเหตุ
+// ชัดๆ ก่อน แล้ว exit ให้ pm2 (ดู ecosystem.config.js, autorestart:true) restart ด้วย process สะอาด แทนที่จะ
+// ปล่อยให้ทำงานต่อในสถานะพัง — ตั้งใจไม่ swallow เฉยๆ เพราะ Node ตั้งแต่ v15 ถือว่า unhandledRejection ที่ไม่มี
+// handler ต้อง crash อยู่แล้วโดย default การใส่ handler ที่ไม่ exit จะกลายเป็นเปลี่ยนพฤติกรรมเดิมไปในทางแย่กว่า
+// (จาก "crash แล้ว pm2 restart ให้" เป็น "รันต่อแบบเงียบๆ ในสถานะที่อาจพังอยู่แล้ว")
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] uncaughtException:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandledRejection:', reason);
+  process.exit(1);
+});
 
 // HOST=127.0.0.1 (ค่าเริ่มต้น) = เข้าได้เฉพาะเครื่องนี้
 // ถ้าต้องการเปิดให้เครือข่าย ให้ตั้ง HOST=0.0.0.0 + APP_PASSWORD ใน .env
