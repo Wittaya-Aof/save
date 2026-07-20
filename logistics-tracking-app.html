@@ -301,7 +301,7 @@ class App extends Component {
   constructor(props){
     super(props);
     const w=typeof window!=='undefined'?window.innerWidth:1280;
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false};
     this._plan=null; this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   componentDidMount(){
@@ -825,17 +825,19 @@ class App extends Component {
     this.setState(s=>({verifyFiles:s.verifyFiles.filter((_,i)=>i!==idx)}));
   }
   async submitVerify(){
-    const {verifyFiles}=this.state;
+    const {verifyFiles,verifyPo}=this.state;
     if(!verifyFiles.length){this.showToast('กรุณาเลือกไฟล์ก่อน','info');return;}
     this.setState({verifyLoading:true,verifyResult:null,verifyError:null});
     const fd=new FormData();
     fd.append('mode','import');
+    if((verifyPo||'').trim())fd.append('po',verifyPo.trim());
     verifyFiles.forEach(f=>fd.append('files',f,f.name));
     try{
       const r=await fetchTimeout('/api/verify-shipment',{method:'POST',body:fd},240000);
       const j=await r.json();
       if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
       this.setState({verifyResult:j,verifyLoading:false});
+      if(j.etdSaved)this.showToast('บันทึก ETD ของ '+verifyPo.trim()+' อัตโนมัติจาก B/L แล้ว','success');
     }catch(e){
       this.setState({verifyLoading:false,verifyError:e.name==='AbortError'?'หมดเวลารอ (เกิน 4 นาที) — ลองใหม่หรือลดจำนวนไฟล์':e.message});
     }
@@ -2207,7 +2209,7 @@ class App extends Component {
 
   // ── AI ตรวจเอกสาร: หน้าอัปโหลด + ผลลัพธ์ ──
   renderVerify(){
-    const {verifyFiles,verifyLoading,verifyResult,verifyError}=this.state;
+    const {verifyFiles,verifyPo,verifyLoading,verifyResult,verifyError}=this.state;
     const box={border:'1px solid #e8dde4',borderRadius:'12px',background:'#fff',padding:'20px'};
     return <div style={{flex:1,overflow:'auto',padding:'22px',display:'flex',flexDirection:'column',gap:'16px',maxWidth:'820px'}}>
       <div>
@@ -2215,6 +2217,10 @@ class App extends Component {
         <div style={{fontSize:'12.5px',color:'#7a818d',marginTop:'4px'}}>อัปโหลด Invoice / Packing List / Bill of Lading / Form E-D-AK / ใบขนสินค้าขาเข้า แล้วให้ AI ตรวจไขว้ให้ (รองรับเฉพาะ import ในตอนนี้)</div>
       </div>
       <div style={box}>
+        <Field label="เลข PO (ถ้าใส่ไว้ — ระบบจะบันทึก ETD ที่ดึงได้จาก B/L ให้ PO นี้อัตโนมัติ ไม่บังคับ)">
+          <input style={INP} value={verifyPo} placeholder="เช่น KOBPO2607-00485" onChange={e=>this.setState({verifyPo:e.target.value})}/>
+        </Field>
+        <div style={{height:'12px'}}/>
         <div onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();this.onVerifyFilesAdd(e.dataTransfer.files);}}
              style={{border:'2px dashed #e8dde4',borderRadius:'10px',padding:'28px',textAlign:'center'}}>
           <div style={{color:'#7a818d',fontSize:'13px',marginBottom:'10px'}}>ลากไฟล์มาวางที่นี่ หรือ</div>
@@ -2260,6 +2266,10 @@ class App extends Component {
         </div>
         {verifyResult.meta&&verifyResult.meta.filesSkipped&&verifyResult.meta.filesSkipped.length>0&&<div style={{marginTop:'14px',padding:'10px 12px',borderRadius:'7px',background:'#fffbeb',fontSize:'11.5px',color:'#92400e'}}>
           ข้ามไฟล์ {verifyResult.meta.filesSkipped.length} ไฟล์: {verifyResult.meta.filesSkipped.map(f=>f.name+' ('+f.reason+')').join(', ')}
+        </div>}
+        {verifyResult.shipmentInfo&&verifyResult.shipmentInfo.etd&&<div style={{marginTop:'14px',padding:'10px 12px',borderRadius:'7px',background:verifyResult.etdSaved?'#f0fdf4':'#f7f3f5',fontSize:'11.5px',color:verifyResult.etdSaved?'#15803d':'#5b6371'}}>
+          ดึง ETD จาก B/L ได้: <b>{verifyResult.shipmentInfo.etd}</b>{verifyResult.shipmentInfo.vessel?' ('+verifyResult.shipmentInfo.vessel+')':''}
+          {verifyResult.etdSaved?' — บันทึกให้ '+verifyResult.po+' แล้ว':(verifyResult.po?' — บันทึกไม่สำเร็จ':' — ใส่เลข PO ด้านบนก่อนตรวจ ถ้าต้องการบันทึกอัตโนมัติ')}
         </div>}
       </div>}
     </div>;

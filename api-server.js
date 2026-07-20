@@ -2049,6 +2049,24 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const result = await verifyShipmentRequest(req);
+        // ถ้าผู้ใช้ระบุเลข PO มาด้วย และ AI ดึงวันที่ ETD จาก B/L/AWB ได้จริง (ไม่ใช่ draft ที่ยังว่าง)
+        // → บันทึก etd ให้อัตโนมัติ กัน manual entry ที่พิสูจน์แล้วว่าแทบไม่มีใครกรอกเอง (ดู comment
+        // ที่ poLeadTimeDays() ใน frontend) merge เฉพาะ etd ทับ override เดิมของ PO นั้น ไม่แตะฟิลด์อื่น
+        if (result.po && result.shipmentInfo && result.shipmentInfo.etd) {
+          try {
+            const data   = loadTracking();
+            const idx    = data.findIndex(r => (r.po_so || r.id) === result.po);
+            const before = idx >= 0 ? data[idx] : null;
+            const rec    = { ...(before || {}), po_so: result.po, etd: result.shipmentInfo.etd };
+            if (idx >= 0) data[idx] = rec; else data.push(rec);
+            saveTracking(data);
+            auditLog(before ? 'update' : 'create', result.po, ['etd'], req.socket.remoteAddress);
+            result.etdSaved = true;
+          } catch (saveErr) {
+            console.error('[API] verify-shipment: บันทึก ETD ไม่สำเร็จ:', saveErr.message);
+            result.etdSaved = false;
+          }
+        }
         jsonOk(res, result);
       } catch (e) {
         console.error('[API] verify-shipment:', e.message);
