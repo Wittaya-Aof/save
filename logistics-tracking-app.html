@@ -1501,21 +1501,26 @@ class App extends Component {
           </div>;
         })()}
         {(()=>{
-          // Lead Time (วางออเดอร์ → กำหนดถึงท่า) แยกตามผู้ขาย — ให้ manager ดูเองว่าผู้ขายรายไหนใช้เวลานานกว่า
-          // ปกติ แล้วตัดสินใจเอง (ต่อรองเวลาผลิต/เปลี่ยนผู้ขาย ฯลฯ) ไม่ใช่การตัดสินใจอัตโนมัติจากระบบ
+          // รอบเวลาสั่งซื้อจนคาดว่าจะถึง (date_order → date_planned) แยกตามผู้ขาย — ตั้งใจไม่เรียกว่า "Transit
+          // Time"/"ETD" เพราะ Odoo ของบริษัทไม่มีฟิลด์ ETD (วันเรือ/เครื่องออกจากต้นทาง) เก็บอยู่เลยไม่ว่าตารางไหน
+          // (ยืนยันแล้ว) ตัวเลขนี้จึงรวมเวลาผลิต+จองเรือ+ขนส่งทั้งหมดเป็นก้อนเดียว แยกช่วงขนส่งล้วนๆ ออกมาไม่ได้
+          // — ให้ manager ดูเองว่าผู้ขายรายไหนรวมเวลานานกว่าปกติ แล้วไปสืบเพิ่มเองว่าช้าที่ผลิตหรือช้าที่ขนส่ง
+          // (ต่อรอง/เปลี่ยนผู้ขาย ฯลฯ) ไม่ใช่การตัดสินใจอัตโนมัติจากระบบ — เลือกใช้ date_planned เพราะมีค่าจริง
+          // ที่มีคนอัปเดตต่อเนื่อง (เช็คแล้วว่าไม่ใช่ค่า static คงที่ต่อผู้ขาย) ต่างจาก etd/actualDate ที่ต้องกรอกมือ
+          // ซึ่งมีคนกรอกจริงไม่ถึง 1% ของ shipment ทั้งหมด
           return <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
             <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-              <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Lead Time — วางออเดอร์ ถึง กำหนดถึงท่า</div>
+              <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>รอบเวลาสั่งซื้อจนคาดว่าจะถึง (PO → กำหนดถึงท่า)</div>
               {ltAvg!=null&&<div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f'}}>เฉลี่ย {ltAvg} วัน</div>}
             </div>
             <div style={{fontSize:'12px',color:'#a99fa8',marginBottom:'18px'}}>
-              date_order → date_planned จาก Odoo ตรงๆ (ครอบคลุม {ltCoveragePct}% ของ import PO) — ใช้แทน Transit KPI
-              ด้านบนซึ่งวัดได้เฉพาะ shipment ที่มีคนกรอก ETD/วันที่รับเข้าคลังจริงด้วยมือ (พบว่าปัจจุบันมีน้อยมาก)
+              วันที่สั่งซื้อ → วันกำหนดถึงท่าล่าสุดจาก Odoo (ครอบคลุม {ltCoveragePct}% ของ import PO) — ตัวเลขนี้รวมเวลา
+              ผลิต+จองเรือ+ขนส่งทั้งหมดไว้ด้วยกัน ไม่ใช่ช่วงขนส่งอย่างเดียว (ระบบไม่มีข้อมูล ETD จริงให้แยกได้)
             </div>
             {!ltByVendor.length&&<div style={{fontSize:'12px',color:'#bcb2ba'}}>ยังไม่มีข้อมูลเพียงพอ (ต้องมีอย่างน้อย 2 PO ต่อผู้ขาย)</div>}
             {!!ltByVendor.length&&<div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12.5px'}}>
-                <thead><tr style={{background:'#faf6f8'}}>{['ผู้ขาย','จำนวน PO','Lead Time เฉลี่ย'].map((h,i)=>(
+                <thead><tr style={{background:'#faf6f8'}}>{['ผู้ขาย','จำนวน PO','เฉลี่ย'].map((h,i)=>(
                   <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>{ltByVendor.slice(0,10).map((v,i)=>(
