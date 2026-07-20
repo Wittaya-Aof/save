@@ -592,7 +592,7 @@ class App extends Component {
     const ov={...this._overrides};
     // _synthetic:true — PO นี้ไม่มีอยู่จริงใน Odoo ต้องให้ applyOverrides() เก็บไว้เป็นรายการเดี่ยวๆ
     // ไม่งั้นตอนโหลดข้อมูลรอบถัดไป (auto-refresh ทุก 3 นาที) รายการนี้จะหายไปเงียบๆ เพราะไม่มี PO ให้ merge ทับ
-    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,_ts:Date.now(),type:f.board,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,expectedCost:parseFloat(f.expectedCost)||0};
+    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,expectedCost:parseFloat(f.expectedCost)||0};
     this._overrides=ov;
     try{await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ov[ns.poNo])});this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');}
     catch(e){this.showToast('บันทึกออฟไลน์ชั่วคราว','info');}
@@ -636,7 +636,7 @@ class App extends Component {
     // overReceipt = "รับของเกินสั่ง" คนละความหมายกับ "ลากมาลงคอลัมน์สุดท้ายแล้ว" — ห้ามตั้งเป็น true อัตโนมัติ
     // (บั๊กเดิม copy-paste มาจาก actualDate ด้านล่าง ทำให้ลากการ์ดปกติไปคอลัมน์สุดท้ายแล้วขึ้นป้าย "เกิน" ผิดๆ)
     // ต้องใส่ _synthetic/_splitBase ต่อให้ตรงกับของเดิมเสมอ ไม่งั้น shipment ที่แยกเอง/สร้างเองจะหลุดสถานะนั้นไปตอนลาก
-    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_ts:Date.now(),type:s._board,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
     const ov={...this._overrides};ov[s.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(x=>x.poNo===s.poNo?this.applyOne(x,o):x);
     this.setState({shipments:rows});
@@ -654,7 +654,7 @@ class App extends Component {
     const n=siblings.length+1;
     const poNo=base+' ('+n+')';
     const id='t_'+poNo;
-    const o={po_so:poNo,id,_board:s._board,_edited:true,_synthetic:true,_rateIsThb:true,_splitBase:base,_ts:Date.now(),type:s._board,company:s.company,party:s.party,cur:s.cur,amount:0,rate:s.rate,stage:s._board==='export'?'draft':'po',mode:s.mode||'sea',seaType:s.seaType||'',containerQty:0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:'',bl_awb:'',container:'',vessel:'',forwarder:'',etd:'',eta:s.eta||'',actualDate:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,bills:[],overReceipt:false,note:'แยกจาก PO '+base+' — ชุดที่ '+n};
+    const o={po_so:poNo,id,_board:s._board,_edited:true,_synthetic:true,_rateIsThb:true,_splitBase:base,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:0,rate:s.rate,stage:s._board==='export'?'draft':'po',mode:s.mode||'sea',seaType:s.seaType||'',containerQty:0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:'',bl_awb:'',container:'',vessel:'',forwarder:'',etd:'',eta:s.eta||'',actualDate:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,bills:[],overReceipt:false,note:'แยกจาก PO '+base+' — ชุดที่ '+n};
     const ov={...this._overrides};ov[poNo]=o;this._overrides=ov;
     const ns=this.mapSynthetic(o);
     this.setState({shipments:[ns].concat(this.allShipments()),detailId:ns.id,tab:s._board,view:'kanban'},()=>this.startEdit());
@@ -730,7 +730,7 @@ class App extends Component {
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
     // shipment ที่แยกเอง (_synthetic) ไม่มี PO จริงใน Odoo — มูลค่า/สกุลเงินต้องรับจากฟอร์มนี้โดยตรง
     // ของ PO จริง มูลค่ามาจาก Odoo เสมอ ไม่ให้ฟอร์มนี้ทับ (ไม่มีช่องแก้ในฟอร์มอยู่แล้ว ค่าจะเท่าเดิม)
-    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_ts:Date.now(),type:f.board,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),expectedCost:num(f.expectedCost),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),expectedCost:num(f.expectedCost),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
     const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
     this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
@@ -1117,7 +1117,8 @@ class App extends Component {
     // เทียบกับสถานะอื่นหลักหน่วย) แท่งอื่นทุกแท่งเลยแคบจนดูเหมือน 0 ทั้งที่มีข้อมูล — คิด pmax จากสถานะที่ยังไหลอยู่
     // เท่านั้น (ตัด received ตัวสุดท้ายออก) แล้วให้แท่ง received เต็มความกว้างเป็นพิเศษแทน (ดูจุดใช้งานด้านล่าง)
     const pmaxInFlight=Math.max(1,...IMP_STAGES.slice(0,-1).map(stg=>impAll.filter(s=>s.stage===stg.key).length));
-    const emax=Math.max(1,...EXP_STAGES.map(stg=>expAll.filter(s=>s.stage===stg.key).length));
+    // emax บั๊กเดียวกับ pmax เดิม (ดูคอมเมนต์ด้านบน) — ตัดสถานะสุดท้าย (arrived) ออกจากฐานคำนวณด้วย
+    const emaxInFlight=Math.max(1,...EXP_STAGES.slice(0,-1).map(stg=>expAll.filter(s=>s.stage===stg.key).length));
     const costAll=impAll.filter(s=>costSum(s)>0);
     const costSrc=costAll.slice(0,7);
     // แถว "รวมทั้งหมด" ต้องรวมจาก costAll (ทุกรายการที่มีต้นทุน) ไม่ใช่ costSrc (7 แถวที่โชว์)
@@ -1394,10 +1395,13 @@ class App extends Component {
             <div style={{fontSize:'12px',color:'#a99fa8'}}>{expAll.length} รายการ</div>
           </div>
           <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
-            {EXP_STAGES.map(stg=>{const c=expAll.filter(s=>s.stage===stg.key).length;return(
+            {EXP_STAGES.map((stg,i)=>{const c=expAll.filter(s=>s.stage===stg.key).length;
+              const isTerminal=i===EXP_STAGES.length-1;
+              const pct=isTerminal?100:Math.min(100,c/emaxInFlight*100);
+              return(
               <div key={stg.key} style={{display:'grid',gridTemplateColumns:'120px 1fr 34px',alignItems:'center',gap:'12px'}}>
                 <span style={{fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
-                <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,c/emax*100)+'%',background:stg.color,transition:'width .5s'}}/></span>
+                <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,pct)+'%',background:stg.color,transition:'width .5s'}}/></span>
                 <span style={{fontSize:'12px',fontWeight:600,color:'#14181f',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{c}</span>
               </div>
             );})}

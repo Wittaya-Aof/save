@@ -800,7 +800,10 @@ const CACHE_TTL = 5 * 60 * 1000;
 
 async function cachedQuery(key, sql, force) {
   const now = Date.now();
-  if (cache.data[key] && (now - cache.ts[key]) < CACHE_TTL) {
+  // force=true ต้องข้าม cache 5 นาทีด้วย ไม่ใช่แค่ circuit breaker — เดิมเช็ค cache ก่อนดู force เลย ทำให้
+  // caller ที่ตั้งใจขอข้อมูลสด (AutoProbe force:true ทุก 2 นาที) มักได้ผลลัพธ์เก่าจาก cache ซ้ำ แต่ยัง stamp
+  // snapshot._ts เป็นเวลาปัจจุบัน ทำให้ as_of โกหกว่าข้อมูลสดกว่าความเป็นจริงได้ถึง ~5 นาที
+  if (!force && cache.data[key] && (now - cache.ts[key]) < CACHE_TTL) {
     return cache.data[key];
   }
   // Circuit breaker — DB เพิ่งล่มและยังไม่หมด window: ไม่ลองซ้ำ (กันทุก endpoint
@@ -1918,12 +1921,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ตัวเลขที่ผิดปกติ (ติดลบ/ไม่ใช่ตัวเลข) เขียนตรงลง Odoo production ได้เลยถ้าไม่กรอง — เดียวกับบั๊กที่เคยเจอใน
+    // /api/tracking/upsert แต่ endpoint นี้เขียนเข้า ERP จริง ผลกระทบสูงกว่า
+    const SHIPMENT_NUM_FIELDS = ['exchange_rate', 'customs_duty', 'customs_vat', 'other_fees', 'total_fees'];
+    const invalidShipmentField = vals => SHIPMENT_NUM_FIELDS.find(f => {
+      if (vals[f] === undefined || vals[f] === null || vals[f] === '') return false;
+      const n = Number(vals[f]);
+      return !Number.isFinite(n) || n < 0;
+    });
+
     if (reqUrl === '/api/shipments' && method === 'POST') {
       let body = '';
       req.on('data', chunk => body += chunk);
       req.on('end', async () => {
         try {
           const vals = JSON.parse(body);
+          const bad = invalidShipmentField(vals);
+          if (bad) { jsonErr(res, 400, `ค่า ${bad} ไม่ถูกต้อง: ${vals[bad]}`); return; }
           const id = await odooKw('logistics.shipment', 'create', [vals]);
           delete cache.data['shipments'];
           jsonOk(res, { ok: true, id });
@@ -1943,6 +1957,8 @@ const server = http.createServer(async (req, res) => {
       req.on('end', async () => {
         try {
           const vals = JSON.parse(body);
+          const bad = invalidShipmentField(vals);
+          if (bad) { jsonErr(res, 400, `ค่า ${bad} ไม่ถูกต้อง: ${vals[bad]}`); return; }
           await odooKw('logistics.shipment', 'write', [[shipId], vals]);
           delete cache.data['shipments'];
           jsonOk(res, { ok: true, id: shipId });
@@ -1990,9 +2006,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Static Files ──
+  // Allowlist เท่านั้น — ห้าม serve reqUrl ตรงๆ ผ่าน path.join เพราะ reqUrl ไม่ได้ decode/sanitize
+  // "/.env", "/api-server.js", "/tracking_data.json" หรือ "/../../Windows/..." จะโดน serve ออกไปทันที
+  // (ยืนยันแล้วว่า path.join(ROOT, reqUrl) เดินออกนอก ROOT ได้จริงถ้ามี ../ พอ)
   const ALIASES = ['/', '/index.html'];
-  let filePath = ALIASES.includes(reqUrl) ? '/logistics-tracking-app.html' : reqUrl;
-  filePath = path.join(ROOT, filePath);
+  let filePath;
+  if (ALIASES.includes(reqUrl)) {
+    filePath = path.join(ROOT, 'logistics-tracking-app.html');
+  } else if (/^\/vendor\/[\w.-]+\.(js|css|map)$/.test(reqUrl)) {
+    filePath = path.join(ROOT, reqUrl);
+  } else {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('404 Not Found: ' + reqUrl);
+    return;
+  }
   const ext = path.extname(filePath).toLowerCase();
 
   fs.readFile(filePath, (err, data) => {
