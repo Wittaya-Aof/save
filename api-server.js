@@ -379,6 +379,26 @@ async function sendIntegrityAlertEmail(newFindings, label) {
   console.log('[Integrity] ส่งอีเมลแจ้งเตือน', newFindings.length, 'จุดใหม่ ไปที่', to);
 }
 
+// snapshot ว่างเปล่า (importChecked+exportChecked === 0) หน้าตาเหมือน "ตรวจแล้วไม่พบปัญหา" ทุกประการ
+// (findings=[] ทั้งคู่) ทั้งที่จริงคือ "ไม่มีข้อมูลให้ตรวจเลย" — เช่น deploy ใหม่ หรือ Odoo direct + MCP bridge
+// ล่มพร้อมกันตั้งแต่ก่อน warm() ครั้งแรกสำเร็จ ระบบเดิมไม่มีทางแยกสองเคสนี้ออกจากกัน แจ้งเตือนทันทีแยกต่างหาก
+// จาก finding ปกติ (ไม่ต้องรอ weekly digest 7 วัน เพราะข้อมูลหายทั้งระบบเร่งด่วนกว่า currency rate ผิดจุดเดียว)
+async function sendNoDataAlertEmail(label) {
+  const transporter = getMailTransporter();
+  const to = process.env.ALERT_EMAIL_TO;
+  if (!transporter || !to) {
+    console.log('[Integrity] ยังไม่ได้ตั้งค่าอีเมล — ข้ามการแจ้งเตือน (snapshot ว่างเปล่า)');
+    return;
+  }
+  await transporter.sendMail({
+    from: process.env.GMAIL_USER,
+    to,
+    subject: '[Logistics Tracking] ⚠️ ไม่มีข้อมูลให้ตรวจสอบเลย (snapshot ว่างเปล่า)',
+    text: `ระบบตรวจสอบข้อมูลอัตโนมัติ (${label}) พบว่า import/export snapshot ว่างเปล่าทั้งคู่ (0 รายการ) — แปลว่าดึงข้อมูลจาก Odoo ไม่สำเร็จเลยตั้งแต่ต้น (ทั้ง direct DB และ MCP bridge) ไม่ใช่ "ไม่พบปัญหา" ตามปกติ กรุณาตรวจสอบการเชื่อมต่อ Odoo/RDS โดยด่วน\n\nDashboard: http://localhost:3000/`,
+  });
+  console.log('[Integrity] ส่งอีเมลแจ้งเตือน snapshot ว่างเปล่า ไปที่', to);
+}
+
 // ─── สรุปรายสัปดาห์ (heartbeat) ──────────────────────────────────────────────
 // ปัญหา: การแจ้งเตือน "เฉพาะของใหม่" แปลว่าถ้าอีเมลเงียบไป อาจหมายถึง "ทุกอย่างปกติ" หรือ "ระบบแจ้งเตือนพัง"
 // ก็ได้ — แยกไม่ออก จึงส่งสรุปสถานะทุก 7 วันแม้ไม่มีปัญหา เพื่อยืนยันว่าระบบยังทำงานอยู่ (ถ้าไม่ได้สรุปตามรอบ
@@ -398,7 +418,12 @@ async function maybeSendWeeklyDigest() {
   if (!transporter || !to) return; // ไม่ตั้งค่าอีเมล = ข้ามเงียบๆ (เหมือน alert)
   const ir = integrityReport;
   const fCount = (ir.findings || []).length, aCount = (ir.autoCorrected || []).length;
-  const statusLine = fCount
+  const noData = (ir.importChecked || 0) + (ir.exportChecked || 0) === 0;
+  // ต้องเช็ค noData ก่อน fCount — ไม่งั้น snapshot ว่างเปล่า (importChecked=exportChecked=0, findings=[]
+  // เพราะไม่มีอะไรให้ตรวจ) จะโดนรายงานเป็น "ระบบทำงานปกติ" ทั้งที่จริงคือดึงข้อมูลจาก Odoo ไม่ได้เลย
+  const statusLine = noData
+    ? '⚠️ ไม่มีข้อมูลให้ตรวจเลย (snapshot ว่างเปล่า) — ดึงข้อมูลจาก Odoo ไม่สำเร็จ ไม่ใช่ "ปกติ"'
+    : fCount
     ? `⚠️ ยังพบปัญหาค้างอยู่ ${fCount} จุด (ต้องแก้)`
     : 'ระบบทำงานปกติ — ไม่พบปัญหาที่ต้องแก้';
   const detail = [
@@ -409,7 +434,7 @@ async function maybeSendWeeklyDigest() {
     await transporter.sendMail({
       from: process.env.GMAIL_USER,
       to,
-      subject: `[Logistics Tracking] สรุปสถานะข้อมูลรายสัปดาห์ — ${fCount ? 'พบ ' + fCount + ' จุด' : 'ปกติ'}`,
+      subject: `[Logistics Tracking] สรุปสถานะข้อมูลรายสัปดาห์ — ${noData ? 'ไม่มีข้อมูล!' : fCount ? 'พบ ' + fCount + ' จุด' : 'ปกติ'}`,
       text: `สรุปการตรวจสอบข้อมูลอัตโนมัติประจำสัปดาห์\n\n${statusLine}\nตรวจล่าสุด: ${ir.ranAt || '-'} · เช็ค ${(ir.importChecked||0)+(ir.exportChecked||0)} รายการ\n\n${detail || '(ไม่มีรายการที่ต้องรายงาน)'}\n\nอีเมลนี้ส่งทุก 7 วันเพื่อยืนยันว่าระบบแจ้งเตือนยังทำงานอยู่ — ถ้าไม่ได้รับตามรอบ แปลว่าระบบอาจมีปัญหา\nDashboard: http://localhost:3000/`,
     });
     lastDigestAt = now;
@@ -422,6 +447,7 @@ async function maybeSendWeeklyDigest() {
 
 // ใช้ snapshot ปัจจุบัน (ข้อมูลที่กำลังเสิร์ฟให้ผู้ใช้จริงอยู่แล้ว) ไม่ยิง query ใหม่ — กันเพิ่มโหลดฐานข้อมูล/
 // เสี่ยง trip circuit breaker โดยไม่จำเป็น เช็คแค่สิ่งที่ผู้ใช้เห็นอยู่ตอนนี้ว่าเชื่อถือได้ไหม
+let integrityNoDataAlerted = false; // กันส่งอีเมลซ้ำทุกรอบถ้ายังว่างเปล่าต่อเนื่อง (reset เมื่อกลับมามีข้อมูล)
 async function runIntegrityCheck(label) {
   const findings = [
     ...checkCurrencyRateSanity(snapshot.import, 'import', 'po_number'),
@@ -431,19 +457,29 @@ async function runIntegrityCheck(label) {
     ...collectAutoCorrected(snapshot.import, 'import', 'po_number'),
     ...collectAutoCorrected(snapshot.export, 'export', 'so_number'),
   ];
-  integrityReport = {
-    ranAt: new Date().toISOString(), findings, autoCorrected,
-    importChecked: (snapshot.import || []).length, exportChecked: (snapshot.export || []).length,
-  };
+  const importChecked = (snapshot.import || []).length;
+  const exportChecked = (snapshot.export || []).length;
+  integrityReport = { ranAt: new Date().toISOString(), findings, autoCorrected, importChecked, exportChecked };
   const acNote = autoCorrected.length ? ' · ซ่อมอัตโนมัติ ' + autoCorrected.length + ' จุด' : '';
+  // snapshot ว่างเปล่าทั้งคู่ = ไม่มีข้อมูลให้ตรวจเลย ไม่ใช่ "ตรวจแล้วสะอาด" (ดู comment ที่ sendNoDataAlertEmail)
+  const noData = importChecked === 0 && exportChecked === 0;
   if (findings.length) console.error('[Integrity:' + label + '] พบความผิดปกติ', findings.length, 'จุด' + acNote);
-  else console.log('[Integrity:' + label + '] ตรวจ', integrityReport.importChecked + integrityReport.exportChecked, 'รายการ — ไม่พบความผิดปกติ' + acNote);
+  else if (noData) console.error('[Integrity:' + label + '] snapshot ว่างเปล่า (0 รายการ) — ไม่มีข้อมูลให้ตรวจ ไม่ใช่ผลลัพธ์สะอาด');
+  else console.log('[Integrity:' + label + '] ตรวจ', importChecked + exportChecked, 'รายการ — ไม่พบความผิดปกติ' + acNote);
 
   const newFindings = findings.filter(f => !integritySeenKeys.has(findingKey(f)));
   integritySeenKeys = new Set(findings.map(findingKey));
   saveIntegritySeenKeys();
   if (newFindings.length) {
     sendIntegrityAlertEmail(newFindings, label).catch(e => console.error('[Integrity] ส่งอีเมลแจ้งเตือนไม่สำเร็จ:', e.message));
+  }
+  if (noData) {
+    if (!integrityNoDataAlerted) {
+      integrityNoDataAlerted = true;
+      sendNoDataAlertEmail(label).catch(e => console.error('[Integrity] ส่งอีเมลแจ้งเตือน snapshot ว่างเปล่าไม่สำเร็จ:', e.message));
+    }
+  } else {
+    integrityNoDataAlerted = false;
   }
   return integrityReport;
 }
@@ -860,6 +896,14 @@ function jsonErr(res, code, msg) {
   res.end(JSON.stringify({ error: msg }));
 }
 
+// สำหรับ error ที่มาจาก exception จริง (SQL/DB/network) — e.message อาจมีชื่อ table/column/host จริงติดมาด้วย
+// log รายละเอียดเต็มไว้ฝั่ง server เท่านั้น ส่งข้อความทั่วไปให้ client แทน (endpoint validation error ที่เขียน
+// ข้อความเองอยู่แล้ว เช่น jsonErr(res,400,'ค่า X ไม่ถูกต้อง') ไม่ใช่กรณีนี้ ยังใช้ jsonErr ตรงๆ ได้ตามเดิม)
+function jsonErrEx(res, code, label, err) {
+  console.error(`[API] ${label}:`, err.message);
+  jsonErr(res, code, `เกิดข้อผิดพลาดในการประมวลผล (${label}) — ดูรายละเอียดที่ server log`);
+}
+
 // ─── HTTP Server ──────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const reqUrl  = req.url.split('?')[0];
@@ -899,8 +943,7 @@ const server = http.createServer(async (req, res) => {
         const r = await liveOrSnapshot('import', SQL_IMPORT, force);
         jsonOk(res, { ok: true, count: r.rows.length, rows: r.rows, stale: r.stale, as_of: r.as_of });
       } catch (e) {
-        console.error('[API] import-pos:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'import-pos', e);
       }
       return;
     }
@@ -911,8 +954,7 @@ const server = http.createServer(async (req, res) => {
         const r = await liveOrSnapshot('export', SQL_EXPORT, force);
         jsonOk(res, { ok: true, count: r.rows.length, rows: r.rows, stale: r.stale, as_of: r.as_of });
       } catch (e) {
-        console.error('[API] export-sos:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'export-sos', e);
       }
       return;
     }
@@ -948,7 +990,8 @@ const server = http.createServer(async (req, res) => {
           return;
         } catch (mcpErr) { console.error('[API] po-lines MCP fallback:', mcpErr.message); }
       }
-      jsonErr(res, 503, 'ดึงรายการสินค้าไม่ได้ในขณะนี้ (Odoo ต่อไม่ได้)' + (directErr ? ': ' + directErr.message : ''));
+      if (directErr) console.error('[API] po-lines direct:', directErr.message);
+      jsonErr(res, 503, 'ดึงรายการสินค้าไม่ได้ในขณะนี้ (Odoo ต่อไม่ได้)');
       return;
     }
 
@@ -989,8 +1032,7 @@ const server = http.createServer(async (req, res) => {
         `);
         jsonOk(res, { ok: true, count: rows.length, rows });
       } catch (e) {
-        console.error('[API] vendors:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'vendors', e);
       }
       return;
     }
@@ -1032,8 +1074,7 @@ const server = http.createServer(async (req, res) => {
         `);
         jsonOk(res, { ok: true, count: rows.length, rows });
       } catch (e) {
-        console.error('[API] vendor-scorecard:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'vendor-scorecard', e);
       }
       return;
     }
@@ -1084,8 +1125,7 @@ const server = http.createServer(async (req, res) => {
         const partialMismatch = rows.filter(r => parseFloat(r.billed_total) !== 0);
         jsonOk(res, { ok: true, zeroBilled, partialMismatch, count: rows.length });
       } catch (e) {
-        console.error('[API] gl-reconciliation:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'gl-reconciliation', e);
       }
       return;
     }
@@ -1133,8 +1173,7 @@ const server = http.createServer(async (req, res) => {
         `);
         jsonOk(res, { ok: true, count: rows.length, rows });
       } catch (e) {
-        console.error('[API] expense-pos:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'expense-pos', e);
       }
       return;
     }
@@ -1454,7 +1493,7 @@ const server = http.createServer(async (req, res) => {
           console.log('[API] logistics-bills ผ่าน MCP bridge สำเร็จ — bills:', billRows.length, 'po:', poRows.length, '(direct ใช้ไม่ได้)');
         } catch (mcpErr) {
           console.error('[API] logistics-bills MCP bridge ก็หลุด:', mcpErr.message);
-          jsonErr(res, 503, 'โหลดรายการบิลไม่สำเร็จ (ทั้ง RDS ตรงและ MCP bridge ต่อไม่ได้): ' + mcpErr.message);
+          jsonErr(res, 503, 'โหลดรายการบิลไม่สำเร็จ (ทั้ง RDS ตรงและ MCP bridge ต่อไม่ได้)');
           return;
         }
       }
@@ -1551,7 +1590,7 @@ const server = http.createServer(async (req, res) => {
       } catch(e) {
         // ถึงตรงนี้แปลว่าดึงข้อมูลสำเร็จแล้ว (direct หรือ MCP) — error ที่นี่คือขั้นประมวลผล ไม่ใช่ DB หลุด
         console.error('[API] logistics-bills ประมวลผล:', e.message);
-        jsonErr(res, 500, 'ประมวลผลรายการบิลไม่สำเร็จ: ' + e.message);
+        jsonErr(res, 500, 'ประมวลผลรายการบิลไม่สำเร็จ');
       }
       return;
     }
@@ -1588,6 +1627,7 @@ const server = http.createServer(async (req, res) => {
             am.amount_total,
             am.amount_tax,
             cu.name::text           AS currency,
+            COALESCE(NULLIF(am.inverse_currency_rate,0), 1.0/NULLIF(am.invoice_currency_rate,0)) AS rate_thb,
             rp.name::text           AS partner,
             am.invoice_date::text,
             EXISTS (
@@ -1623,6 +1663,7 @@ const server = http.createServer(async (req, res) => {
         // 2. Expense POs: ค้นหาจาก origin field, category = Expense / ...
         const expResult = await db.query(`
           SELECT po.name::text AS po_number, po.amount_total, cu.name::text AS currency,
+            1.0/NULLIF(po.currency_rate,0) AS rate_thb,
             pol_cat.expense_sub, pol_prod.main_product
           FROM purchase_order po
           JOIN res_currency cu ON cu.id = po.currency_id
@@ -1657,6 +1698,10 @@ const server = http.createServer(async (req, res) => {
         `, [`%${poNo}%`]);
 
         // ── Classify costs ──
+        // แปลงเป็นบาทเสมอตาม rate_thb — เดิม endpoint นี้ไม่แปลงเลย บิลสกุลต่างประเทศ (เช่น DHL/forwarder ที่
+        // ออกบิลเป็น USD) ถูกนับเป็นบาทตรงๆ ผิดขนาด (บั๊กรูปแบบเดียวกับที่เจอและแก้ใน /api/logistics-bills 13 ก.ค.
+        // 2569 — endpoint นี้เป็นคนละจุด ไม่เคยได้รับการแก้ตามไปด้วย)
+        const thbRate = r => { if (!r.currency || r.currency === 'THB') return 1; const v = parseFloat(r.rate_thb); return v > 0 ? v : 1; };
         let freight = 0, duty = 0, vat = 0;
         const matched = [];
         const skipped = [];
@@ -1665,7 +1710,9 @@ const server = http.createServer(async (req, res) => {
         billResult.rows.forEach(r => {
           const partner = (r.partner || '').toLowerCase();
           const lines   = Array.isArray(r.lines) ? r.lines : [];
-          const amt     = parseFloat(r.amount_total) || 0;
+          const fx      = thbRate(r);
+          const origAmount = parseFloat(r.amount_total) || 0;
+          const amt     = origAmount * fx;
 
           // ── กรองบิลค่าสินค้าออก ──
           // บิลที่ partner = ผู้ขายใน import PO เดียวกัน คือ "ค่าสินค้า" ไม่ใช่ค่าขนส่ง
@@ -1682,18 +1729,18 @@ const server = http.createServer(async (req, res) => {
             return;
           }
 
-          // ตรวจ line items ก่อน
+          // ตรวจ line items ก่อน (price_subtotal เป็นสกุลเงินเดียวกับบิล ต้องแปลงเป็นบาทด้วย fx เดียวกัน)
           let billFreight = 0, billDuty = 0, billVat = 0;
           lines.forEach(l => {
             const n = (l.name || '').toLowerCase();
-            const a = parseFloat(l.amount) || 0;
+            const a = (parseFloat(l.amount) || 0) * fx;
             if (/freight|shipping|ขนส่ง|sea freight|air freight|เรือ|อากาศ/.test(n)) billFreight += a;
             else if (/duty|อากร|import duty/.test(n)) billDuty += a;
             else if (/vat|ภาษี|customs vat|พิธี|tax/.test(n)) billVat += a;
             else billFreight += a; // unknown line → นับเป็น freight
           });
 
-          // ถ้าไม่มี line items เลย → classify จาก partner name โดยใช้ amount_total
+          // ถ้าไม่มี line items เลย → classify จาก partner name โดยใช้ amount_total (บาทแล้ว)
           if (lines.length === 0) {
             if (CUSTOMS_RE.test(partner)) { billDuty = amt * 0.8; billVat = amt * 0.2; }
             else billFreight = amt;
@@ -1703,7 +1750,8 @@ const server = http.createServer(async (req, res) => {
           duty    += billDuty;
           vat     += billVat;
           matched.push({ source: 'vendor_bill', bill: r.bill_name, partner: r.partner,
-            amount: amt, currency: r.currency, date: r.invoice_date,
+            amount: amt, currency: r.currency, origAmount: fx !== 1 ? origAmount : null, fxRate: fx !== 1 ? fx : null,
+            date: r.invoice_date,
             classified: { freight: billFreight, duty: billDuty, vat: billVat } });
         });
 
@@ -1712,19 +1760,21 @@ const server = http.createServer(async (req, res) => {
           const sub  = (r.expense_sub  || '').toLowerCase();
           const prod = (r.main_product || '').toLowerCase();
           const tag  = sub + ' ' + prod;
-          const amt  = parseFloat(r.amount_total) || 0;
+          const fx   = thbRate(r);
+          const origAmount = parseFloat(r.amount_total) || 0;
+          const amt  = origAmount * fx;
           if (/freight|shipping|ขนส่ง|เรือ|sea|forwarder/.test(tag)) freight += amt;
           else if (/duty|อากร/.test(tag)) duty += amt;
           else if (/vat|ภาษี|customs/.test(tag)) vat += amt;
           else freight += amt;
           matched.push({ source: 'expense_po', po: r.po_number, amount: amt, currency: r.currency,
+            origAmount: fx !== 1 ? origAmount : null, fxRate: fx !== 1 ? fx : null,
             expense_sub: r.expense_sub, product: r.main_product });
         });
 
         jsonOk(res, { ok: true, po: poNo, freight: Math.round(freight), duty: Math.round(duty), vat: Math.round(vat), matched, skipped });
       } catch(e) {
-        console.error('[API] costs-for-po:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'costs-for-po', e);
       }
       return;
     }
@@ -1734,7 +1784,7 @@ const server = http.createServer(async (req, res) => {
         await db.query('SELECT 1');
         jsonOk(res, { ok: true, db: 'kiss-production', ts: new Date().toISOString() });
       } catch (e) {
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'ping', e);
       }
       return;
     }
@@ -1882,7 +1932,7 @@ const server = http.createServer(async (req, res) => {
           entries = entries.slice(-limit).reverse();
         }
         jsonOk(res, { ok: true, count: entries.length, entries });
-      } catch(e) { jsonErr(res, 500, e.message); }
+      } catch(e) { jsonErrEx(res, 500, 'tracking/history', e); }
       return;
     }
 
@@ -1905,8 +1955,7 @@ const server = http.createServer(async (req, res) => {
         }).filter(r => r.thb_per_unit);
         jsonOk(res, { ok: true, count: out.length, rows: out });
       } catch(e) {
-        console.error('[API] fx-rates:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'fx-rates', e);
       }
       return;
     }
@@ -1925,8 +1974,7 @@ const server = http.createServer(async (req, res) => {
         if (e.message.includes('does not exist')) {
           jsonOk(res, { ok: true, count: 0, rows: [], note: 'logistics_shipment table not found — install module first' });
         } else {
-          console.error('[API] shipments GET:', e.message);
-          jsonErr(res, 500, e.message);
+          jsonErrEx(res, 500, 'shipments GET', e);
         }
       }
       return;
@@ -1953,8 +2001,7 @@ const server = http.createServer(async (req, res) => {
           delete cache.data['shipments'];
           jsonOk(res, { ok: true, id });
         } catch (e) {
-          console.error('[API] shipments POST:', e.message);
-          jsonErr(res, 500, e.message);
+          jsonErrEx(res, 500, 'shipments POST', e);
         }
       });
       return;
@@ -1974,8 +2021,7 @@ const server = http.createServer(async (req, res) => {
           delete cache.data['shipments'];
           jsonOk(res, { ok: true, id: shipId });
         } catch (e) {
-          console.error('[API] shipments PATCH:', e.message);
-          jsonErr(res, 500, e.message);
+          jsonErrEx(res, 500, 'shipments PATCH', e);
         }
       });
       return;
@@ -1988,8 +2034,7 @@ const server = http.createServer(async (req, res) => {
         delete cache.data['shipments'];
         jsonOk(res, { ok: true, id: shipId });
       } catch (e) {
-        console.error('[API] shipments DELETE:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'shipments DELETE', e);
       }
       return;
     }
