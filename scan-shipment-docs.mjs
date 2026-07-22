@@ -135,13 +135,38 @@ function extractPdfTextIsolated(filePath) {
   }
 }
 
+// ws['!ref'] บางไฟล์ (เจอจริง 2026-07-22: OXY清单.xlsx) ถูก format ทั้งชีตจน !ref บวมไปถึง
+// เกือบสุดขอบ Excel (เช่น A1:XFC1048565) ทั้งที่ข้อมูลจริงมีแค่ไม่กี่เซลล์ — sheet_to_csv เชื่อ
+// !ref ตรงๆ แล้ววนสร้าง CSV ทั้งกริดนั้นจนค้างสนิท (ยืนยันแล้วว่าไม่จบใน 15 วิ) ต้องคำนวณขอบเขต
+// จากเซลล์ที่มีข้อมูลจริงเองแทนการเชื่อ !ref
+function computeUsedRange(ws) {
+  let maxR = 0, maxC = 0, found = false;
+  for (const key of Object.keys(ws)) {
+    if (key[0] === '!') continue;
+    const dec = XLSX.utils.decode_cell(key);
+    if (dec.r > maxR) maxR = dec.r;
+    if (dec.c > maxC) maxC = dec.c;
+    found = true;
+  }
+  return found ? { s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } } : null;
+}
+
 function dumpExcelText(name, buffer) {
   const wb = XLSX.read(buffer, { type: 'buffer' });
   const parts = [`=== FILE: ${name} ===`];
   wb.SheetNames.forEach((sheetName) => {
     const ws = wb.Sheets[sheetName];
     parts.push(`--- SHEET: ${sheetName} ---`);
-    parts.push(XLSX.utils.sheet_to_csv(ws, { blankrows: false }).trim());
+    // sheet_to_csv (xlsx 0.18.5) อ่าน ws['!ref'] ตรงๆ ไม่รับ opts.range — ต้องเขียนทับ !ref
+    // ด้วยขอบเขตจริงก่อนเรียก แล้วคืนค่าเดิมกลับหลังจบ กันกระทบ workbook ส่วนอื่น
+    const originalRef = ws['!ref'];
+    const usedRange = computeUsedRange(ws);
+    if (usedRange) ws['!ref'] = XLSX.utils.encode_range(usedRange);
+    try {
+      parts.push(XLSX.utils.sheet_to_csv(ws, { blankrows: false }).trim());
+    } finally {
+      ws['!ref'] = originalRef;
+    }
   });
   return parts.join('\n');
 }
