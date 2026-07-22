@@ -33,6 +33,8 @@ const IMPORT_INNER = `
       AND po.date_order >= NOW() - INTERVAL '2 years'
       AND (rco.code IS NOT NULL AND rco.code != 'TH' OR (rco.code IS NULL AND cu.name NOT IN ('THB')))
       AND cat.top_cat IN ('Packaging','Finished Goods','Raw Materials')
+    ORDER BY po.date_order DESC
+    LIMIT 2000
   ),
   -- ต้องกัน currency<>'THB' ก่อนเสมอ — แถวที่ผู้ขายต่างประเทศแต่ตกลงจ่ายเป็น THB (rate=1 ถูกต้องอยู่แล้ว)
   -- ไม่ควรถูกนับเป็น "เพี้ยน" (เจอจริงฝั่ง export 17/105 แถว ก่อนแก้ 16 ก.ค. 2569)
@@ -73,6 +75,8 @@ const EXPORT_INNER = `
     WHERE so.company_id IN (1,2) AND so.state NOT IN ('cancel','draft')
       AND so.date_order >= NOW() - INTERVAL '2 years'
       AND (rco.code IS NOT NULL AND rco.code != 'TH' OR (rco.code IS NULL AND cu.name NOT IN ('THB')))
+    ORDER BY so.date_order DESC
+    LIMIT 500
   ),
   bad_names AS (
     SELECT so_number FROM base

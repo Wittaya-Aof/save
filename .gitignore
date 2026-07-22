@@ -11,3 +11,10 @@ integrity_seen.json
 integrity_digest.json
 _temp_page.html
 _extracted_source.html
+restart-out.log
+restart-err.log
+doc_scan_seen.json
+doc_scan.log
+scan.lock
+ets_debug/
+scan_run*.log

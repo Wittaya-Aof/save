@@ -522,7 +522,11 @@ function odooPost(path, body) {
       res.on('end', () => {
         try {
           const j = JSON.parse(data);
-          if (j.error) return reject(new Error(j.error.data?.message || JSON.stringify(j.error)));
+          if (j.error) {
+            const err = new Error(j.error.data?.message || j.error.message || JSON.stringify(j.error));
+            err.odooCode = j.error.code;
+            return reject(err);
+          }
           resolve(j.result);
         } catch (e) { reject(e); }
       });
@@ -533,8 +537,16 @@ function odooPost(path, body) {
   });
 }
 
-async function odooLogin() {
-  if (_odooUid) return _odooUid;
+// Odoo คืน error code 100 (หรือข้อความมี "session" อยู่) เมื่อ session cookie หมดอายุ —
+// ต้อง re-login ใหม่ ไม่งั้น _odooUid ที่ cache ไว้ตลอดชีพ process จะทำให้ทุก call พังไปตลอด
+// จนกว่าจะ restart server ทั้งตัว (ดู odooKw ที่ retry ครั้งเดียวหลัง re-login)
+function isOdooSessionExpired(err) {
+  return !!err && (err.odooCode === 100 || /session/i.test(err.message || ''));
+}
+
+async function odooLogin(force = false) {
+  if (_odooUid && !force) return _odooUid;
+  if (force) { _odooUid = null; _odooCookie = ''; }
   if (!ODOO.user || !ODOO.pass) throw new Error('Odoo credentials not configured (set ODOO_USER / ODOO_PASS)');
   const r = await odooPost('/web/session/authenticate', {
     jsonrpc: '2.0', method: 'call', id: 1,
@@ -548,10 +560,18 @@ async function odooLogin() {
 
 async function odooKw(model, method, args = [], kwargs = {}) {
   await odooLogin();
-  return odooPost('/web/dataset/call_kw', {
+  const call = () => odooPost('/web/dataset/call_kw', {
     jsonrpc: '2.0', method: 'call', id: 1,
     params: { model, method, args, kwargs },
   });
+  try {
+    return await call();
+  } catch (e) {
+    if (!isOdooSessionExpired(e)) throw e;
+    console.log('[Odoo] session หมดอายุ — re-login แล้วลองใหม่อีกครั้ง');
+    await odooLogin(true);
+    return call();
+  }
 }
 
 // ─── SQL Queries ─────────────────────────────────────────────────
@@ -902,6 +922,41 @@ function jsonErr(res, code, msg) {
 function jsonErrEx(res, code, label, err) {
   console.error(`[API] ${label}:`, err.message);
   jsonErr(res, code, `เกิดข้อผิดพลาดในการประมวลผล (${label}) — ดูรายละเอียดที่ server log`);
+}
+
+// ─── อ่าน JSON body แบบจำกัดขนาด ─────────────────────────────────
+// body ปกติของ endpoint พวกนี้เป็น record เดียวหรือ list สั้นๆ (ไม่กี่ KB) 10MB เผื่อเหลือเฟือแล้ว
+// กัน request เดียวที่ body ใหญ่ผิดปกติ (ตั้งใจหรือ client bug ก็ได้) ไม่ให้ทำ memory exhaustion —
+// server นี้เป็น single process เสิร์ฟ production ทั้งหมด ถ้าล้มคือทุกคนใช้งานไม่ได้พร้อมกัน
+// คืนค่า null แปลว่า response ถูกส่งไปแล้ว (413/400) — caller แค่ return ทันที ไม่ต้องทำอะไรต่อ
+const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024; // 10MB
+function readJsonBody(req, res, maxBytes = MAX_JSON_BODY_BYTES) {
+  return new Promise((resolve) => {
+    let body = '';
+    let bytes = 0;
+    let settled = false;
+    const finish = (value) => { if (!settled) { settled = true; resolve(value); } };
+    req.on('data', chunk => {
+      if (settled) return;
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        jsonErr(res, 413, `request body ใหญ่เกินกำหนด (จำกัด ${Math.floor(maxBytes / 1024 / 1024)}MB)`);
+        req.destroy();
+        finish(null);
+        return;
+      }
+      body += chunk;
+    });
+    req.on('end', () => {
+      if (settled) return;
+      try { finish(JSON.parse(body || '{}')); }
+      catch (e) { jsonErr(res, 400, e.message); finish(null); }
+    });
+    req.on('error', (e) => {
+      jsonErr(res, 400, e.message);
+      finish(null);
+    });
+  });
 }
 
 // ─── HTTP Server ──────────────────────────────────────────────────
@@ -1342,8 +1397,7 @@ const server = http.createServer(async (req, res) => {
           top_po_categories: topCategories.rows,
         });
       } catch(e) {
-        console.error('[API] debug/expense-structure:', e.message);
-        jsonErr(res, 500, e.message);
+        jsonErrEx(res, 500, 'debug/expense-structure', e);
       }
       return;
     }
@@ -1820,17 +1874,14 @@ const server = http.createServer(async (req, res) => {
 
     // (legacy) เขียนทับทั้งไฟล์ — คงไว้เพื่อ compatibility แต่ frontend ใช้ upsert แล้ว
     if (reqUrl === '/api/tracking' && method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', () => {
-        try {
-          const data = JSON.parse(body);
-          if (!Array.isArray(data)) { jsonErr(res, 400, 'expected array'); return; }
-          auditLog('replace_all', '*', ['(' + data.length + ' records)'], req.socket.remoteAddress);
-          const ok = saveTracking(data);
-          jsonOk(res, { ok, count: data.length });
-        } catch(e) { jsonErr(res, 400, e.message); }
-      });
+      const data = await readJsonBody(req, res);
+      if (data === null) return;
+      try {
+        if (!Array.isArray(data)) { jsonErr(res, 400, 'expected array'); return; }
+        auditLog('replace_all', '*', ['(' + data.length + ' records)'], req.socket.remoteAddress);
+        const ok = saveTracking(data);
+        jsonOk(res, { ok, count: data.length });
+      } catch(e) { jsonErr(res, 400, e.message); }
       return;
     }
 
@@ -1838,45 +1889,42 @@ const server = http.createServer(async (req, res) => {
     // POST /api/tracking/upsert  body = record เดียว หรือ array ของ records
     // merge ด้วย key po_so — ไม่แตะรายการอื่นในไฟล์
     if (reqUrl === '/api/tracking/upsert' && method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', () => {
-        try {
-          const input = JSON.parse(body);
-          const recs  = Array.isArray(input) ? input : [input];
-          const data  = loadTracking();
-          const byKey = new Map();
-          data.forEach((r, i) => { const k = r.po_so || r.id; if (k != null && !byKey.has(k)) byKey.set(k, i); });
-          // เดิม endpoint นี้ merge JSON จาก client ตรงๆ โดยไม่ตรวจสอบเลย — ฟิลด์ตัวเลขที่ผิดปกติ (ติดลบ/ไม่ใช่
-          // ตัวเลข) จะถูกบันทึกเงียบๆ แล้วไปพังผลรวมต้นทุน/Dashboard ที่อื่นในภายหลังโดยไม่มี error ให้เห็น
-          const NUM_FIELDS = ['freight','clearance','insurance','duty','vat','expectedCost','amount','rate','containerQty'];
-          const invalidField = r => NUM_FIELDS.find(f => {
-            if (r[f] === undefined || r[f] === null || r[f] === '') return false;
-            const n = Number(r[f]);
-            return !Number.isFinite(n) || n < 0;
-          });
-          let applied = 0;
-          const rejected = [];
-          recs.forEach(r => {
-            const key = r && (r.po_so || r.id);
-            if (key == null) return;
-            const bad = invalidField(r);
-            if (bad) { rejected.push({ po_so: key, field: bad, value: r[bad] }); return; }
-            const idx    = byKey.has(key) ? byKey.get(key) : -1;
-            const before = idx >= 0 ? data[idx] : null;
-            if (idx >= 0) data[idx] = { ...data[idx], ...r };
-            else { byKey.set(key, data.length); data.push(r); }
-            const changed = before
-              ? Object.keys(r).filter(k => JSON.stringify(before[k]) !== JSON.stringify(r[k]))
-              : Object.keys(r);
-            auditLog(before ? 'update' : 'create', key, changed, req.socket.remoteAddress);
-            applied++;
-          });
-          const ok = saveTracking(data);
-          if (rejected.length) console.error('[Upsert] ปฏิเสธค่าที่ผิดปกติ:', JSON.stringify(rejected));
-          jsonOk(res, { ok, applied, total: data.length, rejected });
-        } catch(e) { jsonErr(res, 400, e.message); }
-      });
+      const input = await readJsonBody(req, res);
+      if (input === null) return;
+      try {
+        const recs  = Array.isArray(input) ? input : [input];
+        const data  = loadTracking();
+        const byKey = new Map();
+        data.forEach((r, i) => { const k = r.po_so || r.id; if (k != null && !byKey.has(k)) byKey.set(k, i); });
+        // เดิม endpoint นี้ merge JSON จาก client ตรงๆ โดยไม่ตรวจสอบเลย — ฟิลด์ตัวเลขที่ผิดปกติ (ติดลบ/ไม่ใช่
+        // ตัวเลข) จะถูกบันทึกเงียบๆ แล้วไปพังผลรวมต้นทุน/Dashboard ที่อื่นในภายหลังโดยไม่มี error ให้เห็น
+        const NUM_FIELDS = ['freight','clearance','insurance','duty','vat','expectedCost','amount','rate','containerQty'];
+        const invalidField = r => NUM_FIELDS.find(f => {
+          if (r[f] === undefined || r[f] === null || r[f] === '') return false;
+          const n = Number(r[f]);
+          return !Number.isFinite(n) || n < 0;
+        });
+        let applied = 0;
+        const rejected = [];
+        recs.forEach(r => {
+          const key = r && (r.po_so || r.id);
+          if (key == null) return;
+          const bad = invalidField(r);
+          if (bad) { rejected.push({ po_so: key, field: bad, value: r[bad] }); return; }
+          const idx    = byKey.has(key) ? byKey.get(key) : -1;
+          const before = idx >= 0 ? data[idx] : null;
+          if (idx >= 0) data[idx] = { ...data[idx], ...r };
+          else { byKey.set(key, data.length); data.push(r); }
+          const changed = before
+            ? Object.keys(r).filter(k => JSON.stringify(before[k]) !== JSON.stringify(r[k]))
+            : Object.keys(r);
+          auditLog(before ? 'update' : 'create', key, changed, req.socket.remoteAddress);
+          applied++;
+        });
+        const ok = saveTracking(data);
+        if (rejected.length) console.error('[Upsert] ปฏิเสธค่าที่ผิดปกติ:', JSON.stringify(rejected));
+        jsonOk(res, { ok, applied, total: data.length, rejected });
+      } catch(e) { jsonErr(res, 400, e.message); }
       return;
     }
 
@@ -1885,34 +1933,32 @@ const server = http.createServer(async (req, res) => {
     // (ผู้ใช้ทั่วไปแก้ .env ไม่ได้ — เจ้าของระบบเป็นคนตั้งรหัสแล้วแจกให้เฉพาะผู้มีอำนาจเท่านั้น)
     // POST /api/tracking/delete  body = { po_so, password }
     if (reqUrl === '/api/tracking/delete' && method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', () => {
-        try {
-          if (!process.env.DELETE_PASSWORD) {
-            jsonErr(res, 403, 'ฟีเจอร์ลบยังไม่เปิดใช้งาน — ต้องตั้งค่า DELETE_PASSWORD ใน .env ก่อน');
-            return;
-          }
-          const { po_so, password } = JSON.parse(body || '{}');
-          if (password !== process.env.DELETE_PASSWORD) {
-            auditLog('delete_denied', po_so || '?', ['wrong_password'], req.socket.remoteAddress);
-            jsonErr(res, 401, 'รหัสผ่านไม่ถูกต้อง');
-            return;
-          }
-          if (!po_so) { jsonErr(res, 400, 'ไม่พบ po_so'); return; }
-          const data = loadTracking();
-          const idx  = data.findIndex(r => (r.po_so || r.id) === po_so);
-          if (idx < 0) { jsonErr(res, 404, 'ไม่พบรายการนี้'); return; }
-          if (!data[idx]._synthetic) {
-            jsonErr(res, 400, 'ลบได้เฉพาะ shipment ที่แยกเอง (สร้างในแอป) เท่านั้น — PO จริงจาก Odoo ลบผ่านหน้านี้ไม่ได้');
-            return;
-          }
-          data.splice(idx, 1);
-          const ok = saveTracking(data);
-          auditLog('delete', po_so, ['deleted'], req.socket.remoteAddress);
-          jsonOk(res, { ok });
-        } catch (e) { jsonErr(res, 400, e.message); }
-      });
+      const parsedBody = await readJsonBody(req, res);
+      if (parsedBody === null) return;
+      try {
+        if (!process.env.DELETE_PASSWORD) {
+          jsonErr(res, 403, 'ฟีเจอร์ลบยังไม่เปิดใช้งาน — ต้องตั้งค่า DELETE_PASSWORD ใน .env ก่อน');
+          return;
+        }
+        const { po_so, password } = parsedBody;
+        if (password !== process.env.DELETE_PASSWORD) {
+          auditLog('delete_denied', po_so || '?', ['wrong_password'], req.socket.remoteAddress);
+          jsonErr(res, 401, 'รหัสผ่านไม่ถูกต้อง');
+          return;
+        }
+        if (!po_so) { jsonErr(res, 400, 'ไม่พบ po_so'); return; }
+        const data = loadTracking();
+        const idx  = data.findIndex(r => (r.po_so || r.id) === po_so);
+        if (idx < 0) { jsonErr(res, 404, 'ไม่พบรายการนี้'); return; }
+        if (!data[idx]._synthetic) {
+          jsonErr(res, 400, 'ลบได้เฉพาะ shipment ที่แยกเอง (สร้างในแอป) เท่านั้น — PO จริงจาก Odoo ลบผ่านหน้านี้ไม่ได้');
+          return;
+        }
+        data.splice(idx, 1);
+        const ok = saveTracking(data);
+        auditLog('delete', po_so, ['deleted'], req.socket.remoteAddress);
+        jsonOk(res, { ok });
+      } catch (e) { jsonErr(res, 400, e.message); }
       return;
     }
 
@@ -1990,48 +2036,57 @@ const server = http.createServer(async (req, res) => {
     });
 
     if (reqUrl === '/api/shipments' && method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        try {
-          const vals = JSON.parse(body);
-          const bad = invalidShipmentField(vals);
-          if (bad) { jsonErr(res, 400, `ค่า ${bad} ไม่ถูกต้อง: ${vals[bad]}`); return; }
-          const id = await odooKw('logistics.shipment', 'create', [vals]);
-          delete cache.data['shipments'];
-          jsonOk(res, { ok: true, id });
-        } catch (e) {
-          jsonErrEx(res, 500, 'shipments POST', e);
-        }
-      });
+      const vals = await readJsonBody(req, res);
+      if (vals === null) return;
+      try {
+        const bad = invalidShipmentField(vals);
+        if (bad) { jsonErr(res, 400, `ค่า ${bad} ไม่ถูกต้อง: ${vals[bad]}`); return; }
+        const id = await odooKw('logistics.shipment', 'create', [vals]);
+        delete cache.data['shipments'];
+        jsonOk(res, { ok: true, id });
+      } catch (e) {
+        jsonErrEx(res, 500, 'shipments POST', e);
+      }
       return;
     }
 
     const shipPatchMatch = reqUrl.match(/^\/api\/shipments\/(\d+)$/);
     if (shipPatchMatch && method === 'PATCH') {
       const shipId = parseInt(shipPatchMatch[1]);
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        try {
-          const vals = JSON.parse(body);
-          const bad = invalidShipmentField(vals);
-          if (bad) { jsonErr(res, 400, `ค่า ${bad} ไม่ถูกต้อง: ${vals[bad]}`); return; }
-          await odooKw('logistics.shipment', 'write', [[shipId], vals]);
-          delete cache.data['shipments'];
-          jsonOk(res, { ok: true, id: shipId });
-        } catch (e) {
-          jsonErrEx(res, 500, 'shipments PATCH', e);
-        }
-      });
+      const vals = await readJsonBody(req, res);
+      if (vals === null) return;
+      try {
+        const bad = invalidShipmentField(vals);
+        if (bad) { jsonErr(res, 400, `ค่า ${bad} ไม่ถูกต้อง: ${vals[bad]}`); return; }
+        await odooKw('logistics.shipment', 'write', [[shipId], vals]);
+        delete cache.data['shipments'];
+        jsonOk(res, { ok: true, id: shipId });
+      } catch (e) {
+        jsonErrEx(res, 500, 'shipments PATCH', e);
+      }
       return;
     }
 
+    // ลบ record จริงใน Odoo production — ต้องมี DELETE_PASSWORD เหมือน /api/tracking/delete
+    // (เดิม endpoint นี้แค่ผ่าน Basic Auth ทั่วไปก็ลบได้เลย ทั้งที่ทำลายข้อมูลจริงกู้คืนยากกว่า
+    // การลบ synthetic row ในไฟล์ tracking_data.json — ตอนนี้ guard เท่ากันแล้ว)
     if (shipPatchMatch && method === 'DELETE') {
       const shipId = parseInt(shipPatchMatch[1]);
+      const parsedBody = await readJsonBody(req, res);
+      if (parsedBody === null) return;
       try {
+        if (!process.env.DELETE_PASSWORD) {
+          jsonErr(res, 403, 'ฟีเจอร์ลบยังไม่เปิดใช้งาน — ต้องตั้งค่า DELETE_PASSWORD ใน .env ก่อน');
+          return;
+        }
+        if (parsedBody.password !== process.env.DELETE_PASSWORD) {
+          auditLog('shipment_delete_denied', String(shipId), ['wrong_password'], req.socket.remoteAddress);
+          jsonErr(res, 401, 'รหัสผ่านไม่ถูกต้อง');
+          return;
+        }
         await odooKw('logistics.shipment', 'unlink', [[shipId]]);
         delete cache.data['shipments'];
+        auditLog('shipment_delete', String(shipId), ['deleted'], req.socket.remoteAddress);
         jsonOk(res, { ok: true, id: shipId });
       } catch (e) {
         jsonErrEx(res, 500, 'shipments DELETE', e);
