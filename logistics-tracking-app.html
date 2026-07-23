@@ -12,16 +12,43 @@
 <script src="/vendor/babel.min.js"></script>
 <script src="/vendor/xlsx.full.min.js"></script>
 <style>
+/* ── Design tokens: สีที่ใช้ซ้ำมากที่สุดทั่วทั้งแอป (>=10 จุด) รวมเป็นตัวแปรเดียว
+   ให้แก้ธีม/สลับ dark mode ได้จากจุดเดียว ไม่ต้องไล่แก้ hex กระจายทั้งไฟล์ ──
+   ค่าเริ่มต้น (ไม่มี data-theme) = ตาม prefers-color-scheme ของเครื่อง, data-theme บนหน้า
+   จะ override เสมอ (ผู้ใช้กดสลับเองชนะ system preference) */
+:root{
+  --color-text:#14181f; --color-text-secondary:#5b6371; --color-text-tertiary:#7a818d; --color-text-muted:#a99fa8;
+  --color-surface:#fff; --color-surface-muted:#f3edf0; --color-surface-muted2:#f0e9ed; --color-page-bg:#faf6f8;
+  --color-border:#e8dde4;
+  /* brand/danger/success ตั้งใจไม่เปลี่ยนค่าตามธีม (ต่างจากกลุ่ม neutral ด้านบน) — ปุ่มทึบ
+     (background=สีนี้ + ข้อความสีขาว) ใช้สีเดิมอยู่แล้วทั่วทั้งไฟล์ ถ้าทำให้สว่างขึ้นตอน dark mode
+     (ตามที่ลองครั้งแรก) ข้อความขาวบนพื้นชมพู/แดง/เขียวที่สว่างขึ้นจะอ่านไม่ออก (contrast แย่ลง) */
+  --color-brand:#c91253; --color-danger:#dc2626; --color-success:#16a34a;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --color-text:#f3edf0; --color-text-secondary:#b8aab3; --color-text-tertiary:#9a8d96; --color-text-muted:#8b7d86;
+    --color-surface:#201a1e; --color-surface-muted:#2b2429; --color-surface-muted2:#2f272c; --color-page-bg:#171315;
+    --color-border:#3a2f34;
+  }
+}
+:root[data-theme="dark"]{
+  --color-text:#f3edf0; --color-text-secondary:#b8aab3; --color-text-tertiary:#9a8d96; --color-text-muted:#8b7d86;
+  --color-surface:#201a1e; --color-surface-muted:#2b2429; --color-surface-muted2:#2f272c; --color-page-bg:#171315;
+  --color-border:#3a2f34;
+}
 *{box-sizing:border-box;}
 html,body,#root{margin:0;padding:0;height:100%;}
-body{font-family:'IBM Plex Sans Thai',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;color:#14181f;}
+body{font-family:'IBM Plex Sans Thai',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;color:var(--color-text);background:var(--color-page-bg);}
 ::-webkit-scrollbar{width:9px;height:9px;}
 ::-webkit-scrollbar-thumb{background:#d9d0d6;border-radius:99px;border:2px solid transparent;background-clip:content-box;}
 ::-webkit-scrollbar-thumb:hover{background:#c4b8c0;background-clip:content-box;}
 @keyframes kobSlideIn{from{transform:translateX(100%);}to{transform:translateX(0);}}
 @keyframes kobFadeIn{from{opacity:0;}to{opacity:1;}}
 @keyframes kobSpin{to{transform:rotate(360deg);}}
+@keyframes kobPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.45;transform:scale(1.35);}}
 input,select{box-sizing:border-box;}
+:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px;}
 </style>
 </head>
 <body>
@@ -109,14 +136,14 @@ const IMP_STAGES = [
   {key:'transit',label:'กำลังขนส่ง',color:'#4f46e5'},
   {key:'arrived',label:'ถึงท่าเรือ',color:'#d97706'},
   {key:'customs',label:'พิธีการศุลกากร',color:'#ea580c'},
-  {key:'received',label:'รับเข้าคลัง',color:'#16a34a'}
+  {key:'received',label:'รับเข้าคลัง',color:'var(--color-success)'}
 ];
 const EXP_STAGES = [
   {key:'draft',label:'SO ตั้งต้น',color:'#64748b'},
   {key:'packing',label:'ผลิต / แพ็ค',color:'#7c3aed'},
   {key:'booking',label:'จองเรือ',color:'#2563eb'},
   {key:'shipped',label:'จัดส่งแล้ว',color:'#4f46e5'},
-  {key:'arrived',label:'ถึงปลายทาง',color:'#16a34a'}
+  {key:'arrived',label:'ถึงปลายทาง',color:'var(--color-success)'}
 ];
 
 const PATHS = {
@@ -136,7 +163,9 @@ const PATHS = {
   dl:'M12 3v11 M7 10l5 5 5-5 M4 20h16',
   courier:'M3 8l9-5 9 5-9 5-9-5z M3 8v8l9 5 9-5V8 M12 13v8',
   split:'M12 3v6 M12 9l-6 4v6 M12 9l6 4v6 M4 21h4 M16 21h4',
-  trash:'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13'
+  trash:'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13',
+  sun:'M12 17a5 5 0 100-10 5 5 0 000 10z M12 1v2 M12 21v2 M4.22 4.22l1.42 1.42 M18.36 18.36l1.42 1.42 M1 12h2 M21 12h2 M4.22 19.78l1.42-1.42 M18.36 5.64l1.42-1.42',
+  moon:'M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z'
 };
 function Ico({name,size=18,sw=1.7}){
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -159,7 +188,7 @@ function fmtAmt(v,cur){
 }
 function rateGuess(cur){return ({CNY:4.77,USD:33.3,SGD:25.4,THB:1})[cur]||1;}
 // สีประจำสกุลเงิน — ใช้ที่แผง FX exposure ใน Dashboard เท่านั้น (ไม่ผูกกับ palette อื่นในไฟล์)
-function curColor(cur){return ({CNY:'#c91253',USD:'#7c3aed',SGD:'#0ea5e9',THB:'#16a34a'})[cur]||'#94a3b8';}
+function curColor(cur){return ({CNY:'var(--color-brand)',USD:'#7c3aed',SGD:'#0ea5e9',THB:'var(--color-success)'})[cur]||'#94a3b8';}
 // fetch ที่มี timeout จริง — เดิม fetch() ไม่มี timeout ในตัว ถ้าเครือข่ายไป Odoo ค้าง
 // (ไม่ reject ไม่ resolve) หน้าจอจะค้าง "กำลังโหลด…" ไปเรื่อยๆ โดยไม่มี error ให้เห็น
 function fetchTimeout(url,opts,ms){
@@ -168,11 +197,15 @@ function fetchTimeout(url,opts,ms){
   return fetch(url,{...opts,signal:ctrl.signal}).finally(()=>clearTimeout(t));
 }
 function stageMeta(tab,key){const list=tab==='export'?EXP_STAGES:IMP_STAGES;return list.find(s=>s.key===key)||list[0];}
+// stage ที่ของ "กำลังเคลื่อนไหวจริง" (ไม่ใช่แค่รอคิวหรือจบงานแล้ว) — ใช้ทำจุด pulse ให้เห็นว่า
+// shipment นี้ active อยู่ ณ ตอนนี้ ต่างจาก po/draft (ยังไม่เริ่ม) และ received/arrived (จบแล้ว)
+const ACTIVE_STAGES={import:['booking','transit'],export:['packing','booking','shipped']};
+function isActiveStage(tab,key){return (ACTIVE_STAGES[tab==='export'?'export':'import']||[]).includes(key);}
 function typeMeta(t){
   return ({oversea:{label:'Oversea',bg:'#dbeafe',color:'#1d4ed8'},pk:{label:'Packaging',bg:'#ffedd5',color:'#c2410c'},fg:{label:'Finished',bg:'#ede9fe',color:'#6d28d9'}})[t]||{label:'Oversea',bg:'#dbeafe',color:'#1d4ed8'};
 }
 function normType(t){t=(t||'').toLowerCase();if(t==='pk'||t==='fg'||t==='oversea')return t;return 'oversea';}
-function coBadgeSty(co){const kob=co==='KOB';return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:700,background:kob?'#fce7f3':'#ede9fe',color:kob?'#c91253':'#6d28d9'};}
+function coBadgeSty(co){const kob=co==='KOB';return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:700,background:kob?'#fce7f3':'#ede9fe',color:kob?'var(--color-brand)':'#6d28d9'};}
 function billCatLabel(c){return ({freight:'ค่าขนส่ง',clearance:'พิธีการ',insurance:'ประกันภัย',duty:'อากร',vat:'VAT'})[c]||'อื่นๆ';}
 // ป้ายชื่อฟิลด์ภาษาไทยสำหรับ audit log — เดิม auditLog เก็บแค่ชื่อฟิลด์ดิบ (เช่น "cur","freight")
 // ไม่ friendly สำหรับ manager มาดู แปลเฉพาะฟิลด์ที่มีความหมายทางธุรกิจ ที่เหลือ fallback เป็นชื่อดิบ
@@ -207,13 +240,13 @@ function poStatusMini(s){
   return parts.join(' · ');
 }
 function poStatusColor(s){
-  if(s._receiptStatus==='full')return '#16a34a';
+  if(s._receiptStatus==='full')return 'var(--color-success)';
   if(s._receiptStatus==='partial')return '#d97706';
   if(s._odooState==='purchase'||s._odooState==='done')return '#2563eb';
   if(s._odooState==='draft'||s._odooState==='sent')return '#94a3b8';
   return '#94a3b8';
 }
-function billCatSty(c){const m=({freight:{bg:'#dbeafe',fg:'#1d4ed8'},clearance:{bg:'#fae8ff',fg:'#a21caf'},insurance:{bg:'#ccfbf1',fg:'#0f766e'},duty:{bg:'#ffedd5',fg:'#c2410c'},vat:{bg:'#dcfce7',fg:'#15803d'}})[c]||{bg:'#f3edf0',fg:'#7a818d'};return {display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:m.bg,color:m.fg};}
+function billCatSty(c){const m=({freight:{bg:'#dbeafe',fg:'#1d4ed8'},clearance:{bg:'#fae8ff',fg:'#a21caf'},insurance:{bg:'#ccfbf1',fg:'#0f766e'},duty:{bg:'#ffedd5',fg:'#c2410c'},vat:{bg:'#dcfce7',fg:'#15803d'}})[c]||{bg:'var(--color-surface-muted)',fg:'var(--color-text-tertiary)'};return {display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:m.bg,color:m.fg};}
 // ต้นทุนนำเข้ารวมของ shipment (ไม่รวมมูลค่าสินค้า)
 function costSum(s){return (s.freight||0)+(s.clearance||0)+(s.insurance||0)+(s.duty||0)+(s.vat||0);}
 // ต้นทุนรวมแปลงเป็นบาท (มูลค่าสินค้า + ต้นทุนนำเข้า) — ใช้ทั้งตารางต้นทุนและ Dashboard
@@ -243,12 +276,12 @@ function quarterOf(s){
 }
 function typeBadgeSty(t){const m=typeMeta(t);return {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:600,background:m.bg,color:m.color};}
 function stageBadgeSty(tab,key){const m=stageMeta(tab,key);return {display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 9px',borderRadius:'99px',fontSize:'11px',fontWeight:600,background:m.color+'1a',color:m.color,whiteSpace:'nowrap'};}
-function stageDotSty(tab,key){return {width:'6px',height:'6px',borderRadius:'50%',background:stageMeta(tab,key).color,flexShrink:0};}
+function stageDotSty(tab,key){return {width:'6px',height:'6px',borderRadius:'50%',background:stageMeta(tab,key).color,flexShrink:0,animation:isActiveStage(tab,key)?'kobPulse 1.8s ease-in-out infinite':'none'};}
 
-const INP={width:'100%',height:'38px',padding:'0 11px',border:'1.5px solid #e8dde4',borderRadius:'9px',fontFamily:'inherit',fontSize:'13px',color:'#14181f',outline:'none',background:'#fff'};
+const INP={width:'100%',height:'38px',padding:'0 11px',border:'1.5px solid var(--color-border)',borderRadius:'9px',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',outline:'none',background:'var(--color-surface)'};
 const SEL={...INP,cursor:'pointer',padding:'0 9px'};
 
-function Field({label,children}){return <div><label style={{display:'block',fontSize:'11px',fontWeight:600,color:'#7a818d',marginBottom:'5px'}}>{label}</label>{children}</div>;}
+function Field({label,children}){return <div><label style={{display:'block',fontSize:'11px',fontWeight:600,color:'var(--color-text-tertiary)',marginBottom:'5px'}}>{label}</label>{children}</div>;}
 function FInput({label,...p}){return <Field label={label}><input style={INP} {...p}/></Field>;}
 function FSelect({label,value,onChange,children}){return <Field label={label}><select style={SEL} value={value} onChange={onChange}>{children}</select></Field>;}
 // กลุ่มช่อง Ship Mode ที่ใช้ร่วมกันทั้งฟอร์มสร้าง/แก้ไข — เปลี่ยน Ship Mode แล้วโชว์ช่องย่อยตามประเภท
@@ -301,10 +334,24 @@ class App extends Component {
   constructor(props){
     super(props);
     const w=typeof window!=='undefined'?window.innerWidth:1280;
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false};
+    // ค่าเริ่มต้น: เคยกดเลือกเองไว้ก่อน (localStorage) > ตาม prefers-color-scheme ของเครื่อง > light
+    let theme='light';
+    try{
+      const saved=localStorage.getItem('kobTheme');
+      theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+    }catch(e){}
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this._plan=null; this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
+  // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
+  toggleTheme(){
+    const next=this.state.theme==='dark'?'light':'dark';
+    try{localStorage.setItem('kobTheme',next);}catch(e){}
+    document.documentElement.dataset.theme=next;
+    this.setState({theme:next});
+  }
   componentDidMount(){
+    document.documentElement.dataset.theme=this.state.theme;
     window.addEventListener('resize',this._onResize=()=>{const n=window.innerWidth<880;if(n!==this.state.isNarrow)this.setState({isNarrow:n});});
     this.loadData();
     // อัปเดตข้อมูลจาก Odoo อัตโนมัติเป็นระยะ — ถ้าตอนนี้อยู่ในโหมด fallback (Odoo เพิ่งหลุด)
@@ -928,7 +975,7 @@ class App extends Component {
       :{c:'#9aa3b2',t:'โหมดตัวอย่าง'};
     return <header style={{display:'flex',alignItems:'center',gap:'14px',padding:'0 22px',height:'60px',background:'#14181f',flexShrink:0}}>
       <div style={{display:'flex',alignItems:'center',gap:'11px'}}>
-        <div style={{width:'36px',height:'36px',borderRadius:'9px',background:'linear-gradient(135deg,#c91253,#e8408e)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Ico name="boxes" size={19} sw={1.7}/></div>
+        <div style={{width:'36px',height:'36px',borderRadius:'9px',background:'linear-gradient(135deg,var(--color-brand),#e8408e)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Ico name="boxes" size={19} sw={1.7}/></div>
         <div><div style={{fontWeight:700,fontSize:'14.5px',color:'#fff',letterSpacing:'.2px'}}>Logistics Tracking</div><div style={{fontSize:'11px',color:'#8b94a3'}}>KOB &amp; BTV · Import / Export</div></div>
       </div>
       <div style={{flex:1}}/>
@@ -936,13 +983,16 @@ class App extends Component {
         <span style={{width:'7px',height:'7px',borderRadius:'50%',background:dbConf.c,boxShadow:'0 0 0 3px '+dbConf.c+'33'}}/>
         <span style={{fontSize:'11.5px',fontWeight:500,color:dbConf.c}}>{dbConf.t}{dataSource==='fallback'?' · คลิกลองใหม่':''}</span>
       </div>
-      {!isNarrow&&lastSync!=='—'&&<span style={{fontSize:'11.5px',color:'#5b6371',whiteSpace:'nowrap'}}>ซิงค์ล่าสุด {lastSync}</span>}
+      {!isNarrow&&lastSync!=='—'&&<span style={{fontSize:'11.5px',color:'var(--color-text-secondary)',whiteSpace:'nowrap'}}>ซิงค์ล่าสุด {lastSync}</span>}
+      <button onClick={()=>this.toggleTheme()} aria-label={this.state.theme==='dark'?'สลับเป็นโหมดสว่าง':'สลับเป็นโหมดมืด'} title={this.state.theme==='dark'?'สลับเป็นโหมดสว่าง':'สลับเป็นโหมดมืด'} style={{display:'flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',border:0,borderRadius:'8px',background:'#232936',color:'#8b94a3',cursor:'pointer',flexShrink:0}}>
+        <Ico name={this.state.theme==='dark'?'sun':'moon'} size={16} sw={1.8}/>
+      </button>
       {(()=>{const al=this.alerts();const late=al.filter(a=>a.kind==='late').length;
         return <button onClick={()=>this.setState({alertsOpen:true})} title="รายการต้องติดตาม" style={{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',border:0,borderRadius:'8px',background:'#232936',color:al.length?'#fbbf24':'#8b94a3',cursor:'pointer',flexShrink:0}}>
           <Ico name="bell" size={17} sw={1.8}/>
-          {al.length>0&&<span style={{position:'absolute',top:'-4px',right:'-4px',minWidth:'17px',height:'17px',padding:'0 4px',borderRadius:'99px',background:late?'#dc2626':'#d97706',color:'#fff',fontSize:'10px',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>{al.length}</span>}
+          {al.length>0&&<span style={{position:'absolute',top:'-4px',right:'-4px',minWidth:'17px',height:'17px',padding:'0 4px',borderRadius:'99px',background:late?'var(--color-danger)':'#d97706',color:'#fff',fontSize:'10px',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>{al.length}</span>}
         </button>;})()}
-      <button onClick={()=>this.sync()} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:isNarrow?'0 9px':'0 14px',border:0,borderRadius:'8px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:syncing?'default':'pointer',opacity:syncing?0.8:1}}>
+      <button onClick={()=>this.sync()} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:isNarrow?'0 9px':'0 14px',border:0,borderRadius:'8px',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:syncing?'default':'pointer',opacity:syncing?0.8:1}}>
         <span style={{display:'flex',animation:syncing?'kobSpin 1s linear infinite':'none'}}><Ico name="sync" size={15} sw={2}/></span>
         {!isNarrow&&<span>Sync Odoo</span>}
       </button>
@@ -952,13 +1002,13 @@ class App extends Component {
   renderTabs(){
     const {tab,isNarrow}=this.state;
     const impAll=this.imports(),expAll=this.exports();
-    return <div style={{display:'flex',alignItems:'center',gap:'2px',padding:'0 22px',background:'#fff',borderBottom:'1px solid #e8dde4',flexShrink:0,overflowX:'auto'}}>
+    return <div style={{display:'flex',alignItems:'center',gap:'2px',padding:'0 22px',background:'var(--color-surface)',borderBottom:'1px solid var(--color-border)',flexShrink:0,overflowX:'auto'}}>
       {[{key:'import',label:'Import Board',icon:'down',count:impAll.length},{key:'export',label:'Export Board',icon:'up',count:expAll.length},{key:'dashboard',label:'Dashboard',icon:'chart',count:false},{key:'verify',label:'ตรวจเอกสาร',icon:'check',count:false}].map(t=>{
         const active=tab===t.key;
-        return <button key={t.key} onClick={()=>this.setState({tab:t.key,detailId:null})} style={{display:'flex',alignItems:'center',gap:'7px',padding:'13px 16px 12px',border:0,borderBottom:active?'2px solid #c91253':'2px solid transparent',background:'transparent',color:active?'#c91253':'#5b6371',fontFamily:'inherit',fontSize:'13.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap',marginBottom:'-1px'}}>
+        return <button key={t.key} onClick={()=>this.setState({tab:t.key,detailId:null})} style={{display:'flex',alignItems:'center',gap:'7px',padding:'13px 16px 12px',border:0,borderBottom:active?'2px solid var(--color-brand)':'2px solid transparent',background:'transparent',color:active?'var(--color-brand)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap',marginBottom:'-1px'}}>
           <Ico name={t.icon} size={16} sw={1.8}/>
           <span>{isNarrow&&t.key!=='dashboard'?t.label.replace(' Board',''):t.label}</span>
-          {t.count!==false&&<span style={{fontSize:'10.5px',fontWeight:700,padding:'1px 7px',borderRadius:'99px',background:active?'#c91253':'#f3edf0',color:active?'#fff':'#a99fa8'}}>{t.count}</span>}
+          {t.count!==false&&<span style={{fontSize:'10.5px',fontWeight:700,padding:'1px 7px',borderRadius:'99px',background:active?'var(--color-brand)':'var(--color-surface-muted)',color:active?'var(--color-surface)':'var(--color-text-muted)'}}>{t.count}</span>}
         </button>;
       })}
     </div>;
@@ -967,32 +1017,32 @@ class App extends Component {
   renderToolbar(tab){
     const {co,type,query,view,isNarrow}=this.state;
     const list=this.filtered(tab);
-    const pill=(active,label,onClick,solid)=><button onClick={onClick} style={{padding:'6px 13px',borderRadius:'99px',border:active?'1.5px solid #c91253':'1.5px solid #e8dde4',background:active?(solid?'#c91253':'#fce7f3'):'#fff',color:active?(solid?'#fff':'#c91253'):'#5b6371',fontFamily:'inherit',fontSize:'12.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap'}}>{label}</button>;
-    const vbtn=active=>({height:'36px',width:'38px',display:'flex',alignItems:'center',justifyContent:'center',border:0,background:active?'#c91253':'#fff',color:active?'#fff':'#7a818d',cursor:'pointer'});
+    const pill=(active,label,onClick,solid)=><button onClick={onClick} style={{padding:'6px 13px',borderRadius:'99px',border:active?'1.5px solid var(--color-brand)':'1.5px solid var(--color-border)',background:active?(solid?'var(--color-brand)':'#fce7f3'):'var(--color-surface)',color:active?(solid?'var(--color-surface)':'var(--color-brand)'):'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap'}}>{label}</button>;
+    const vbtn=active=>({height:'36px',width:'38px',display:'flex',alignItems:'center',justifyContent:'center',border:0,background:active?'var(--color-brand)':'var(--color-surface)',color:active?'var(--color-surface)':'var(--color-text-tertiary)',cursor:'pointer'});
     return <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px',flexWrap:'wrap',padding:'16px 22px 12px'}}>
         <div style={{display:'flex',alignItems:'center',gap:'7px',flexWrap:'wrap'}}>
           {['','KOB','BTV'].map(c=>pill(co===c,c||'ทุกบริษัท',()=>this.setState({co:c}),true))}
-          {tab==='import'&&<><span style={{width:'1px',height:'22px',background:'#e8dde4',margin:'0 4px'}}/>{[{k:'all',l:'ทุกประเภท'},{k:'pk',l:'Packaging'},{k:'fg',l:'Finished'},{k:'oversea',l:'Oversea'}].map(t=>pill(type===t.k,t.l,()=>this.setState({type:t.k}),false))}</>}
+          {tab==='import'&&<><span style={{width:'1px',height:'22px',background:'var(--color-border)',margin:'0 4px'}}/>{[{k:'all',l:'ทุกประเภท'},{k:'pk',l:'Packaging'},{k:'fg',l:'Finished'},{k:'oversea',l:'Oversea'}].map(t=>pill(type===t.k,t.l,()=>this.setState({type:t.k}),false))}</>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',background:'#fff',border:'1.5px solid #e8dde4',borderRadius:'9px',padding:'0 12px',height:'36px',width:'230px',maxWidth:'48vw'}}>
-            <span style={{display:'flex',color:'#a99fa8'}}><Ico name="search" size={16} sw={1.8}/></span>
-            <input value={query} onChange={e=>this.setState({query:e.target.value})} placeholder="ค้นหา PO, ผู้ขาย, BL/AWB…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'#14181f',width:'100%'}}/>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',background:'var(--color-surface)',border:'1.5px solid var(--color-border)',borderRadius:'9px',padding:'0 12px',height:'36px',width:'230px',maxWidth:'48vw'}}>
+            <span style={{display:'flex',color:'var(--color-text-muted)'}}><Ico name="search" size={16} sw={1.8}/></span>
+            <input value={query} onChange={e=>this.setState({query:e.target.value})} placeholder="ค้นหา PO, ผู้ขาย, BL/AWB…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',width:'100%'}}/>
           </div>
-          <div style={{display:'flex',border:'1.5px solid #e8dde4',borderRadius:'9px',overflow:'hidden'}}>
+          <div style={{display:'flex',border:'1.5px solid var(--color-border)',borderRadius:'9px',overflow:'hidden'}}>
             <button onClick={()=>this.setState({view:'kanban'})} style={vbtn(view==='kanban')}><Ico name="kanban" size={16} sw={1.8}/></button>
-            <button onClick={()=>this.setState({view:'table'})} style={{...vbtn(view==='table'),borderLeft:'1px solid #e8dde4'}}><Ico name="table" size={16} sw={1.8}/></button>
+            <button onClick={()=>this.setState({view:'table'})} style={{...vbtn(view==='table'),borderLeft:'1px solid var(--color-border)'}}><Ico name="table" size={16} sw={1.8}/></button>
           </div>
-          <button onClick={()=>this.exportExcel(tab)} title="ดาวน์โหลด Excel" style={{display:'flex',alignItems:'center',gap:'6px',height:'36px',padding:'0 12px',border:'1.5px solid #e8dde4',borderRadius:'9px',background:'#fff',color:'#15803d',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}>
+          <button onClick={()=>this.exportExcel(tab)} title="ดาวน์โหลด Excel" style={{display:'flex',alignItems:'center',gap:'6px',height:'36px',padding:'0 12px',border:'1.5px solid var(--color-border)',borderRadius:'9px',background:'var(--color-surface)',color:'#15803d',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}>
             <Ico name="dl" size={15} sw={1.9}/>{!isNarrow&&<span>Excel</span>}
           </button>
-          <button onClick={()=>this.setState({creating:true,form:defaultForm(tab==='export'?'export':'import')})} style={{display:'flex',alignItems:'center',gap:'6px',height:'36px',padding:'0 15px',border:0,borderRadius:'9px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',flexShrink:0,boxShadow:'0 3px 10px rgba(201,18,83,.26)'}}>
+          <button onClick={()=>this.setState({creating:true,form:defaultForm(tab==='export'?'export':'import')})} style={{display:'flex',alignItems:'center',gap:'6px',height:'36px',padding:'0 15px',border:0,borderRadius:'9px',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',flexShrink:0,boxShadow:'0 3px 10px rgba(201,18,83,.26)'}}>
             <Ico name="plus" size={16} sw={2}/>{!isNarrow&&<span>เพิ่มรายการ</span>}
           </button>
         </div>
       </div>
-      <div style={{padding:'0 22px 8px',fontSize:'12px',color:'#a99fa8'}}>แสดง {list.length} รายการ{co?' · '+co:''}{tab==='import'&&type!=='all'?' · '+typeMeta(type).label:''}</div>
+      <div style={{padding:'0 22px 8px',fontSize:'12px',color:'var(--color-text-muted)'}}>แสดง {list.length} รายการ{co?' · '+co:''}{tab==='import'&&type!=='all'?' · '+typeMeta(type).label:''}</div>
     </div>;
   }
 
@@ -1016,11 +1066,11 @@ class App extends Component {
             onDragEnter={e=>{e.preventDefault();if(dragOverKey!==stg.key)this.setState({dragOverKey:stg.key});}}
             onDragLeave={()=>{if(this.state.dragOverKey===stg.key)this.setState({dragOverKey:null});}}
             onDrop={e=>{e.preventDefault();this.onDropCard(stg.key);}}
-            style={{flex:isNarrow?'0 0 78vw':'1 1 0',minWidth:isNarrow?'78vw':'178px',scrollSnapAlign:isNarrow?'start':'none',background:isOver?stg.color+'14':'#fbf8fa',border:isOver?'1.5px dashed '+stg.color:'1px solid #ece3e8',borderRadius:'14px',display:'flex',flexDirection:'column',minHeight:0,transition:'background .12s'}}>
+            style={{flex:isNarrow?'0 0 78vw':'1 1 0',minWidth:isNarrow?'78vw':'178px',scrollSnapAlign:isNarrow?'start':'none',background:isOver?stg.color+'14':'var(--color-surface-muted)',border:isOver?'1.5px dashed '+stg.color:'1px solid var(--color-border)',borderRadius:'14px',display:'flex',flexDirection:'column',minHeight:0,transition:'background .12s'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',padding:'11px 12px 10px',borderBottom:'1px solid '+stg.color+'22',background:stg.color+'0d',borderRadius:'14px 14px 0 0'}}>
               <div style={{display:'flex',alignItems:'center',gap:'8px',minWidth:0}}>
-                <span style={{width:'8px',height:'8px',borderRadius:'50%',background:stg.color,flexShrink:0}}/>
-                <span style={{fontSize:'11.5px',fontWeight:700,color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
+                <span style={{width:'8px',height:'8px',borderRadius:'50%',background:stg.color,flexShrink:0,animation:isActiveStage(tab,stg.key)?'kobPulse 1.8s ease-in-out infinite':'none'}}/>
+                <span style={{fontSize:'11.5px',fontWeight:700,color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
               </div>
               <span style={{fontSize:'11px',fontWeight:700,minWidth:'20px',textAlign:'center',padding:'1px 7px',borderRadius:'99px',background:stg.color+'1f',color:stg.color}}>{cards.length}</span>
             </div>
@@ -1035,7 +1085,7 @@ class App extends Component {
                   onDragEnd={()=>{this._dragId=null;this.setState({dragOverKey:null});}}
                   onClick={()=>this.setState({detailId:s.id})}
                   title="ลากไปวางคอลัมน์อื่นเพื่อปรับสถานะจริง"
-                  style={{background:'#fff',border:'1px solid #ece3e8',borderLeft:'3px solid '+sm.color,borderRadius:'0 9px 9px 0',padding:'10px 12px',cursor:'grab'}}>
+                  style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderLeft:'3px solid '+sm.color,borderRadius:'0 9px 9px 0',padding:'10px 12px',cursor:'grab'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px'}}>
                     <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11px',fontWeight:600,color:sm.color}}>{s.poNo}</span>
                     <span style={{display:'flex',alignItems:'center',gap:'4px'}}>
@@ -1044,18 +1094,18 @@ class App extends Component {
                       <span style={coBadgeSty(s.company)}>{s.company}</span>
                     </span>
                   </div>
-                  <div style={{fontSize:'12.5px',color:'#14181f',fontWeight:500,margin:'7px 0 8px',lineHeight:'1.35',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{s.party}</div>
+                  <div style={{fontSize:'12.5px',color:'var(--color-text)',fontWeight:500,margin:'7px 0 8px',lineHeight:'1.35',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{s.party}</div>
                   <div style={{display:'flex',alignItems:'center',gap:'5px',marginBottom:'9px'}}>
                     <span style={typeBadgeSty(s.type)}>{typeMeta(s.type).label}</span>
-                    <span style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'11px',color:'#7a818d',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'150px'}}><Ico name={s.mode==='air'?'plane':s.mode==='courier'?'courier':'ship'} size={13} sw={1.6}/>{shipModeLabel(s)}</span>
+                    <span style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'11px',color:'var(--color-text-tertiary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'150px'}}><Ico name={s.mode==='air'?'plane':s.mode==='courier'?'courier':'ship'} size={13} sw={1.6}/>{shipModeLabel(s)}</span>
                   </div>
-                  {poStatusMini(s)&&<div style={{display:'flex',alignItems:'center',gap:'5px',marginBottom:'9px',fontSize:'10.5px',color:'#7a818d'}}>
+                  {poStatusMini(s)&&<div style={{display:'flex',alignItems:'center',gap:'5px',marginBottom:'9px',fontSize:'10.5px',color:'var(--color-text-tertiary)'}}>
                     <span style={{width:'6px',height:'6px',borderRadius:'50%',background:poStatusColor(s),flexShrink:0}}/>
                     <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{poStatusMini(s)}</span>
                   </div>}
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',paddingTop:'8px',borderTop:'1px solid #f0e9ed'}}>
-                    <span style={{fontSize:'11.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(s.amount,s.cur)}</span>
-                    <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:'#a99fa8'}}><Ico name="cal" size={12} sw={1.6}/>{fmtDate(s.eta)}</span>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',paddingTop:'8px',borderTop:'1px solid var(--color-surface-muted2)'}}>
+                    <span style={{fontSize:'11.5px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(s.amount,s.cur)}</span>
+                    <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:'var(--color-text-muted)'}}><Ico name="cal" size={12} sw={1.6}/>{fmtDate(s.eta)}</span>
                   </div>
                 </div>;
               })}
@@ -1070,22 +1120,22 @@ class App extends Component {
   renderTable(tab){
     const list=this.filtered(tab);
     return <div style={{flex:1,overflow:'auto',minHeight:0,padding:'0 22px 22px'}}>
-      <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'14px',overflow:'hidden'}}>
+      <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'14px',overflow:'hidden'}}>
         <table style={{width:'100%',borderCollapse:'collapse',minWidth:'840px'}}>
-          <thead><tr style={{background:'#faf6f8'}}>
+          <thead><tr style={{background:'var(--color-page-bg)'}}>
             {[['PO / ผู้ขาย','left'],['บริษัท','left'],['ประเภท','left'],['สถานะ','left'],['มูลค่า','right'],['ETA','left']].map(([h,a])=>(
-              <th key={h} style={{textAlign:a,fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'12px 14px'}}>{h}</th>
+              <th key={h} style={{textAlign:a,fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'12px 14px'}}>{h}</th>
             ))}
           </tr></thead>
           <tbody>
             {list.map(s=>{const sm=stageMeta(tab,s.stage);return(
-              <tr key={s.id} onClick={()=>this.setState({detailId:s.id})} style={{cursor:'pointer',borderTop:'1px solid #f0e9ed'}}>
-                <td style={{padding:'12px 14px'}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'#14181f'}}>{s.poNo}</div><div style={{fontSize:'12px',color:'#7a818d',marginTop:'2px',maxWidth:'240px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</div></td>
+              <tr key={s.id} onClick={()=>this.setState({detailId:s.id})} style={{cursor:'pointer',borderTop:'1px solid var(--color-surface-muted2)'}}>
+                <td style={{padding:'12px 14px'}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</div><div style={{fontSize:'12px',color:'var(--color-text-tertiary)',marginTop:'2px',maxWidth:'240px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</div></td>
                 <td style={{padding:'12px 14px'}}><span style={coBadgeSty(s.company)}>{s.company}</span></td>
                 <td style={{padding:'12px 14px'}}><span style={typeBadgeSty(s.type)}>{typeMeta(s.type).label}</span></td>
                 <td style={{padding:'12px 14px'}}><span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{sm.label}</span></td>
-                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{fmtAmt(s.amount,s.cur)}</td>
-                <td style={{padding:'12px 14px',fontSize:'12.5px',color:'#5b6371',whiteSpace:'nowrap'}}>{fmtDate(s.eta)}</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:600,color:'var(--color-text)',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{fmtAmt(s.amount,s.cur)}</td>
+                <td style={{padding:'12px 14px',fontSize:'12.5px',color:'var(--color-text-secondary)',whiteSpace:'nowrap'}}>{fmtDate(s.eta)}</td>
               </tr>
             );})}
           </tbody>
@@ -1103,11 +1153,11 @@ class App extends Component {
       {rows.map(r=>(
         <div key={r.label} style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,minWidth:'74px'}}>
           <div style={{display:'flex',alignItems:'flex-end',gap:'5px',height:'140px'}}>
-            <div title={'Import: '+fmtTip(r[aKey])} style={{width:'18px',height:Math.max(2,r[aKey]/max*140)+'px',background:'linear-gradient(180deg,#e8408e,#c91253)',borderRadius:'4px 4px 0 0'}}/>
+            <div title={'Import: '+fmtTip(r[aKey])} style={{width:'18px',height:Math.max(2,r[aKey]/max*140)+'px',background:'linear-gradient(180deg,#e8408e,var(--color-brand))',borderRadius:'4px 4px 0 0'}}/>
             <div title={'Export: '+fmtTip(r[bKey])} style={{width:'18px',height:Math.max(2,r[bKey]/max*140)+'px',background:'linear-gradient(180deg,#a78bfa,#7c3aed)',borderRadius:'4px 4px 0 0'}}/>
           </div>
-          <div style={{fontSize:'11px',fontWeight:600,color:'#14181f',marginTop:'8px',whiteSpace:'nowrap'}}>{r.label}</div>
-          <div style={{fontSize:'10px',color:'#a99fa8',marginTop:'3px',whiteSpace:'nowrap',textAlign:'center'}}>{fmtPair(r[aKey],r[bKey])}</div>
+          <div style={{fontSize:'11px',fontWeight:600,color:'var(--color-text)',marginTop:'8px',whiteSpace:'nowrap'}}>{r.label}</div>
+          <div style={{fontSize:'10px',color:'var(--color-text-muted)',marginTop:'3px',whiteSpace:'nowrap',textAlign:'center'}}>{fmtPair(r[aKey],r[bKey])}</div>
         </div>
       ))}
     </div>;
@@ -1122,7 +1172,7 @@ class App extends Component {
     const activeImp=impAll.filter(s=>['booking','transit'].includes(s.stage)).length;
     const pendingImp=impAll.filter(s=>s.stage==='customs'||s.stage==='po').length;
     const kpis=[
-      {accent:'linear-gradient(90deg,#c91253,#e8408e)',icon:'down',iconBg:'#fce7f3',iconColor:'#c91253',value:impAll.length,label:'Import ทั้งหมด',sub:fmtBaht(impVal)+' มูลค่ารวม'},
+      {accent:'linear-gradient(90deg,var(--color-brand),#e8408e)',icon:'down',iconBg:'#fce7f3',iconColor:'var(--color-brand)',value:impAll.length,label:'Import ทั้งหมด',sub:fmtBaht(impVal)+' มูลค่ารวม'},
       {accent:'linear-gradient(90deg,#7c3aed,#a78bfa)',icon:'up',iconBg:'#ede9fe',iconColor:'#7c3aed',value:expAll.length,label:'Export ทั้งหมด',sub:fmtBaht(expVal)+' มูลค่ารวม'},
       {accent:'linear-gradient(90deg,#f59e0b,#ea580c)',icon:'ship',iconBg:'#fff7ed',iconColor:'#d97706',value:activeImp,label:'กำลังขนส่ง',sub:'อยู่ระหว่างทาง'},
       {accent:'linear-gradient(90deg,#059669,#10b981)',icon:'check',iconBg:'#f0fdf4',iconColor:'#059669',value:pendingImp,label:'รอดำเนินการ',sub:'ศุลกากร / PO ใหม่'}
@@ -1246,14 +1296,14 @@ class App extends Component {
     return <div style={{flex:1,overflowY:'auto',padding:'22px'}}>
       <div style={{maxWidth:'1240px',margin:'0 auto',display:'flex',flexDirection:'column',gap:'18px'}}>
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'repeat(2,1fr)':'repeat(4,1fr)',gap:isNarrow?'12px':'16px'}}>
-          {kpis.map(k=><div key={k.label} style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'18px 18px 16px',position:'relative',overflow:'hidden'}}>
+          {kpis.map(k=><div key={k.label} style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'18px 18px 16px',position:'relative',overflow:'hidden'}}>
             <div style={{position:'absolute',top:0,left:0,right:0,height:'3px',background:k.accent}}/>
             <div style={{display:'flex',alignItems:'center'}}>
               <span style={{display:'flex',alignItems:'center',justifyContent:'center',width:'38px',height:'38px',borderRadius:'11px',background:k.iconBg,color:k.iconColor}}><Ico name={k.icon} size={18} sw={1.8}/></span>
             </div>
-            <div style={{fontSize:'27px',fontWeight:700,color:'#14181f',marginTop:'14px',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{k.value}</div>
-            <div style={{fontSize:'12.5px',color:'#7a818d',marginTop:'6px'}}>{k.label}</div>
-            <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'4px'}}>{k.sub}</div>
+            <div style={{fontSize:'27px',fontWeight:700,color:'var(--color-text)',marginTop:'14px',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{k.value}</div>
+            <div style={{fontSize:'12.5px',color:'var(--color-text-tertiary)',marginTop:'6px'}}>{k.label}</div>
+            <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'4px'}}>{k.sub}</div>
           </div>)}
         </div>
         {(()=>{
@@ -1269,18 +1319,18 @@ class App extends Component {
             {n:overBudget.length,label:'เกินงบที่คาดการณ์ไว้ >10%',key:'budget'},
           ];
           const totalEx=items.reduce((a,x)=>a+x.n,0);
-          return <div style={{background:'#fff',border:'1px solid '+(totalEx?'#fecaca':'#e8dde4'),borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'12px'}}>
+          return <div style={{background:'var(--color-surface)',border:'1px solid '+(totalEx?'#fecaca':'var(--color-border)'),borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'12px'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',flexWrap:'wrap'}}>
               <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
-                <span style={{width:'9px',height:'9px',borderRadius:'50%',background:totalEx?'#dc2626':'#16a34a',flexShrink:0}}/>
-                <span style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สรุปข้อยกเว้นที่ควรตรวจสอบ</span>
+                <span style={{width:'9px',height:'9px',borderRadius:'50%',background:totalEx?'var(--color-danger)':'var(--color-success)',flexShrink:0}}/>
+                <span style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>สรุปข้อยกเว้นที่ควรตรวจสอบ</span>
               </div>
-              <button onClick={()=>this.exportAccountingReport(qRows)} title="ดาวน์โหลด Excel: Import+Export ทุกรายการ + สรุปรายไตรมาส สำหรับกระทบยอดกับบัญชี" style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#15803d',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}><Ico name="dl" size={13} sw={2}/>Export รายงานบัญชี</button>
+              <button onClick={()=>this.exportAccountingReport(qRows)} title="ดาวน์โหลด Excel: Import+Export ทุกรายการ + สรุปรายไตรมาส สำหรับกระทบยอดกับบัญชี" style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid var(--color-border)',borderRadius:'8px',background:'var(--color-surface)',color:'#15803d',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}><Ico name="dl" size={13} sw={2}/>Export รายงานบัญชี</button>
             </div>
             <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'repeat(4,1fr)',gap:isNarrow?'10px':'14px'}}>
               {items.map(x=>(
                 <div key={x.key} style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 14px',borderRadius:'10px',background:x.n?'#fef2f2':'#f0fdf4',border:'1px solid '+(x.n?'#fecaca':'#bbf7d0')}}>
-                  <span style={{fontSize:'20px',fontWeight:700,color:x.n?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{x.n}</span>
+                  <span style={{fontSize:'20px',fontWeight:700,color:x.n?'var(--color-danger)':'var(--color-success)',fontVariantNumeric:'tabular-nums'}}>{x.n}</span>
                   <span style={{fontSize:'12px',color:'#5b6371'}}>{x.label}</span>
                 </div>
               ))}
@@ -1292,7 +1342,7 @@ class App extends Component {
                   <span>{s.party}</span>
                 </div>
               ))}
-              {missingCost.length>5&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {missingCost.length-5} รายการ</div>}
+              {missingCost.length>5&&<div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>และอีก {missingCost.length-5} รายการ</div>}
             </div>}
             {overBudget.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'2px'}}>
               {overBudget.slice(0,5).map(s=>(
@@ -1301,7 +1351,7 @@ class App extends Component {
                   <span>ต้นทุนจริง {fmtBaht(totalCostThb(s))} เทียบคาดการณ์ {fmtBaht(s.expectedCost)}</span>
                 </div>
               ))}
-              {overBudget.length>5&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {overBudget.length-5} รายการ</div>}
+              {overBudget.length>5&&<div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>และอีก {overBudget.length-5} รายการ</div>}
             </div>}
           </div>;
         })()}
@@ -1311,57 +1361,57 @@ class App extends Component {
           const dirty=ir&&Array.isArray(ir.findings)&&ir.findings.length>0;
           // ต่อยอดจากรอบตรวจสอบมือที่เจอบั๊ก currency_rate 8 จุด — เช็คซ้ำอัตโนมัติทุก 24 ชม. ที่ server
           // (ดู runIntegrityCheck ใน api-server.js) เพื่อไม่ต้องรอให้คนสังเกตตัวเลขผิดปกติเองอีก
-          return <div style={{background:'#fff',border:'1px solid '+(dirty?'#fecaca':'#e8dde4'),borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'10px'}}>
+          return <div style={{background:'var(--color-surface)',border:'1px solid '+(dirty?'#fecaca':'var(--color-border)'),borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'10px'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'10px'}}>
               <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
-                <span style={{width:'9px',height:'9px',borderRadius:'50%',background:dirty?'#dc2626':clean?'#16a34a':'#a99fa8',flexShrink:0}}/>
-                <span style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>ผลตรวจสอบข้อมูลอัตโนมัติ</span>
-                {ir&&ir.ranAt&&<span style={{fontSize:'11px',color:'#a99fa8'}}>ตรวจล่าสุด {new Date(ir.ranAt).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น. · เช็ค {ir.importChecked+ir.exportChecked} รายการ</span>}
+                <span style={{width:'9px',height:'9px',borderRadius:'50%',background:dirty?'var(--color-danger)':clean?'var(--color-success)':'var(--color-text-muted)',flexShrink:0}}/>
+                <span style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>ผลตรวจสอบข้อมูลอัตโนมัติ</span>
+                {ir&&ir.ranAt&&<span style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ตรวจล่าสุด {new Date(ir.ranAt).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น. · เช็ค {ir.importChecked+ir.exportChecked} รายการ</span>}
               </div>
-              <button onClick={()=>this.loadIntegrityReport(true)} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังตรวจ…':'ตรวจสอบตอนนี้'}</button>
+              <button onClick={()=>this.loadIntegrityReport(true)} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid var(--color-border)',borderRadius:'8px',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังตรวจ…':'ตรวจสอบตอนนี้'}</button>
             </div>
-            {!ir&&!loading&&<div style={{fontSize:'12px',color:'#a99fa8'}}>ยังไม่มีผลตรวจสอบ</div>}
+            {!ir&&!loading&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่มีผลตรวจสอบ</div>}
             {clean&&<div style={{fontSize:'12.5px',color:'#15803d',display:'flex',alignItems:'center',gap:'6px'}}><Ico name="check" size={14} sw={2.2}/>ไม่พบความผิดปกติ — ข้อมูลสกุลเงินสอดคล้องกันทุกรายการ</div>}
             {dirty&&<div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
               {ir.findings.slice(0,8).map((f,i)=>(
                 <div key={i} style={{fontSize:'12px',color:'#991b1b',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'8px',padding:'8px 11px'}}>{f.message}</div>
               ))}
-              {ir.findings.length>8&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {ir.findings.length-8} รายการ</div>}
+              {ir.findings.length>8&&<div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>และอีก {ir.findings.length-8} รายการ</div>}
             </div>}
             {ir&&Array.isArray(ir.autoCorrected)&&ir.autoCorrected.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:dirty?'4px':'0'}}>
               <div style={{fontSize:'11.5px',fontWeight:600,color:'#1e5fa8',display:'flex',alignItems:'center',gap:'6px'}}><Ico name="sync" size={13} sw={2}/>ซ่อมค่าอัตราแลกเปลี่ยนอัตโนมัติ {ir.autoCorrected.length} รายการ — แอปแสดงถูกแล้ว แต่ควรตามไปแก้ที่ Odoo</div>
               {ir.autoCorrected.slice(0,8).map((f,i)=>(
                 <div key={i} style={{fontSize:'12px',color:'#1e40af',background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'8px 11px'}}>{f.message}</div>
               ))}
-              {ir.autoCorrected.length>8&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {ir.autoCorrected.length-8} รายการ</div>}
+              {ir.autoCorrected.length>8&&<div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>และอีก {ir.autoCorrected.length-8} รายการ</div>}
             </div>}
           </div>;
         })()}
         {(()=>{
           const log=this.state.auditLog,loading=this.state.auditLoading;
-          return <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'10px'}}>
+          return <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'10px'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'10px'}}>
-              <span style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>ประวัติการแก้ไขล่าสุด</span>
-              <button onClick={()=>this.loadAuditLog()} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังโหลด…':'รีเฟรช'}</button>
+              <span style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>ประวัติการแก้ไขล่าสุด</span>
+              <button onClick={()=>this.loadAuditLog()} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1.5px solid var(--color-border)',borderRadius:'8px',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังโหลด…':'รีเฟรช'}</button>
             </div>
-            {!log&&!loading&&<div style={{fontSize:'12px',color:'#a99fa8'}}>ยังไม่มีประวัติ</div>}
-            {log&&log.length===0&&<div style={{fontSize:'12px',color:'#a99fa8'}}>ยังไม่มีการแก้ไขใดๆ</div>}
+            {!log&&!loading&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่มีประวัติ</div>}
+            {log&&log.length===0&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่มีการแก้ไขใดๆ</div>}
             {log&&log.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'2px',maxHeight:'320px',overflowY:'auto'}}>
               {log.map((e,i)=>(
                 <div key={i} onClick={()=>this.jumpToAuditEntry(e.po_so)} style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'150px 150px 1fr',gap:isNarrow?'2px':'12px',padding:'8px 6px',borderBottom:i<log.length-1?'1px solid #f5f0f3':'none',cursor:'pointer',fontSize:'12px'}}>
-                  <span style={{color:'#a99fa8',whiteSpace:'nowrap'}}>{new Date(e.ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</span>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600,color:'#c91253',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{e.po_so}</span>
-                  <span style={{color:'#5b6371'}}>{auditEntrySummary(e)}</span>
+                  <span style={{color:'var(--color-text-muted)',whiteSpace:'nowrap'}}>{new Date(e.ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</span>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600,color:'var(--color-brand)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{e.po_so}</span>
+                  <span style={{color:'var(--color-text-secondary)'}}>{auditEntrySummary(e)}</span>
                 </div>
               ))}
             </div>}
           </div>;
         })()}
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1.7fr 1fr',gap:isNarrow?'14px':'16px'}}>
-          <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
             <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'18px'}}>
-              <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Import Pipeline</div>
-              <div style={{fontSize:'12px',color:'#a99fa8'}}>{impAll.length} รายการ</div>
+              <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Import Pipeline</div>
+              <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>{impAll.length} รายการ</div>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
               {IMP_STAGES.map((stg,i)=>{const c=impAll.filter(s=>s.stage===stg.key).length;
@@ -1371,65 +1421,65 @@ class App extends Component {
                 const pct=isTerminal?100:Math.min(100,c/pmaxInFlight*100);
                 return(
                 <div key={stg.key} style={{display:'grid',gridTemplateColumns:'120px 1fr 34px',alignItems:'center',gap:'12px'}}>
-                  <span style={{fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
-                  <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,pct)+'%',background:stg.color,transition:'width .5s'}}/></span>
-                  <span style={{fontSize:'12px',fontWeight:600,color:'#14181f',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{c}</span>
+                  <span style={{fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
+                  <span style={{background:'var(--color-surface-muted)',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,pct)+'%',background:stg.color,transition:'width .5s'}}/></span>
+                  <span style={{fontSize:'12px',fontWeight:600,color:'var(--color-text)',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{c}</span>
                 </div>
               );})}
             </div>
           </div>
-          <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Company Split</div>
-            <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'20px'}}>KOB เทียบ BTV</div>
+          <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Company Split</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'20px'}}>KOB เทียบ BTV</div>
             {companySplit.map(c=>{
               const tot=c.kob+c.btv||1,totVal=c.kobVal+c.btvVal||1;
               return <div key={c.label} style={{marginBottom:'18px'}}>
-                <div style={{display:'flex',justifyContent:'space-between',marginBottom:'7px'}}><span style={{fontSize:'13px',fontWeight:600,color:'#14181f'}}>{c.label}</span><span style={{fontSize:'12px',color:'#a99fa8'}}>{c.kob+c.btv} รายการ</span></div>
-                <div style={{fontSize:'10.5px',color:'#a99fa8',marginBottom:'3px'}}>ตามจำนวนรายการ</div>
-                <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
-                  <span style={{width:(c.kob/tot*100)+'%',background:'#c91253',transition:'width .5s'}}/>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:'7px'}}><span style={{fontSize:'13px',fontWeight:600,color:'var(--color-text)'}}>{c.label}</span><span style={{fontSize:'12px',color:'var(--color-text-muted)'}}>{c.kob+c.btv} รายการ</span></div>
+                <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginBottom:'3px'}}>ตามจำนวนรายการ</div>
+                <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'var(--color-surface-muted)'}}>
+                  <span style={{width:(c.kob/tot*100)+'%',background:'var(--color-brand)',transition:'width .5s'}}/>
                   <span style={{width:(c.btv/tot*100)+'%',background:'#7c3aed',transition:'width .5s'}}/>
                 </div>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'#a99fa8',marginTop:'5px',marginBottom:'10px'}}><span>KOB {c.kob}</span><span>BTV {c.btv}</span></div>
-                <div style={{fontSize:'10.5px',color:'#a99fa8',marginBottom:'3px'}}>ตามมูลค่า</div>
-                <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
-                  <span style={{width:(c.kobVal/totVal*100)+'%',background:'#c91253',transition:'width .5s'}}/>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'var(--color-text-muted)',marginTop:'5px',marginBottom:'10px'}}><span>KOB {c.kob}</span><span>BTV {c.btv}</span></div>
+                <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginBottom:'3px'}}>ตามมูลค่า</div>
+                <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'var(--color-surface-muted)'}}>
+                  <span style={{width:(c.kobVal/totVal*100)+'%',background:'var(--color-brand)',transition:'width .5s'}}/>
                   <span style={{width:(c.btvVal/totVal*100)+'%',background:'#7c3aed',transition:'width .5s'}}/>
                 </div>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'#a99fa8',marginTop:'5px'}}><span>KOB {fmtBaht(c.kobVal)}</span><span>BTV {fmtBaht(c.btvVal)}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'var(--color-text-muted)',marginTop:'5px'}}><span>KOB {fmtBaht(c.kobVal)}</span><span>BTV {fmtBaht(c.btvVal)}</span></div>
               </div>;
             })}
-            <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371'}}>
-              <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>KOB</span>
+            <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'var(--color-text-secondary)'}}>
+              <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'var(--color-brand)'}}/>KOB</span>
               <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>BTV</span>
             </div>
           </div>
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
-          <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สัดส่วนสกุลเงิน (ก่อนแปลงเป็นบาท)</div>
-          <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>ยอดต้นฉบับตามสกุลเงินจริง ยังไม่แปลงเป็นบาท — ไว้ดูความเสี่ยงอัตราแลกเปลี่ยน (FX exposure)</div>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>สัดส่วนสกุลเงิน (ก่อนแปลงเป็นบาท)</div>
+          <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>ยอดต้นฉบับตามสกุลเงินจริง ยังไม่แปลงเป็นบาท — ไว้ดูความเสี่ยงอัตราแลกเปลี่ยน (FX exposure)</div>
           <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
             {[{title:'Import',rows:impCurRows},{title:'Export',rows:expCurRows}].map(col=>(
               <div key={col.title}>
-                <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',marginBottom:'8px'}}>{col.title}</div>
+                <div style={{fontSize:'12.5px',fontWeight:600,color:'var(--color-text)',marginBottom:'8px'}}>{col.title}</div>
                 {col.rows.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba',padding:'10px 0'}}>ไม่มีข้อมูล</div>}
                 {col.rows.map((r,i)=>(
-                  <div key={r.cur} style={{padding:'8px 0',borderTop:i>0?'1px solid #f0e9ed':'none'}}>
+                  <div key={r.cur} style={{padding:'8px 0',borderTop:i>0?'1px solid var(--color-surface-muted2)':'none'}}>
                     <div style={{display:'flex',justifyContent:'space-between',marginBottom:'5px'}}>
-                      <span style={{fontSize:'12.5px',fontWeight:600,color:'#14181f'}}>{r.cur}</span>
-                      <span style={{fontSize:'12px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(r.amount,r.cur)} <span style={{color:'#a99fa8'}}>({r.count} รายการ)</span></span>
+                      <span style={{fontSize:'12.5px',fontWeight:600,color:'var(--color-text)'}}>{r.cur}</span>
+                      <span style={{fontSize:'12px',color:'var(--color-text-secondary)',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(r.amount,r.cur)} <span style={{color:'var(--color-text-muted)'}}>({r.count} รายการ)</span></span>
                     </div>
-                    <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,r.pct)+'%',background:curColor(r.cur),transition:'width .5s'}}/></span>
+                    <span style={{background:'var(--color-surface-muted)',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,r.pct)+'%',background:curColor(r.cur),transition:'width .5s'}}/></span>
                   </div>
                 ))}
               </div>
             ))}
           </div>
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'18px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Export Pipeline</div>
-            <div style={{fontSize:'12px',color:'#a99fa8'}}>{expAll.length} รายการ</div>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Export Pipeline</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>{expAll.length} รายการ</div>
           </div>
           <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
             {EXP_STAGES.map((stg,i)=>{const c=expAll.filter(s=>s.stage===stg.key).length;
@@ -1437,26 +1487,26 @@ class App extends Component {
               const pct=isTerminal?100:Math.min(100,c/emaxInFlight*100);
               return(
               <div key={stg.key} style={{display:'grid',gridTemplateColumns:'120px 1fr 34px',alignItems:'center',gap:'12px'}}>
-                <span style={{fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
-                <span style={{background:'#f3edf0',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,pct)+'%',background:stg.color,transition:'width .5s'}}/></span>
-                <span style={{fontSize:'12px',fontWeight:600,color:'#14181f',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{c}</span>
+                <span style={{fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
+                <span style={{background:'var(--color-surface-muted)',borderRadius:'99px',height:'8px',overflow:'hidden',display:'block'}}><span style={{display:'block',height:'100%',borderRadius:'99px',width:Math.max(3,pct)+'%',background:stg.color,transition:'width .5s'}}/></span>
+                <span style={{fontSize:'12px',fontWeight:600,color:'var(--color-text)',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{c}</span>
               </div>
             );})}
           </div>
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
-          <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Top ผู้ขาย/ลูกค้าตามมูลค่า</div>
-          <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>เรียงตามมูลค่ารวมแปลงเป็นบาท (฿) สูงสุด 10 อันดับ</div>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Top ผู้ขาย/ลูกค้าตามมูลค่า</div>
+          <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>เรียงตามมูลค่ารวมแปลงเป็นบาท (฿) สูงสุด 10 อันดับ</div>
           <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
-            {[{title:'Import: ผู้ขายอันดับต้น',rows:topVendors,color:'#c91253'},{title:'Export: ลูกค้าอันดับต้น',rows:topCustomers,color:'#7c3aed'}].map(col=>(
+            {[{title:'Import: ผู้ขายอันดับต้น',rows:topVendors,color:'var(--color-brand)'},{title:'Export: ลูกค้าอันดับต้น',rows:topCustomers,color:'#7c3aed'}].map(col=>(
               <div key={col.title}>
-                <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',marginBottom:'8px'}}>{col.title}</div>
+                <div style={{fontSize:'12.5px',fontWeight:600,color:'var(--color-text)',marginBottom:'8px'}}>{col.title}</div>
                 {col.rows.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba',padding:'10px 0'}}>ไม่มีข้อมูล</div>}
                 {col.rows.map((r,i)=>(
-                  <div key={r.partyId!=null?r.partyId:r.party} style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderTop:i>0?'1px solid #f0e9ed':'none'}}>
-                    <span style={{width:'18px',fontSize:'11px',fontWeight:700,color:'#a99fa8',flexShrink:0}}>{i+1}</span>
-                    <span style={{flex:1,fontSize:'12.5px',color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={r.party}>{r.party}</span>
-                    <span style={{fontSize:'11px',color:'#a99fa8',flexShrink:0,whiteSpace:'nowrap'}}>{r.count} รายการ</span>
+                  <div key={r.partyId!=null?r.partyId:r.party} style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderTop:i>0?'1px solid var(--color-surface-muted2)':'none'}}>
+                    <span style={{width:'18px',fontSize:'11px',fontWeight:700,color:'var(--color-text-muted)',flexShrink:0}}>{i+1}</span>
+                    <span style={{flex:1,fontSize:'12.5px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={r.party}>{r.party}</span>
+                    <span style={{fontSize:'11px',color:'var(--color-text-muted)',flexShrink:0,whiteSpace:'nowrap'}}>{r.count} รายการ</span>
                     <span style={{fontSize:'12.5px',fontWeight:600,color:col.color,flexShrink:0,fontVariantNumeric:'tabular-nums',minWidth:'78px',textAlign:'right'}}>{fmtBaht(r.value)}</span>
                   </div>
                 ))}
@@ -1477,25 +1527,25 @@ class App extends Component {
             const m=spendMap[key];
             return {...v,spend:m?m.value:null};
           }).sort((a,b)=>(b.spend||0)-(a.spend||0));
-          return <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Vendor Scorecard — อัตราส่งตรงเวลา</div>
-            <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>เทียบ scheduled_date กับวันที่ส่งจริงจาก Odoo · เฉพาะผู้ขายที่มีข้อมูลอย่างน้อย 2 ครั้ง</div>
-            {loading&&!sc&&<div style={{fontSize:'12px',color:'#a99fa8'}}>กำลังโหลด…</div>}
+          return <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Vendor Scorecard — อัตราส่งตรงเวลา</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>เทียบ scheduled_date กับวันที่ส่งจริงจาก Odoo · เฉพาะผู้ขายที่มีข้อมูลอย่างน้อย 2 ครั้ง</div>
+            {loading&&!sc&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>กำลังโหลด…</div>}
             {!loading&&sc&&sc.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba'}}>ยังไม่มีข้อมูลเพียงพอ</div>}
             {sc&&sc.length>0&&<div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12.5px'}}>
-                <thead><tr style={{background:'#faf6f8'}}>{['ผู้ขาย','จำนวนครั้ง','ตรงเวลา','ล่าช้าเฉลี่ย','มูลค่ารวม'].map((h,i)=>(
-                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
+                <thead><tr style={{background:'var(--color-page-bg)'}}>{['ผู้ขาย','จำนวนครั้ง','ตรงเวลา','ล่าช้าเฉลี่ย','มูลค่ารวม'].map((h,i)=>(
+                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>{merged.slice(0,15).map((v,i)=>{
                   const rate=v.deliveries>0?Math.round(v.on_time/v.deliveries*100):0;
                   const delay=parseFloat(v.avg_delay_days)||0;
-                  return <tr key={v.vendor_id!=null?v.vendor_id:v.vendor} style={{borderTop:i?'1px solid #f0e9ed':'none'}}>
-                    <td style={{padding:'9px 12px',color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} title={v.vendor}>{v.vendor}</td>
-                    <td style={{padding:'9px 12px',textAlign:'right',color:'#5b6371'}}>{v.deliveries}</td>
-                    <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:rate>=80?'#15803d':rate>=50?'#c2410c':'#dc2626'}}>{rate}%</td>
-                    <td style={{padding:'9px 12px',textAlign:'right',color:delay>3?'#dc2626':'#5b6371'}}>{delay>0?'+':''}{delay.toLocaleString('en-US',{maximumFractionDigits:1})} วัน</td>
-                    <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{v.spend!=null?fmtBaht(v.spend):'—'}</td>
+                  return <tr key={v.vendor_id!=null?v.vendor_id:v.vendor} style={{borderTop:i?'1px solid var(--color-surface-muted2)':'none'}}>
+                    <td style={{padding:'9px 12px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} title={v.vendor}>{v.vendor}</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',color:'var(--color-text-secondary)'}}>{v.deliveries}</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:rate>=80?'#15803d':rate>=50?'#c2410c':'var(--color-danger)'}}>{rate}%</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',color:delay>3?'var(--color-danger)':'var(--color-text-secondary)'}}>{delay>0?'+':''}{delay.toLocaleString('en-US',{maximumFractionDigits:1})} วัน</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{v.spend!=null?fmtBaht(v.spend):'—'}</td>
                   </tr>;
                 })}</tbody>
               </table>
@@ -1510,26 +1560,26 @@ class App extends Component {
           // (ต่อรอง/เปลี่ยนผู้ขาย ฯลฯ) ไม่ใช่การตัดสินใจอัตโนมัติจากระบบ — เลือกใช้ date_planned เพราะมีค่าจริง
           // ที่มีคนอัปเดตต่อเนื่อง (เช็คแล้วว่าไม่ใช่ค่า static คงที่ต่อผู้ขาย) ต่างจาก etd/actualDate ที่ต้องกรอกมือ
           // ซึ่งมีคนกรอกจริงไม่ถึง 1% ของ shipment ทั้งหมด
-          return <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+          return <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
             <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-              <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>รอบเวลาสั่งซื้อจนคาดว่าจะถึง (PO → กำหนดถึงท่า)</div>
-              {ltAvg!=null&&<div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f'}}>เฉลี่ย {ltAvg} วัน</div>}
+              <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>รอบเวลาสั่งซื้อจนคาดว่าจะถึง (PO → กำหนดถึงท่า)</div>
+              {ltAvg!=null&&<div style={{fontSize:'12.5px',fontWeight:600,color:'var(--color-text)'}}>เฉลี่ย {ltAvg} วัน</div>}
             </div>
-            <div style={{fontSize:'12px',color:'#a99fa8',marginBottom:'18px'}}>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginBottom:'18px'}}>
               วันที่สั่งซื้อ → วันกำหนดถึงท่าล่าสุดจาก Odoo (ครอบคลุม {ltCoveragePct}% ของ import PO) — ตัวเลขนี้รวมเวลา
               ผลิต+จองเรือ+ขนส่งทั้งหมดไว้ด้วยกัน ไม่ใช่ช่วงขนส่งอย่างเดียว (ระบบไม่มีข้อมูล ETD จริงให้แยกได้)
             </div>
             {!ltByVendor.length&&<div style={{fontSize:'12px',color:'#bcb2ba'}}>ยังไม่มีข้อมูลเพียงพอ (ต้องมีอย่างน้อย 2 PO ต่อผู้ขาย)</div>}
             {!!ltByVendor.length&&<div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12.5px'}}>
-                <thead><tr style={{background:'#faf6f8'}}>{['ผู้ขาย','จำนวน PO','เฉลี่ย'].map((h,i)=>(
-                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
+                <thead><tr style={{background:'var(--color-page-bg)'}}>{['ผู้ขาย','จำนวน PO','เฉลี่ย'].map((h,i)=>(
+                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>{ltByVendor.slice(0,10).map((v,i)=>(
-                  <tr key={v.partyId!=null?v.partyId:v.party} style={{borderTop:i?'1px solid #f0e9ed':'none'}}>
-                    <td style={{padding:'9px 12px',color:'#14181f',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} title={v.party}>{v.party}</td>
-                    <td style={{padding:'9px 12px',textAlign:'right',color:'#5b6371'}}>{v.count}</td>
-                    <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:v.avgDays>(ltAvg||0)*1.3?'#dc2626':v.avgDays>(ltAvg||0)?'#c2410c':'#15803d'}}>{v.avgDays} วัน</td>
+                  <tr key={v.partyId!=null?v.partyId:v.party} style={{borderTop:i?'1px solid var(--color-surface-muted2)':'none'}}>
+                    <td style={{padding:'9px 12px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} title={v.party}>{v.party}</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',color:'var(--color-text-secondary)'}}>{v.count}</td>
+                    <td style={{padding:'9px 12px',textAlign:'right',fontWeight:600,color:v.avgDays>(ltAvg||0)*1.3?'var(--color-danger)':v.avgDays>(ltAvg||0)?'#c2410c':'#15803d'}}>{v.avgDays} วัน</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -1541,10 +1591,10 @@ class App extends Component {
           // ข้ามสกุลเงิน) — แยก 2 กลุ่มเพราะ root cause น่าจะต่างกัน ไม่ควรเข้าใจว่าเป็นบั๊กเดียวกันหมด
           const gl=this.state.glReconcile,loading=this.state.glReconcileLoading;
           const zeroN=gl?gl.zeroBilled.length:0,partN=gl?gl.partialMismatch.length:0;
-          return <div style={{background:'#fff',border:'1px solid '+((zeroN+partN)?'#fde68a':'#e8dde4'),borderRadius:'15px',padding:'20px 22px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>กระทบยอดกับ Odoo (GL Reconciliation)</div>
-            <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>เทียบมูลค่า PO ที่ Odoo ระบุว่า "invoiced" แล้ว กับยอดใบวางบิลจริงที่ผูกไว้ (สกุลเงินเดียวกันเท่านั้น) · ต่างกันเกิน 15%</div>
-            {loading&&!gl&&<div style={{fontSize:'12px',color:'#a99fa8'}}>กำลังโหลด…</div>}
+          return <div style={{background:'var(--color-surface)',border:'1px solid '+((zeroN+partN)?'#fde68a':'var(--color-border)'),borderRadius:'15px',padding:'20px 22px'}}>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>กระทบยอดกับ Odoo (GL Reconciliation)</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>เทียบมูลค่า PO ที่ Odoo ระบุว่า "invoiced" แล้ว กับยอดใบวางบิลจริงที่ผูกไว้ (สกุลเงินเดียวกันเท่านั้น) · ต่างกันเกิน 15%</div>
+            {loading&&!gl&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>กำลังโหลด…</div>}
             {gl&&zeroN===0&&partN===0&&<div style={{fontSize:'12.5px',color:'#15803d',display:'flex',alignItems:'center',gap:'6px'}}><Ico name="check" size={14} sw={2.2}/>ไม่พบ PO ที่ยอดต่างจากบิลจริงเกินเกณฑ์</div>}
             {gl&&zeroN>0&&<div style={{marginBottom:partN>0?'16px':'0'}}>
               <div style={{fontSize:'12px',fontWeight:600,color:'#b45309',marginBottom:'8px'}}>⚠ {zeroN} PO — Odoo ระบุว่า invoiced แล้ว แต่ใบวางบิลที่ผูกอยู่มียอด ฿0 ({zeroN>10?'พบรูปแบบนี้ซ้ำเยอะ น่าจะเป็นเรื่องระบบ ':''}ควรถามทีมบัญชีว่าเกิดจากอะไร)</div>
@@ -1555,7 +1605,7 @@ class App extends Component {
                     <span>{r.currency} {Math.round(r.po_total).toLocaleString('en-US')} → บิล 0</span>
                   </div>
                 ))}
-                {zeroN>6&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {zeroN-6} รายการ</div>}
+                {zeroN>6&&<div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>และอีก {zeroN-6} รายการ</div>}
               </div>
             </div>}
             {gl&&partN>0&&<div>
@@ -1567,128 +1617,132 @@ class App extends Component {
                     <span>{r.currency} {Math.round(r.po_total).toLocaleString('en-US')} → บิล {Math.round(r.billed_total).toLocaleString('en-US')} ({r.diff_pct}%)</span>
                   </div>
                 ))}
-                {partN>6&&<div style={{fontSize:'11px',color:'#a99fa8'}}>และอีก {partN-6} รายการ</div>}
+                {partN>6&&<div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>และอีก {partN-6} รายการ</div>}
               </div>
             </div>}
           </div>;
         })()}
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
-          <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>PO/SO ที่ค้างนาน</div>
-          <div style={{fontSize:'12px',color:'#a99fa8',marginTop:'2px',marginBottom:'18px'}}>นับจากวันที่สั่งซื้อ (orderDate) ถึงวันนี้ เฉพาะรายการที่ยังไม่จบสถานะ</div>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
+          <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>PO/SO ที่ค้างนาน</div>
+          <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>นับจากวันที่สั่งซื้อ (orderDate) ถึงวันนี้ เฉพาะรายการที่ยังไม่จบสถานะ</div>
           <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
             <div>
               <div style={{display:'flex',alignItems:'baseline',gap:'9px',marginBottom:'12px'}}>
-                <span style={{fontSize:'22px',fontWeight:700,color:impBacklog.length?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{impBacklog.length}</span>
-                <span style={{fontSize:'12.5px',color:'#5b6371'}}>PO ค้างเกิน 45 วัน</span>
+                <span style={{fontSize:'22px',fontWeight:700,color:impBacklog.length?'var(--color-danger)':'var(--color-success)',fontVariantNumeric:'tabular-nums'}}>{impBacklog.length}</span>
+                <span style={{fontSize:'12.5px',color:'var(--color-text-secondary)'}}>PO ค้างเกิน 45 วัน</span>
               </div>
               {impBacklog.length===0&&<div style={{fontSize:'12px',color:'#15803d',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'10px',padding:'10px 14px'}}>ไม่มีรายการค้างนาน</div>}
               {impBacklog.slice(0,5).map(({s,days})=>(
-                <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid #f0e9ed'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'#14181f',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
-                  <span style={{flex:1,fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
+                <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid var(--color-surface-muted2)'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'var(--color-text)',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
+                  <span style={{flex:1,fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
                   <span style={stageBadgeSty('import',s.stage)}><span style={stageDotSty('import',s.stage)}/>{stageMeta('import',s.stage).label}</span>
-                  <span style={{fontSize:'11.5px',fontWeight:700,color:'#dc2626',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
+                  <span style={{fontSize:'11.5px',fontWeight:700,color:'var(--color-danger)',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
                 </div>
               ))}
             </div>
             <div>
               <div style={{display:'flex',alignItems:'baseline',gap:'9px',marginBottom:'12px'}}>
-                <span style={{fontSize:'22px',fontWeight:700,color:expBacklog.length?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{expBacklog.length}</span>
-                <span style={{fontSize:'12.5px',color:'#5b6371'}}>SO ค้างเกิน 30 วัน</span>
+                <span style={{fontSize:'22px',fontWeight:700,color:expBacklog.length?'var(--color-danger)':'var(--color-success)',fontVariantNumeric:'tabular-nums'}}>{expBacklog.length}</span>
+                <span style={{fontSize:'12.5px',color:'var(--color-text-secondary)'}}>SO ค้างเกิน 30 วัน</span>
               </div>
               {expBacklog.length===0&&<div style={{fontSize:'12px',color:'#15803d',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'10px',padding:'10px 14px'}}>ไม่มีรายการค้างนาน</div>}
               {expBacklog.slice(0,5).map(({s,days})=>(
-                <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid #f0e9ed'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'#14181f',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
-                  <span style={{flex:1,fontSize:'12px',color:'#5b6371',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
+                <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid var(--color-surface-muted2)'}}>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'var(--color-text)',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
+                  <span style={{flex:1,fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
                   <span style={stageBadgeSty('export',s.stage)}><span style={stageDotSty('export',s.stage)}/>{stageMeta('export',s.stage).label}</span>
-                  <span style={{fontSize:'11.5px',fontWeight:700,color:'#dc2626',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
+                  <span style={{fontSize:'11.5px',fontWeight:700,color:'var(--color-danger)',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
                 </div>
               ))}
             </div>
           </div>
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'6px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>Transit Time KPI (นำเข้า · Sea Freight)</div>
-            <div style={{fontSize:'12px',color:'#a99fa8'}}>เทียบ ETD → วันที่รับเข้าคลังจริง กับมาตรฐานต่อท่า</div>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Transit Time KPI (นำเข้า · Sea Freight)</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>เทียบ ETD → วันที่รับเข้าคลังจริง กับมาตรฐานต่อท่า</div>
           </div>
-          <div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'16px'}}>วัดได้ {tstat.measured} จาก {impAll.length} รายการ (ต้องมี ETD + วันที่รับจริง + มีมาตรฐานท่านั้น) · ยังไม่มีข้อมูล {tstat.noData} รายการ</div>
+          <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'16px'}}>วัดได้ {tstat.measured} จาก {impAll.length} รายการ (ต้องมี ETD + วันที่รับจริง + มีมาตรฐานท่านั้น) · ยังไม่มีข้อมูล {tstat.noData} รายการ</div>
           <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr 1fr':'repeat(3,1fr)',gap:isNarrow?'10px':'16px',marginBottom:'16px'}}>
             <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:'12px',padding:'14px 16px'}}>
               <div style={{fontSize:'22px',fontWeight:700,color:'#15803d',fontVariantNumeric:'tabular-nums'}}>{tstat.onTime}</div>
               <div style={{fontSize:'12px',color:'#166534',marginTop:'3px'}}>ตรงเวลา / เร็วกว่า KPI</div>
             </div>
             <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'12px',padding:'14px 16px'}}>
-              <div style={{fontSize:'22px',fontWeight:700,color:'#dc2626',fontVariantNumeric:'tabular-nums'}}>{tstat.late}</div>
+              <div style={{fontSize:'22px',fontWeight:700,color:'var(--color-danger)',fontVariantNumeric:'tabular-nums'}}>{tstat.late}</div>
               <div style={{fontSize:'12px',color:'#991b1b',marginTop:'3px'}}>เกินระยะเวลา KPI</div>
             </div>
-            <div style={{background:'#f3edf0',border:'1px solid #e8dde4',borderRadius:'12px',padding:'14px 16px'}}>
-              <div style={{fontSize:'22px',fontWeight:700,color:'#7a818d',fontVariantNumeric:'tabular-nums'}}>{tstat.noData}</div>
-              <div style={{fontSize:'12px',color:'#7a818d',marginTop:'3px'}}>ยังไม่มีข้อมูลวัด</div>
+            <div style={{background:'var(--color-surface-muted)',border:'1px solid var(--color-border)',borderRadius:'12px',padding:'14px 16px'}}>
+              <div style={{fontSize:'22px',fontWeight:700,color:'var(--color-text-tertiary)',fontVariantNumeric:'tabular-nums'}}>{tstat.noData}</div>
+              <div style={{fontSize:'12px',color:'var(--color-text-tertiary)',marginTop:'3px'}}>ยังไม่มีข้อมูลวัด</div>
             </div>
           </div>
-          {/* % on-time เป็นสถิติที่มีความหมายก็ต่อเมื่อฐานตัวอย่างมากพอ — n<10 ถือว่าเล็กเกินไป (เช่น measured=1 จะโชว์ 0%/100% ที่ทำให้เข้าใจผิดว่าเป็น KPI จริง) */}
-          {tstat.measured>=10&&<div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
-            <span style={{width:(tstat.onTime/tstat.measured*100)+'%',background:'#16a34a',transition:'width .5s'}}/>
-            <span style={{width:(tstat.late/tstat.measured*100)+'%',background:'#dc2626',transition:'width .5s'}}/>
+          {/* % on-time เป็นสถิติที่มีความหมายก็ต่อเมื่อฐานตัวอย่างมากพอ — n<10 ถือว่าเล็กเกินไป (เช่น measured=1 จะโชว์ 0%/100% ที่ทำให้เข้าใจผิดว่าเป็น KPI จริง)
+              เส้น "เป้าหมาย 80%" เป็นเกณฑ์อ้างอิงทั่วไปของ on-time delivery rate (bullet-chart style) ไม่ใช่ค่าที่วัด/ตกลงกับผู้ขายจริง — ปรับได้ถ้ามีเป้าที่ตกลงกันจริง */}
+          {tstat.measured>=10&&<div style={{position:'relative',marginTop:'2px'}}>
+            <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'var(--color-surface-muted)'}}>
+              <span style={{width:(tstat.onTime/tstat.measured*100)+'%',background:'var(--color-success)',transition:'width .5s'}}/>
+              <span style={{width:(tstat.late/tstat.measured*100)+'%',background:'var(--color-danger)',transition:'width .5s'}}/>
+            </div>
+            <div title="เป้าหมาย ตรงเวลา 80%" style={{position:'absolute',left:'80%',top:'-3px',width:'2px',height:'16px',background:'var(--color-text)',opacity:.55}}/>
           </div>}
-          {tstat.measured>=10&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'6px'}}>ตรงเวลา {Math.round(tstat.onTime/tstat.measured*100)}% ของรายการที่วัดได้</div>}
-          {tstat.measured>0&&tstat.measured<10&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'6px'}}>ตัวอย่างยังน้อยเกินไปที่จะสรุปเป็น % ได้ (วัดได้ {tstat.measured} จาก {impAll.length} รายการ)</div>}
+          {tstat.measured>=10&&<div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'6px'}}>ตรงเวลา <b style={{color:tstat.onTime/tstat.measured>=0.8?'var(--color-success)':'var(--color-danger)'}}>{Math.round(tstat.onTime/tstat.measured*100)}%</b> ของรายการที่วัดได้ · เป้าหมาย 80%</div>}
+          {tstat.measured>0&&tstat.measured<10&&<div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'6px'}}>ตัวอย่างยังน้อยเกินไปที่จะสรุปเป็น % ได้ (วัดได้ {tstat.measured} จาก {impAll.length} รายการ)</div>}
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',overflow:'hidden'}}>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',overflow:'hidden'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สรุปต้นทุนนำเข้าตาม PO</div>
-            <div style={{fontSize:'12px',color:'#a99fa8'}}>{costAll.length>7?('แสดง 7 จาก '+costAll.length+' รายการที่มีต้นทุน · '):''}มูลค่าแปลงเป็นบาท (฿)</div>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>สรุปต้นทุนนำเข้าตาม PO</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>{costAll.length>7?('แสดง 7 จาก '+costAll.length+' รายการที่มีต้นทุน · '):''}มูลค่าแปลงเป็นบาท (฿)</div>
           </div>
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:'720px'}}>
-              <thead><tr style={{background:'#faf6f8'}}>{['PO','ผู้ขาย','มูลค่าสินค้า','ขนส่ง+พิธีการ+ประกัน','ภาษี+อากร','รวม'].map((h,i)=>(
-                <th key={h} style={{textAlign:i>=2?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
+              <thead><tr style={{background:'var(--color-page-bg)'}}>{['PO','ผู้ขาย','มูลค่าสินค้า','ขนส่ง+พิธีการ+ประกัน','ภาษี+อากร','รวม'].map((h,i)=>(
+                <th key={h} style={{textAlign:i>=2?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
               ))}</tr></thead>
               <tbody>{costSrc.map(s=>{const goods=s.amount*s.rate,imp=(s.freight||0)+(s.clearance||0)+(s.insurance||0),tax=(s.duty||0)+(s.vat||0),total=goods+imp+tax;return(
-                <tr key={s.id} style={{borderTop:'1px solid #f0e9ed'}}>
-                  <td style={{padding:'11px 14px'}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'#14181f'}}>{s.poNo}</span></td>
-                  <td style={{padding:'11px 14px',fontSize:'12.5px',color:'#5b6371',maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</td>
-                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(goods)}</td>
-                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(imp)}</td>
-                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#5b6371',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tax)}</td>
-                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(total)}</td>
+                <tr key={s.id} style={{borderTop:'1px solid var(--color-surface-muted2)'}}>
+                  <td style={{padding:'11px 14px'}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</span></td>
+                  <td style={{padding:'11px 14px',fontSize:'12.5px',color:'var(--color-text-secondary)',maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(goods)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-text-secondary)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(imp)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-text-secondary)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tax)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(total)}</td>
                 </tr>
               );})}
               </tbody>
-              <tfoot><tr style={{background:'#faf6f8',borderTop:'2px solid #e8dde4'}}>
-                <td colSpan={2} style={{padding:'12px 14px',fontSize:'12.5px',fontWeight:700,color:'#14181f'}}>รวมทั้งหมด ({costAll.length} รายการ)</td>
-                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg)}</td>
-                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tf)}</td>
-                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tt)}</td>
-                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'13px',fontWeight:700,color:'#c91253',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg+tf+tt)}</td>
+              <tfoot><tr style={{background:'var(--color-page-bg)',borderTop:'2px solid var(--color-border)'}}>
+                <td colSpan={2} style={{padding:'12px 14px',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)'}}>รวมทั้งหมด ({costAll.length} รายการ)</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg)}</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tf)}</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tt)}</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'13px',fontWeight:700,color:'var(--color-brand)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg+tf+tt)}</td>
               </tr></tfoot>
             </table>
           </div>
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',overflow:'hidden'}}>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',overflow:'hidden'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>สัดส่วนต้นทุนตามปี — Import เทียบ Export</div>
-            <div style={{fontSize:'12px',color:'#a99fa8'}}>มูลค่าแปลงเป็นบาท (฿) · แยกตามปี ETD</div>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>สัดส่วนต้นทุนตามปี — Import เทียบ Export</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>มูลค่าแปลงเป็นบาท (฿) · แยกตามปี ETD</div>
           </div>
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:'620px'}}>
-              <thead><tr style={{background:'#faf6f8'}}>{['ปี','Import (฿)','Export (฿)','รวม (฿)','สัดส่วน Import : Export'].map((h,i)=>(
-                <th key={h} style={{textAlign:i>=1&&i<=3?'right':'left',fontSize:'11px',fontWeight:600,color:'#a99fa8',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
+              <thead><tr style={{background:'var(--color-page-bg)'}}>{['ปี','Import (฿)','Export (฿)','รวม (฿)','สัดส่วน Import : Export'].map((h,i)=>(
+                <th key={h} style={{textAlign:i>=1&&i<=3?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
               ))}</tr></thead>
               <tbody>{yearRows.map(y=>(
-                <tr key={y.year} style={{borderTop:'1px solid #f0e9ed'}}>
-                  <td style={{padding:'11px 14px',fontSize:'12.5px',fontWeight:600,color:'#14181f'}}>{y.label}</td>
-                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#c91253',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(y.imp)}</td>
+                <tr key={y.year} style={{borderTop:'1px solid var(--color-surface-muted2)'}}>
+                  <td style={{padding:'11px 14px',fontSize:'12.5px',fontWeight:600,color:'var(--color-text)'}}>{y.label}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-brand)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(y.imp)}</td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'#7c3aed',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(y.exp)}</td>
-                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(y.tot)}</td>
+                  <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(y.tot)}</td>
                   <td style={{padding:'11px 14px',minWidth:'160px'}}>
-                    <div style={{display:'flex',height:'9px',borderRadius:'99px',overflow:'hidden',background:'#f3edf0'}}>
-                      <span style={{width:y.impPct+'%',background:'#c91253'}}/>
+                    <div style={{display:'flex',height:'9px',borderRadius:'99px',overflow:'hidden',background:'var(--color-surface-muted)'}}>
+                      <span style={{width:y.impPct+'%',background:'var(--color-brand)'}}/>
                       <span style={{width:y.expPct+'%',background:'#7c3aed'}}/>
                     </div>
-                    <div style={{fontSize:'10.5px',color:'#a99fa8',marginTop:'4px'}}>{Math.round(y.impPct)}% : {Math.round(y.expPct)}%</div>
+                    <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>{Math.round(y.impPct)}% : {Math.round(y.expPct)}%</div>
                   </td>
                 </tr>
               ))}
@@ -1696,46 +1750,46 @@ class App extends Component {
               </tbody>
             </table>
           </div>
-          {yearLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',padding:'0 22px 16px'}}>* ปี {nowYear} เป็นปีปัจจุบัน ข้อมูลยังไม่ครบทั้งปี — เทียบกับปีก่อนหน้าโดยตรงอาจไม่สมบูรณ์</div>}
+          {yearLatestPartial&&<div style={{fontSize:'11px',color:'var(--color-text-muted)',padding:'0 22px 16px'}}>* ปี {nowYear} เป็นปีปัจจุบัน ข้อมูลยังไม่ครบทั้งปี — เทียบกับปีก่อนหน้าโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>เทียบต้นทุนตามไตรมาส — Import เทียบ Export</div>
-            <div style={{fontSize:'12px',color:'#a99fa8'}}>1 ปี = 3 ไตรมาส (Q1 ม.ค.-เม.ย. · Q2 พ.ค.-ส.ค. · Q3 ก.ย.-ธ.ค.)</div>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>เทียบต้นทุนตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>1 ปี = 3 ไตรมาส (Q1 ม.ค.-เม.ย. · Q2 พ.ค.-ส.ค. · Q3 ก.ย.-ธ.ค.)</div>
           </div>
-          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371',marginBottom:'18px'}}>
-            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>Import</span>
+          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'var(--color-text-secondary)',marginBottom:'18px'}}>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'var(--color-brand)'}}/>Import</span>
             <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
           {qRows.length>0&&this.renderBarChart(qRows,'imp','exp',qMax,fmtBaht,(a,b)=>Math.round(a).toLocaleString('en-US')+' : '+Math.round(b).toLocaleString('en-US')+' บาท')}
-          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
+          {qLatestPartial&&<div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>มูลค่าเฉลี่ยต่อออเดอร์ตามไตรมาส — Import เทียบ Export</div>
-            <div style={{fontSize:'12px',color:'#a99fa8'}}>ต้นทุนรวมแปลงเป็นบาท (฿) หารด้วยจำนวน shipment ต่อไตรมาส</div>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>มูลค่าเฉลี่ยต่อออเดอร์ตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ต้นทุนรวมแปลงเป็นบาท (฿) หารด้วยจำนวน shipment ต่อไตรมาส</div>
           </div>
-          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371',marginBottom:'18px'}}>
-            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>Import</span>
+          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'var(--color-text-secondary)',marginBottom:'18px'}}>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'var(--color-brand)'}}/>Import</span>
             <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
           {qRows.length>0&&this.renderBarChart(qRows,'impAvg','expAvg',qAvgMax,fmtBaht,(a,b)=>Math.round(a).toLocaleString('en-US')+' : '+Math.round(b).toLocaleString('en-US')+' บาท/ออเดอร์')}
-          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
+          {qLatestPartial&&<div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
-        <div style={{background:'#fff',border:'1px solid #e8dde4',borderRadius:'15px',padding:'20px 22px'}}>
+        <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'15px',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'#14181f'}}>จำนวน Shipment ตามไตรมาส — Import เทียบ Export</div>
-            <div style={{fontSize:'12px',color:'#a99fa8'}}>1 ปี = 3 ไตรมาส (Q1 ม.ค.-เม.ย. · Q2 พ.ค.-ส.ค. · Q3 ก.ย.-ธ.ค.)</div>
+            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>จำนวน Shipment ตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>1 ปี = 3 ไตรมาส (Q1 ม.ค.-เม.ย. · Q2 พ.ค.-ส.ค. · Q3 ก.ย.-ธ.ค.)</div>
           </div>
-          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#5b6371',marginBottom:'18px'}}>
-            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#c91253'}}/>Import</span>
+          <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'var(--color-text-secondary)',marginBottom:'18px'}}>
+            <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'var(--color-brand)'}}/>Import</span>
             <span style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'9px',height:'9px',borderRadius:'50%',background:'#7c3aed'}}/>Export</span>
           </div>
           {qRows.length===0&&<div style={{textAlign:'center',fontSize:'12.5px',color:'#bcb2ba',padding:'30px 0'}}>ไม่มีข้อมูลวันที่ ETD ให้จัดกลุ่มตามไตรมาส</div>}
           {qRows.length>0&&this.renderBarChart(qRows,'impN','expN',qMaxN,v=>v+' รายการ',(a,b)=>a+' : '+b+' shipment')}
-          {qLatestPartial&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
+          {qLatestPartial&&<div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'10px'}}>* ไตรมาสปัจจุบันยังไม่ครบช่วงเวลา ({qCurrentRow.label}) — เทียบกับไตรมาสอื่นโดยตรงอาจไม่สมบูรณ์</div>}
         </div>
       </div>
     </div>;
@@ -1757,10 +1811,10 @@ class App extends Component {
     const vList=vendors||[];
     return <>
       <div onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.4)',zIndex:60,animation:'kobFadeIn .2s ease'}}/>
-      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'440px',maxWidth:'94vw',background:'#fff',zIndex:61,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
-        <div style={{display:'flex',alignItems:'flex-start',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid #e8dde4'}}>
+      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'440px',maxWidth:'94vw',background:'var(--color-surface)',zIndex:61,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
+        <div style={{display:'flex',alignItems:'flex-start',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid var(--color-border)'}}>
           <div style={{minWidth:0}}>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'17px',fontWeight:600,color:'#14181f'}}>{sel.poNo}</div>
+            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'17px',fontWeight:600,color:'var(--color-text)'}}>{sel.poNo}</div>
             <div style={{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}}>
               <span style={coBadgeSty(sel.company)}>{sel.company}</span>
               <span style={typeBadgeSty(sel.type)}>{typeMeta(sel.type).label}</span>
@@ -1768,11 +1822,11 @@ class App extends Component {
               {sel.overReceipt&&<span style={{display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:'6px',fontSize:'10.5px',fontWeight:700,background:'#fef3c7',color:'#b45309'}}>รับของเกิน</span>}
             </div>
           </div>
-          <button onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid #e8dde4',background:'#fff',color:'#7a818d',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
+          <button onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'20px 22px'}}>
-          <div style={{fontSize:'13px',color:'#5b6371',marginBottom:'6px'}}>{sel.party}</div>
-          {(()=>{const ov=(this._overrides||{})[sel.poNo];return (ov&&ov._ts)?<div style={{fontSize:'10.5px',color:'#a99fa8',marginBottom:'14px'}}>แก้ไขล่าสุด {new Date(ov._ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</div>:<div style={{marginBottom:'14px'}}/>;})()}
+          <div style={{fontSize:'13px',color:'var(--color-text-secondary)',marginBottom:'6px'}}>{sel.party}</div>
+          {(()=>{const ov=(this._overrides||{})[sel.poNo];return (ov&&ov._ts)?<div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginBottom:'14px'}}>แก้ไขล่าสุด {new Date(ov._ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</div>:<div style={{marginBottom:'14px'}}/>;})()}
           {(()=>{
             const base=this.strip(sel._splitBase||sel.poNo);
             const siblings=this.allShipments().filter(x=>this.strip(x._splitBase||x.poNo)===base);
@@ -1781,28 +1835,28 @@ class App extends Component {
               <div style={{fontSize:'12px',fontWeight:600,color:'#1d4ed8'}}>PO นี้แบ่งส่งเป็น {siblings.length} shipment — ตรวจมูลค่า/ค่าใช้จ่ายแต่ละอันไม่ให้นับซ้ำกับต้นฉบับ</div>
               <div style={{display:'flex',flexWrap:'wrap',gap:'6px'}}>
                 {siblings.map(sb=>(
-                  <button key={sb.id} onClick={()=>this.setState({detailId:sb.id,editing:false,editForm:null})} style={{padding:'5px 10px',borderRadius:'8px',border:sb.id===sel.id?'1.5px solid #1d4ed8':'1px solid #bfdbfe',background:sb.id===sel.id?'#dbeafe':'#fff',color:'#1d4ed8',fontFamily:"'IBM Plex Mono',monospace",fontSize:'11px',fontWeight:600,cursor:'pointer'}}>{sb.poNo}</button>
+                  <button key={sb.id} onClick={()=>this.setState({detailId:sb.id,editing:false,editForm:null})} style={{padding:'5px 10px',borderRadius:'8px',border:sb.id===sel.id?'1.5px solid #1d4ed8':'1px solid #bfdbfe',background:sb.id===sel.id?'#dbeafe':'var(--color-surface)',color:'#1d4ed8',fontFamily:"'IBM Plex Mono',monospace",fontSize:'11px',fontWeight:600,cursor:'pointer'}}>{sb.poNo}</button>
                 ))}
               </div>
             </div>;
           })()}
           {!editing&&<>
-            <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#faf6f8',border:'1px solid #f0e9ed',borderRadius:'12px',padding:'14px 16px',marginBottom:'18px'}}>
-              <div style={{minWidth:0,flex:1}}><div style={{fontSize:'11px',color:'#a99fa8'}}>ต้นทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.origin||'—'}</div></div>
-              <span style={{display:'flex',color:'#c91253',flexShrink:0}}><Ico name="arrow" size={18} sw={1.9}/></span>
-              <div style={{minWidth:0,flex:1,textAlign:'right'}}><div style={{fontSize:'11px',color:'#a99fa8'}}>ปลายทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.dest||'—'}</div></div>
+            <div style={{display:'flex',alignItems:'center',gap:'10px',background:'var(--color-page-bg)',border:'1px solid var(--color-surface-muted2)',borderRadius:'12px',padding:'14px 16px',marginBottom:'18px'}}>
+              <div style={{minWidth:0,flex:1}}><div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ต้นทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.origin||'—'}</div></div>
+              <span style={{display:'flex',color:'var(--color-brand)',flexShrink:0}}><Ico name="arrow" size={18} sw={1.9}/></span>
+              <div style={{minWidth:0,flex:1,textAlign:'right'}}><div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ปลายทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.dest||'—'}</div></div>
             </div>
             <SectionTitle>รายการสินค้า{sel._splitBase?(' (จาก PO ต้นฉบับ '+sel._splitBase+')'):''}</SectionTitle>
             <div style={{marginBottom:'20px'}}>
-              {poLinesLoading&&<div style={{fontSize:'12px',color:'#a99fa8',padding:'10px 0'}}>กำลังโหลดรายการสินค้า…</div>}
+              {poLinesLoading&&<div style={{fontSize:'12px',color:'var(--color-text-muted)',padding:'10px 0'}}>กำลังโหลดรายการสินค้า…</div>}
               {!poLinesLoading&&poLinesError&&<div style={{fontSize:'11.5px',color:'#b91c1c',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:'8px',padding:'9px 12px'}}>โหลดรายการสินค้าไม่สำเร็จ: {poLinesError}</div>}
               {!poLinesLoading&&!poLinesError&&Array.isArray(poLines)&&poLines.length===0&&<div style={{fontSize:'12px',color:'#bcb2ba',padding:'10px 0'}}>ไม่มีข้อมูลรายการสินค้า</div>}
-              {!poLinesLoading&&!poLinesError&&Array.isArray(poLines)&&poLines.length>0&&<div style={{maxHeight:'260px',overflowY:'auto',border:'1px solid #f0e9ed',borderRadius:'10px'}}>
+              {!poLinesLoading&&!poLinesError&&Array.isArray(poLines)&&poLines.length>0&&<div style={{maxHeight:'260px',overflowY:'auto',border:'1px solid var(--color-surface-muted2)',borderRadius:'10px'}}>
                 {poLines.map((it,i)=>(
-                  <div key={it.id||i} style={{display:'flex',justifyContent:'space-between',gap:'10px',padding:'9px 12px',borderTop:i?'1px solid #f0e9ed':'none'}}>
+                  <div key={it.id||i} style={{display:'flex',justifyContent:'space-between',gap:'10px',padding:'9px 12px',borderTop:i?'1px solid var(--color-surface-muted2)':'none'}}>
                     <div style={{minWidth:0,flex:1}}>
-                      <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.product_name||'—'}</div>
-                      <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'2px'}}>{it.sku?('SKU '+it.sku+' · '):''}{Math.round(parseFloat(it.qty)||0).toLocaleString('en-US')} {it.uom||''}</div>
+                      <div style={{fontSize:'12.5px',fontWeight:600,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.product_name||'—'}</div>
+                      <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'2px'}}>{it.sku?('SKU '+it.sku+' · '):''}{Math.round(parseFloat(it.qty)||0).toLocaleString('en-US')} {it.uom||''}</div>
                       {(()=>{
                         // qty_fulfilled = qty_received (import) หรือ qty_delivered (export) — เพิ่งเพิ่มจาก server
                         // แสดงเฉพาะกรณีที่น่าสนใจ: รับ/ส่งบางส่วน หรือเกินจำนวนสั่ง ไม่โชว์ตอนยังไม่รับเลย (0)
@@ -1832,12 +1886,12 @@ class App extends Component {
                         const qty=parseFloat(it.qty)||0;
                         if(!(qty>0))return null;
                         const perUnit=(lineValueThb+share*extra)/qty;
-                        return <div style={{fontSize:'10.5px',color:'#7a818d',marginTop:'2px'}}>ต้นทุนลงจอด ~฿{perUnit.toLocaleString('en-US',{maximumFractionDigits:2})}/หน่วย</div>;
+                        return <div style={{fontSize:'10.5px',color:'var(--color-text-tertiary)',marginTop:'2px'}}>ต้นทุนลงจอด ~฿{perUnit.toLocaleString('en-US',{maximumFractionDigits:2})}/หน่วย</div>;
                       })()}
                     </div>
                     <div style={{textAlign:'right',flexShrink:0}}>
-                      <div style={{fontSize:'12px',fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(it.price_subtotal,sel.cur)}</div>
-                      <div style={{fontSize:'10.5px',color:'#a99fa8',fontVariantNumeric:'tabular-nums'}}>@{fmtAmt(it.price_unit,sel.cur)}</div>
+                      <div style={{fontSize:'12px',fontWeight:600,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtAmt(it.price_subtotal,sel.cur)}</div>
+                      <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',fontVariantNumeric:'tabular-nums'}}>@{fmtAmt(it.price_unit,sel.cur)}</div>
                     </div>
                   </div>
                 ))}
@@ -1851,14 +1905,14 @@ class App extends Component {
             </div>
             {(()=>{const ti=transitInfo(sel);if(!ti)return null;
               const variance=ti.kpi?ti.days-ti.kpi.days:null;
-              const color=variance==null?'#2563eb':variance<=0?'#15803d':variance<=2?'#d97706':'#dc2626';
+              const color=variance==null?'#2563eb':variance<=0?'#15803d':variance<=2?'#d97706':'var(--color-danger)';
               return <div style={{background:color+'12',border:'1px solid '+color+'33',borderRadius:'10px',padding:'12px 14px',marginBottom:'22px'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
-                  <span style={{fontSize:'12.5px',fontWeight:600,color:'#14181f'}}>Transit Time (ETD → {sel._board==='export'?'ถึงปลายทางจริง':'รับเข้าคลังจริง'})</span>
+                  <span style={{fontSize:'12.5px',fontWeight:600,color:'var(--color-text)'}}>Transit Time (ETD → {sel._board==='export'?'ถึงปลายทางจริง':'รับเข้าคลังจริง'})</span>
                   <span style={{fontSize:'16px',fontWeight:700,color,fontVariantNumeric:'tabular-nums'}}>{ti.days} วัน</span>
                 </div>
-                {ti.kpi&&<div style={{fontSize:'11.5px',color:'#7a818d',marginTop:'5px'}}>มาตรฐาน {ti.kpi.label}: {ti.kpi.days} วัน — {variance<=0?('เร็วกว่ามาตรฐาน '+Math.abs(variance)+' วัน'):('ล่าช้ากว่ามาตรฐาน '+variance+' วัน')}</div>}
-                {!ti.kpi&&<div style={{fontSize:'11.5px',color:'#a99fa8',marginTop:'5px'}}>{sel._board==='import'&&sel.mode==='sea'?'ไม่มีมาตรฐานอ้างอิงสำหรับท่านี้':'มาตรฐาน KPI มีเฉพาะ Sea Freight ขาเข้า'}</div>}
+                {ti.kpi&&<div style={{fontSize:'11.5px',color:'var(--color-text-tertiary)',marginTop:'5px'}}>มาตรฐาน {ti.kpi.label}: {ti.kpi.days} วัน — {variance<=0?('เร็วกว่ามาตรฐาน '+Math.abs(variance)+' วัน'):('ล่าช้ากว่ามาตรฐาน '+variance+' วัน')}</div>}
+                {!ti.kpi&&<div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'5px'}}>{sel._board==='import'&&sel.mode==='sea'?'ไม่มีมาตรฐานอ้างอิงสำหรับท่านี้':'มาตรฐาน KPI มีเฉพาะ Sea Freight ขาเข้า'}</div>}
               </div>;
             })()}
             <SectionTitle>ต้นทุน (บาท)</SectionTitle>
@@ -1869,7 +1923,7 @@ class App extends Component {
             </div>
             <div style={{display:'flex',justifyContent:'space-between',gap:'12px',background:'#fce7f3',border:'1px solid #fbcfe8',borderRadius:'10px',padding:'12px 14px',marginBottom:sel.expectedCost?'8px':'22px'}}>
               <span style={{fontSize:'13px',fontWeight:600,color:'#14181f'}}>ต้นทุนรวม</span>
-              <span style={{fontSize:'14px',fontWeight:700,color:'#c91253',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(total)}</span>
+              <span style={{fontSize:'14px',fontWeight:700,color:'var(--color-brand)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(total)}</span>
             </div>
             {(()=>{
               // เทียบกับต้นทุนที่คาดการณ์ไว้ — ผู้ใช้ต้องกรอกเองตอนแก้ไข (Odoo ไม่มีประวัติราคาที่เสนอ/
@@ -1879,24 +1933,24 @@ class App extends Component {
               const over=diff>0;
               return <div style={{display:'flex',justifyContent:'space-between',gap:'12px',background:over?'#fef2f2':'#f0fdf4',border:'1px solid '+(over?'#fecaca':'#bbf7d0'),borderRadius:'10px',padding:'10px 14px',marginBottom:'22px'}}>
                 <span style={{fontSize:'12px',color:'#5b6371'}}>เทียบต้นทุนที่คาดการณ์ไว้ ({fmtBaht(sel.expectedCost)})</span>
-                <span style={{fontSize:'13px',fontWeight:700,color:over?'#dc2626':'#16a34a',fontVariantNumeric:'tabular-nums'}}>{over?'+':''}{fmtBaht(diff)} ({over?'+':''}{pct}%)</span>
+                <span style={{fontSize:'13px',fontWeight:700,color:over?'var(--color-danger)':'var(--color-success)',fontVariantNumeric:'tabular-nums'}}>{over?'+':''}{fmtBaht(diff)} ({over?'+':''}{pct}%)</span>
               </div>;
             })()}
-            {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11.5px',color:'#a99fa8',marginBottom:'18px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
-            {sel.note&&<div style={{fontSize:'12.5px',color:'#5b6371',background:'#faf6f8',border:'1px solid #f0e9ed',borderRadius:'10px',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}>{sel.note}</div>}
+            {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginBottom:'18px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
+            {sel.note&&<div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',background:'var(--color-page-bg)',border:'1px solid var(--color-surface-muted2)',borderRadius:'10px',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}>{sel.note}</div>}
             <SectionTitle>ไทม์ไลน์</SectionTitle>
             <div style={{display:'flex',flexDirection:'column'}}>
               {timeline.map(s=>(
                 <div key={s.key} style={{display:'flex',gap:'14px'}}>
                   <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
-                    <span style={s.done?{width:'24px',height:'24px',borderRadius:'50%',background:'#c91253',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}:s.cur?{width:'24px',height:'24px',borderRadius:'50%',background:'#fff',border:'3px solid #c91253',boxShadow:'0 0 0 4px #fce7f3',flexShrink:0}:{width:'24px',height:'24px',borderRadius:'50%',background:'#fff',border:'2px solid #e8dde4',flexShrink:0}}>
+                    <span style={s.done?{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-brand)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}:s.cur?{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-surface)',border:'3px solid var(--color-brand)',boxShadow:'0 0 0 4px #fce7f3',flexShrink:0}:{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-surface)',border:'2px solid var(--color-border)',flexShrink:0}}>
                       {s.done&&<Ico name="check" size={13} sw={2.4}/>}
                     </span>
-                    {s.showLine&&<span style={{width:'2px',flex:1,minHeight:'24px',background:s.done?'#c91253':'#eee5ea',marginTop:'2px',marginBottom:'2px'}}/>}
+                    {s.showLine&&<span style={{width:'2px',flex:1,minHeight:'24px',background:s.done?'var(--color-brand)':'#eee5ea',marginTop:'2px',marginBottom:'2px'}}/>}
                   </div>
                   <div style={{paddingBottom:'18px',minWidth:0}}>
-                    <div style={{fontSize:'13.5px',fontWeight:(s.done||s.cur)?600:500,color:(s.done||s.cur)?'#14181f':'#bcb2ba'}}>{s.label}</div>
-                    <div style={{fontSize:'11.5px',color:'#a99fa8',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}>{s.date}</div>
+                    <div style={{fontSize:'13.5px',fontWeight:(s.done||s.cur)?600:500,color:(s.done||s.cur)?'var(--color-text)':'#bcb2ba'}}>{s.label}</div>
+                    <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}>{s.date}</div>
                   </div>
                 </div>
               ))}
@@ -1905,12 +1959,12 @@ class App extends Component {
           {editing&&<div>
             <SectionTitle>ท่าเรือ ต้นทาง / ปลายทาง</SectionTitle>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'22px'}}>
-              <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>ท่าต้นทาง</div>
+              <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ท่าต้นทาง</div>
                 <select value={ef.origin||''} onChange={e=>this.setEdit('origin',e.target.value)} style={SEL}>
                   <option value="">— เลือกท่าต้นทาง —</option>
                   {PORTS_ORIGIN.map(p=><option key={p} value={p}>{p}</option>)}
                 </select></div>
-              <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>ท่าปลายทาง</div>
+              <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ท่าปลายทาง</div>
                 <select value={ef.dest||''} onChange={e=>this.setEdit('dest',e.target.value)} style={SEL}>
                   <option value="">— เลือกท่าปลายทาง —</option>
                   {PORTS_DEST.map(p=><option key={p} value={p}>{p}</option>)}
@@ -1919,14 +1973,14 @@ class App extends Component {
             {ef._synthetic&&<>
               <SectionTitle>มูลค่าสินค้า (shipment ที่แยกเอง)</SectionTitle>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'18px'}}>
-                <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>สกุลเงิน</div>
+                <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>สกุลเงิน</div>
                   <select value={ef.cur||'THB'} onChange={e=>this.setEditCurrency(e.target.value)} style={SEL}>
                     <option value="CNY">CNY ¥</option><option value="USD">USD $</option><option value="THB">THB ฿</option><option value="SGD">SGD S$</option>
                   </select></div>
-                <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>มูลค่าสินค้าของล็อตนี้</div>
+                <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>มูลค่าสินค้าของล็อตนี้</div>
                   <input value={ef.amount===''||ef.amount==null?'':ef.amount} onChange={e=>this.setEdit('amount',e.target.value)} type="number" placeholder="0" style={INP}/></div>
               </div>
-              <div style={{fontSize:'11px',color:'#a99fa8',marginTop:'-10px',marginBottom:'18px'}}>ใส่เฉพาะสัดส่วนของล็อตนี้ ไม่ใช่มูลค่าเต็มของ PO ต้นฉบับ — ไม่งั้นยอดรวมจะนับซ้ำ</div>
+              <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'-10px',marginBottom:'18px'}}>ใส่เฉพาะสัดส่วนของล็อตนี้ ไม่ใช่มูลค่าเต็มของ PO ต้นฉบับ — ไม่งั้นยอดรวมจะนับซ้ำ</div>
             </>}
             <SectionTitle>Ship Mode</SectionTitle>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'18px'}}>
@@ -1935,71 +1989,71 @@ class App extends Component {
             <SectionTitle>ข้อมูลขนส่ง</SectionTitle>
             <div style={{display:'flex',flexDirection:'column',gap:'13px',marginBottom:'14px'}}>
               {[['BL / AWB','bl','text','เช่น COSU1234567'],['ตู้คอนเทนเนอร์','container','text','เช่น TGHU5521430'],['เรือ / เที่ยว','vessel','text','เช่น COSCO HARMONY'],['ETD — วันออกเดินทาง','etd','date',''],['ETA — วันถึงปลายทาง (ประมาณ)','eta','date','']].map(([l,k,t,ph])=>(
-                <div key={k}><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>{l}</div><input value={ef[k]||''} onChange={e=>this.setEdit(k,e.target.value)} type={t} placeholder={ph} style={INP}/></div>
+                <div key={k}><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>{l}</div><input value={ef[k]||''} onChange={e=>this.setEdit(k,e.target.value)} type={t} placeholder={ph} style={INP}/></div>
               ))}
-              <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>{ef.board==='export'?'วันที่ถึงปลายทางจริง (Actual)':'วันที่รับเข้าคลังจริง (Actual)'}</div>
+              <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>{ef.board==='export'?'วันที่ถึงปลายทางจริง (Actual)':'วันที่รับเข้าคลังจริง (Actual)'}</div>
                 <input value={ef.actualDate||''} onChange={e=>this.setEdit('actualDate',e.target.value)} type="date" style={INP}/></div>
               {(()=>{const ti=transitInfo({...ef,_board:ef.board});if(!ti)return null;
                 const variance=ti.kpi?ti.days-ti.kpi.days:null;
-                const color=variance==null?'#2563eb':variance<=0?'#15803d':variance<=2?'#d97706':'#dc2626';
+                const color=variance==null?'#2563eb':variance<=0?'#15803d':variance<=2?'#d97706':'var(--color-danger)';
                 return <div style={{background:color+'12',border:'1px solid '+color+'33',borderRadius:'10px',padding:'10px 12px',fontSize:'12px',color}}>
                   Transit {ti.days} วัน{ti.kpi?(' · มาตรฐาน '+ti.kpi.label+' '+ti.kpi.days+' วัน · '+(variance<=0?('เร็วกว่า '+Math.abs(variance)+' วัน'):('ล่าช้า '+variance+' วัน'))):''}
                 </div>;
               })()}
-              <div><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>Freight Forwarder</div>
+              <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>Freight Forwarder</div>
                 <input value={ef.forwarder||''} onChange={e=>this.setEdit('forwarder',e.target.value)} list="kobVL" placeholder="พิมพ์เพื่อค้นหา vendor…" style={INP}/>
                 <datalist id="kobVL">{vList.slice(0,500).map(v=><option key={v.name} value={v.name}/>)}</datalist></div>
             </div>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',margin:'20px 0 11px'}}>
               <SectionTitle>ต้นทุน (บาท)</SectionTitle>
-              <button onClick={()=>this.openBillPicker()} style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'6px 11px',border:'1.5px solid #c91253',borderRadius:'8px',background:'#fff',color:'#c91253',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="boxes" size={13} sw={1.8}/>เลือกบิลจาก Odoo</button>
+              <button onClick={()=>this.openBillPicker()} style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'6px 11px',border:'1.5px solid var(--color-brand)',borderRadius:'8px',background:'var(--color-surface)',color:'var(--color-brand)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="boxes" size={13} sw={1.8}/>เลือกบิลจาก Odoo</button>
             </div>
-            {Array.isArray(ef.bills)&&ef.bills.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'5px',marginBottom:'12px',background:'#faf6f8',border:'1px solid #f0e9ed',borderRadius:'10px',padding:'10px 12px'}}>
-              <div style={{fontSize:'10.5px',fontWeight:700,color:'#a99fa8',letterSpacing:'.4px'}}>บิลที่จับคู่ ({ef.bills.length})</div>
+            {Array.isArray(ef.bills)&&ef.bills.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'5px',marginBottom:'12px',background:'var(--color-page-bg)',border:'1px solid var(--color-surface-muted2)',borderRadius:'10px',padding:'10px 12px'}}>
+              <div style={{fontSize:'10.5px',fontWeight:700,color:'var(--color-text-muted)',letterSpacing:'.4px'}}>บิลที่จับคู่ ({ef.bills.length})</div>
               {ef.bills.map(b=><div key={b.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',fontSize:'11.5px'}}>
-                <span style={{color:'#5b6371',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</span>
+                <span style={{color:'var(--color-text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</span>
                 <span style={{display:'flex',alignItems:'center',gap:'6px',flexShrink:0}}>
                   <span style={billCatSty(b.category)}>{billCatLabel(b.category)}</span>
-                  <span style={{fontWeight:600,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(b.amount).toLocaleString()}</span>
+                  <span style={{fontWeight:600,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(b.amount).toLocaleString()}</span>
                 </span>
               </div>)}
             </div>}
             <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
               {[['ค่าขนส่ง (Freight)','freight'],['ค่าเดินพิธีการ (Clearance)','clearance'],['ค่าประกันภัย (Insurance)','insurance'],['อากรขาเข้า (Import Duty)','duty'],['ภาษีมูลค่าเพิ่ม (VAT)','vat']].map(([l,k])=>(
-                <div key={k}><div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>{l}</div><input value={ef[k]===''||ef[k]==null?'':ef[k]} onChange={e=>this.setEdit(k,e.target.value)} type="number" placeholder="0" style={INP}/></div>
+                <div key={k}><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>{l}</div><input value={ef[k]===''||ef[k]==null?'':ef[k]} onChange={e=>this.setEdit(k,e.target.value)} type="number" placeholder="0" style={INP}/></div>
               ))}
             </div>
             {costSrc&&<div style={{fontSize:'11px',color:costSrc.includes('ไม่พบ')?'#b91c1c':'#15803d',marginTop:'4px'}}>{costSrc}</div>}
             <div style={{marginTop:'16px'}}>
-              <div style={{fontSize:'11px',color:'#a99fa8',marginBottom:'5px'}}>ต้นทุนที่คาดการณ์ไว้ (บาท) — กรอกไว้เทียบกับต้นทุนจริงภายหลัง (ไม่บังคับ)</div>
+              <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ต้นทุนที่คาดการณ์ไว้ (บาท) — กรอกไว้เทียบกับต้นทุนจริงภายหลัง (ไม่บังคับ)</div>
               <input value={ef.expectedCost===''||ef.expectedCost==null?'':ef.expectedCost} onChange={e=>this.setEdit('expectedCost',e.target.value)} type="number" placeholder="ไม่ระบุ" style={INP}/>
             </div>
-            <div style={{fontSize:'11px',fontWeight:700,color:'#a99fa8',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ปรับสถานะ</div>
+            <div style={{fontSize:'11px',fontWeight:700,color:'var(--color-text-muted)',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ปรับสถานะ</div>
             <div style={{display:'flex',flexWrap:'wrap',gap:'7px'}}>
               {stages.map(stg=>{const active=curStage===stg.key;return(
-                <button key={stg.key} onClick={()=>this.setEdit('stage',stg.key)} style={{padding:'7px 12px',borderRadius:'9px',border:active?'1.5px solid '+stg.color:'1.5px solid #e8dde4',background:active?stg.color+'15':'#fff',color:active?stg.color:'#5b6371',fontFamily:'inherit',fontSize:'12px',fontWeight:active?600:500,cursor:'pointer'}}>{stg.label}</button>
+                <button key={stg.key} onClick={()=>this.setEdit('stage',stg.key)} style={{padding:'7px 12px',borderRadius:'9px',border:active?'1.5px solid '+stg.color:'1.5px solid var(--color-border)',background:active?stg.color+'15':'var(--color-surface)',color:active?stg.color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12px',fontWeight:active?600:500,cursor:'pointer'}}>{stg.label}</button>
               );})}
             </div>
-            {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11px',color:'#a99fa8',marginTop:'10px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
-            <div style={{fontSize:'11px',fontWeight:700,color:'#a99fa8',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ธงพิเศษ / หมายเหตุ</div>
+            {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'10px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
+            <div style={{fontSize:'11px',fontWeight:700,color:'var(--color-text-muted)',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ธงพิเศษ / หมายเหตุ</div>
             <label style={{display:'flex',alignItems:'center',gap:'9px',cursor:'pointer',marginBottom:'13px'}}>
-              <input type="checkbox" checked={!!ef.overReceipt} onChange={e=>this.toggleOverReceipt(e.target.checked)} style={{width:'17px',height:'17px',accentColor:'#c91253',cursor:'pointer'}}/>
-              <span style={{fontSize:'12.5px',color:'#14181f'}}>PO นี้เปิดเพื่อรับของส่วนเกินจากซัพพลายเออร์ (Over-receipt)</span>
+              <input type="checkbox" checked={!!ef.overReceipt} onChange={e=>this.toggleOverReceipt(e.target.checked)} style={{width:'17px',height:'17px',accentColor:'var(--color-brand)',cursor:'pointer'}}/>
+              <span style={{fontSize:'12.5px',color:'var(--color-text)'}}>PO นี้เปิดเพื่อรับของส่วนเกินจากซัพพลายเออร์ (Over-receipt)</span>
             </label>
             {ef.overReceipt&&<div style={{fontSize:'11px',color:'#b45309',marginTop:'-6px',marginBottom:'13px'}}>✓ ปรับสถานะเป็น{ef.board==='export'?'ถึงปลายทาง':'รับเข้าคลัง'}ให้อัตโนมัติ — ของถึงจริงแล้วจึงเปิด PO นี้</div>}
             <textarea value={ef.note||''} onChange={e=>this.setEdit('note',e.target.value)} placeholder="หมายเหตุเพิ่มเติม เช่น อ้างอิง PO ต้นทาง, เหตุผลที่ของเกิน…" rows={3} style={{...INP,height:'auto',padding:'9px 11px',resize:'vertical',fontFamily:'inherit'}}/>
           </div>}
         </div>
-        <div style={{padding:'14px 22px',borderTop:'1px solid #e8dde4',display:'flex',gap:'10px'}}>
+        <div style={{padding:'14px 22px',borderTop:'1px solid var(--color-border)',display:'flex',gap:'10px'}}>
           {!editing&&<>
-            <button onClick={()=>this.splitShipment()} title="แยกเป็น shipment ย่อยใหม่ (PO เดียวกัน ส่งคนละรอบ)" style={{width:'40px',height:'40px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#1d4ed8',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="split" size={16} sw={1.8}/></button>
-            {sel._synthetic&&<button onClick={()=>this.openDeleteDialog(sel.poNo)} title="ลบ shipment ย่อยนี้ (ต้องมีรหัสผ่านผู้มีอำนาจ)" style={{width:'40px',height:'40px',border:'1.5px solid #fecaca',borderRadius:'10px',background:'#fff',color:'#dc2626',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="trash" size={16} sw={1.8}/></button>}
-            <button onClick={()=>this.setState({detailId:null})} style={{flex:1,height:'40px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ปิด</button>
-            <button onClick={()=>this.startEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="edit" size={15} sw={1.8}/>แก้ไข</button>
+            <button onClick={()=>this.splitShipment()} title="แยกเป็น shipment ย่อยใหม่ (PO เดียวกัน ส่งคนละรอบ)" style={{width:'40px',height:'40px',border:'1.5px solid var(--color-border)',borderRadius:'10px',background:'var(--color-surface)',color:'#1d4ed8',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="split" size={16} sw={1.8}/></button>
+            {sel._synthetic&&<button onClick={()=>this.openDeleteDialog(sel.poNo)} title="ลบ shipment ย่อยนี้ (ต้องมีรหัสผ่านผู้มีอำนาจ)" style={{width:'40px',height:'40px',border:'1.5px solid #fecaca',borderRadius:'10px',background:'var(--color-surface)',color:'var(--color-danger)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="trash" size={16} sw={1.8}/></button>}
+            <button onClick={()=>this.setState({detailId:null})} style={{flex:1,height:'40px',border:'1.5px solid var(--color-border)',borderRadius:'10px',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ปิด</button>
+            <button onClick={()=>this.startEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'10px',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="edit" size={15} sw={1.8}/>แก้ไข</button>
           </>}
           {editing&&<>
-            <button onClick={()=>this.cancelEdit()} style={{flex:1,height:'40px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-            <button onClick={()=>this.saveEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:savingEdit?'default':'pointer',opacity:savingEdit?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="check" size={15} sw={2.2}/>{savingEdit?'กำลังบันทึก…':'บันทึก'}</button>
+            <button onClick={()=>this.cancelEdit()} style={{flex:1,height:'40px',border:'1.5px solid var(--color-border)',borderRadius:'10px',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
+            <button onClick={()=>this.saveEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'10px',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:savingEdit?'default':'pointer',opacity:savingEdit?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="check" size={15} sw={2.2}/>{savingEdit?'กำลังบันทึก…':'บันทึก'}</button>
           </>}
         </div>
       </div>
@@ -2012,20 +2066,20 @@ class App extends Component {
     const d=this.state.deleteDialog;if(!d)return null;
     return <>
       <div onClick={()=>!d.busy&&this.closeDeleteDialog()} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.5)',zIndex:70,animation:'kobFadeIn .2s ease'}}/>
-      <div style={{position:'fixed',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:'360px',maxWidth:'90vw',background:'#fff',borderRadius:'14px',zIndex:71,boxShadow:'0 20px 60px rgba(20,24,31,.25)',padding:'22px'}}>
+      <div style={{position:'fixed',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:'360px',maxWidth:'90vw',background:'var(--color-surface)',borderRadius:'14px',zIndex:71,boxShadow:'0 20px 60px rgba(20,24,31,.25)',padding:'22px'}}>
         <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'10px'}}>
-          <span style={{color:'#dc2626',display:'flex'}}><Ico name="trash" size={18} sw={1.8}/></span>
-          <div style={{fontSize:'15px',fontWeight:700,color:'#14181f'}}>ลบ shipment ย่อย</div>
+          <span style={{color:'var(--color-danger)',display:'flex'}}><Ico name="trash" size={18} sw={1.8}/></span>
+          <div style={{fontSize:'15px',fontWeight:700,color:'var(--color-text)'}}>ลบ shipment ย่อย</div>
         </div>
-        <div style={{fontSize:'12.5px',color:'#5b6371',marginBottom:'14px'}}>ยืนยันลบ <b style={{fontFamily:"'IBM Plex Mono',monospace"}}>{d.poNo}</b> — ลบแล้วกู้คืนไม่ได้ ต้องใส่รหัสผ่านของผู้มีอำนาจลบ</div>
+        <div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',marginBottom:'14px'}}>ยืนยันลบ <b style={{fontFamily:"'IBM Plex Mono',monospace"}}>{d.poNo}</b> — ลบแล้วกู้คืนไม่ได้ ต้องใส่รหัสผ่านของผู้มีอำนาจลบ</div>
         {/* type="text" ไม่ mask ตัวอักษร — ตั้งใจไม่ใช้ type="password" เพราะ Chrome autofill/password
             manager จะแทรกแซงค่าที่พิมพ์จริงได้ (ค่าที่ submit ไม่ตรงกับที่เห็นบนจอ) ทำให้ลบไม่สำเร็จ
             ทั้งที่ดูเหมือนพิมพ์รหัสถูกแล้ว — รหัสนี้เป็น PIN ใช้ร่วมกันในทีม ไม่ใช่รหัสผ่านล็อกอินส่วนตัว */}
         <input type="text" autoComplete="off" value={d.password} onChange={e=>this.setState({deleteDialog:{...d,password:e.target.value,error:''}})} onKeyDown={e=>e.key==='Enter'&&this.confirmDelete()} placeholder="รหัสผ่านผู้มีอำนาจลบ" autoFocus style={INP}/>
-        {d.error&&<div style={{fontSize:'11.5px',color:'#dc2626',marginTop:'8px'}}>{d.error}</div>}
+        {d.error&&<div style={{fontSize:'11.5px',color:'var(--color-danger)',marginTop:'8px'}}>{d.error}</div>}
         <div style={{display:'flex',gap:'10px',marginTop:'16px'}}>
-          <button onClick={()=>this.closeDeleteDialog()} style={{flex:1,height:'38px',border:'1.5px solid #e8dde4',borderRadius:'9px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-          <button onClick={()=>this.confirmDelete()} disabled={d.busy||!d.password} style={{flex:1,height:'38px',border:0,borderRadius:'9px',background:'#dc2626',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:(d.busy||!d.password)?'default':'pointer',opacity:(d.busy||!d.password)?0.6:1}}>{d.busy?'กำลังลบ…':'ยืนยันลบ'}</button>
+          <button onClick={()=>this.closeDeleteDialog()} style={{flex:1,height:'38px',border:'1.5px solid var(--color-border)',borderRadius:'9px',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
+          <button onClick={()=>this.confirmDelete()} disabled={d.busy||!d.password} style={{flex:1,height:'38px',border:0,borderRadius:'9px',background:'var(--color-danger)',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:(d.busy||!d.password)?'default':'pointer',opacity:(d.busy||!d.password)?0.6:1}}>{d.busy?'กำลังลบ…':'ยืนยันลบ'}</button>
         </div>
       </div>
     </>;
@@ -2046,59 +2100,59 @@ class App extends Component {
     const sumAll=sums.freight+sums.clearance+sums.insurance+sums.duty+sums.vat;
     return <>
       <div onClick={()=>this.closeBillPicker()} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.45)',zIndex:70,animation:'kobFadeIn .2s ease'}}/>
-      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'520px',maxWidth:'96vw',background:'#fff',zIndex:71,boxShadow:'-12px 0 40px rgba(20,24,31,.18)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
-        <div style={{padding:'20px 22px 14px',borderBottom:'1px solid #e8dde4'}}>
+      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'520px',maxWidth:'96vw',background:'var(--color-surface)',zIndex:71,boxShadow:'-12px 0 40px rgba(20,24,31,.18)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
+        <div style={{padding:'20px 22px 14px',borderBottom:'1px solid var(--color-border)'}}>
           <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
-            <div><div style={{fontSize:'16px',fontWeight:700,color:'#14181f'}}>เลือกบิลค่าขนส่ง / ภาษี</div>
-              <div style={{fontSize:'11.5px',color:'#a99fa8',marginTop:'2px'}}>จาก Odoo · เลือกบิลที่เป็นของ shipment นี้ (เลือกได้หลายใบ)</div></div>
-            <button onClick={()=>this.closeBillPicker()} style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid #e8dde4',background:'#fff',color:'#7a818d',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
+            <div><div style={{fontSize:'16px',fontWeight:700,color:'var(--color-text)'}}>เลือกบิลค่าขนส่ง / ภาษี</div>
+              <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'2px'}}>จาก Odoo · เลือกบิลที่เป็นของ shipment นี้ (เลือกได้หลายใบ)</div></div>
+            <button onClick={()=>this.closeBillPicker()} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',background:'#faf6f8',border:'1.5px solid #e8dde4',borderRadius:'9px',padding:'0 12px',height:'38px',marginTop:'14px'}}>
-            <span style={{display:'flex',color:'#a99fa8'}}><Ico name="search" size={16} sw={1.8}/></span>
-            <input value={billQuery} onChange={e=>this.setState({billQuery:e.target.value})} placeholder="ค้นหา ผู้ขาย / เลขบิล / วันที่…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'#14181f',width:'100%'}}/>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',background:'var(--color-page-bg)',border:'1.5px solid var(--color-border)',borderRadius:'9px',padding:'0 12px',height:'38px',marginTop:'14px'}}>
+            <span style={{display:'flex',color:'var(--color-text-muted)'}}><Ico name="search" size={16} sw={1.8}/></span>
+            <input value={billQuery} onChange={e=>this.setState({billQuery:e.target.value})} placeholder="ค้นหา ผู้ขาย / เลขบิล / วันที่…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',width:'100%'}}/>
           </div>
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'12px 16px'}}>
-          {billLoading&&<div style={{textAlign:'center',color:'#a99fa8',fontSize:'13px',padding:'40px 0'}}>กำลังโหลดบิลจาก Odoo… (ไม่เกิน 15 วินาที)</div>}
+          {billLoading&&<div style={{textAlign:'center',color:'var(--color-text-muted)',fontSize:'13px',padding:'40px 0'}}>กำลังโหลดบิลจาก Odoo… (ไม่เกิน 15 วินาที)</div>}
           {!billLoading&&billError&&<div style={{textAlign:'center',padding:'40px 0'}}>
             <div style={{color:'#b91c1c',fontSize:'13px',marginBottom:'12px'}}>เชื่อมต่อ Odoo ไม่สำเร็จ</div>
-            <button onClick={()=>{this._billListCompany=null;this.openBillPicker();}} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'8px 16px',border:'1.5px solid #c91253',borderRadius:'9px',background:'#fff',color:'#c91253',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}><Ico name="sync" size={13} sw={2}/>ลองอีกครั้ง</button>
+            <button onClick={()=>{this._billListCompany=null;this.openBillPicker();}} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'8px 16px',border:'1.5px solid var(--color-brand)',borderRadius:'9px',background:'var(--color-surface)',color:'var(--color-brand)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}><Ico name="sync" size={13} sw={2}/>ลองอีกครั้ง</button>
           </div>}
           {!billLoading&&!billError&&list.length===0&&<div style={{textAlign:'center',color:'#bcb2ba',fontSize:'13px',padding:'40px 0'}}>ไม่พบบิล{q?'ที่ตรงกับคำค้น':''}</div>}
           {!billLoading&&list.map(b=>{
             const on=!!sel[b.id];
             const used=usedBy[b.id];
-            return <div key={b.id} onClick={()=>this.toggleBill(b)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',marginBottom:'7px',border:on?'1.5px solid #c91253':'1.5px solid #ece3e8',borderRadius:'11px',background:on?'#fdf2f8':(used?'#fffbeb':'#fff'),cursor:'pointer',opacity:used&&!on?0.75:1}}>
-              <span style={{width:'20px',height:'20px',borderRadius:'6px',border:on?'0':'1.5px solid #d9d0d6',background:on?'#c91253':'#fff',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{on&&<Ico name="check" size={13} sw={2.6}/>}</span>
+            return <div key={b.id} onClick={()=>this.toggleBill(b)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',marginBottom:'7px',border:on?'1.5px solid var(--color-brand)':'1.5px solid var(--color-border)',borderRadius:'11px',background:on?'#fdf2f8':(used?'#fffbeb':'var(--color-surface)'),cursor:'pointer',opacity:used&&!on?0.75:1}}>
+              <span style={{width:'20px',height:'20px',borderRadius:'6px',border:on?'0':'1.5px solid #d9d0d6',background:on?'var(--color-brand)':'var(--color-surface)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{on&&<Ico name="check" size={13} sw={2.6}/>}</span>
               <div style={{minWidth:0,flex:1}}>
-                <div style={{fontSize:'12.5px',fontWeight:600,color:'#14181f',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</div>
+                <div style={{fontSize:'12.5px',fontWeight:600,color:(on||used)?'#14181f':'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</div>
                 <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'3px',flexWrap:'wrap'}}>
                   <span style={billCatSty(b.category)}>{billCatLabel(b.category)}</span>
-                  <span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:b.kind==='po'?'#f3edf0':'#dcfce7',color:b.kind==='po'?'#7a818d':'#15803d'}}>{b.kind==='po'?'PO รอบิล':'จ่ายจริง'}</span>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'10.5px',color:'#a99fa8'}}>{b.bill}</span>
-                  <span style={{fontSize:'10.5px',color:'#a99fa8'}}>· {fmtDate(b.date)}</span>
+                  <span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:b.kind==='po'?'var(--color-surface-muted)':'#dcfce7',color:b.kind==='po'?'var(--color-text-tertiary)':'#15803d'}}>{b.kind==='po'?'PO รอบิล':'จ่ายจริง'}</span>
+                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'10.5px',color:(on||used)?'#5b6371':'var(--color-text-muted)'}}>{b.bill}</span>
+                  <span style={{fontSize:'10.5px',color:(on||used)?'#5b6371':'var(--color-text-muted)'}}>· {fmtDate(b.date)}</span>
                   {used&&<span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'5px',fontSize:'10px',fontWeight:700,background:'#fef3c7',color:'#b45309'}}>ใช้กับ {used} แล้ว</span>}
                 </div>
               </div>
               <span style={{textAlign:'right',flexShrink:0}}>
-                <div style={{fontSize:'13px',fontWeight:700,color:'#14181f',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(b.amount).toLocaleString()}</div>
+                <div style={{fontSize:'13px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(b.amount).toLocaleString()}</div>
                 {/* โชว์ยอดต้นฉบับ+อัตราแลกเปลี่ยนเมื่อบิลไม่ใช่ THB — กันประวัติ bug ที่เคยเอายอดสกุลต่างประเทศมานับเป็นบาทตรงๆ
                     โดยไม่มีอะไรฟ้องเลยว่าแปลงหรือยัง ให้ผู้ใช้เช็คด้วยตาได้ว่าเลขบาทสมเหตุสมผลกับยอดเดิมไหม */}
-                {b.origAmount!=null&&<div style={{fontSize:'10px',color:'#a99fa8',marginTop:'2px'}}>{fmtAmt(b.origAmount,b.currency)} × {b.fxRate.toFixed(2)}</div>}
+                {b.origAmount!=null&&<div style={{fontSize:'10px',color:'var(--color-text-muted)',marginTop:'2px'}}>{fmtAmt(b.origAmount,b.currency)} × {b.fxRate.toFixed(2)}</div>}
               </span>
             </div>;
           })}
         </div>
-        <div style={{padding:'12px 22px 14px',borderTop:'1px solid #e8dde4'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'10px',fontSize:'11px',color:'#7a818d',marginBottom:'10px',flexWrap:'wrap'}}>
+        <div style={{padding:'12px 22px 14px',borderTop:'1px solid var(--color-border)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'10px',fontSize:'11px',color:'var(--color-text-tertiary)',marginBottom:'10px',flexWrap:'wrap'}}>
             <span style={{fontWeight:600}}>เลือก {selArr.length} รายการ</span>
             <span style={{fontVariantNumeric:'tabular-nums',textAlign:'right'}}>
               {['freight','clearance','insurance','duty','vat'].filter(k=>sums[k]>0).map(k=>billCatLabel(k)+' ฿'+Math.round(sums[k]).toLocaleString()).join(' · ')||'—'}
             </span>
           </div>
           <div style={{display:'flex',gap:'10px'}}>
-            <button onClick={()=>this.closeBillPicker()} style={{flex:1,height:'42px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-            <button onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้รายการที่เลือก (฿{Math.round(sumAll).toLocaleString()})</button>
+            <button onClick={()=>this.closeBillPicker()} style={{flex:1,height:'42px',border:'1.5px solid var(--color-border)',borderRadius:'10px',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
+            <button onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'10px',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้รายการที่เลือก (฿{Math.round(sumAll).toLocaleString()})</button>
           </div>
         </div>
       </div>
@@ -2110,34 +2164,34 @@ class App extends Component {
     const al=this.alerts();
     return <>
       <div onClick={()=>this.setState({alertsOpen:false})} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.4)',zIndex:60,animation:'kobFadeIn .2s ease'}}/>
-      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'420px',maxWidth:'94vw',background:'#fff',zIndex:61,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid #e8dde4'}}>
-          <div><div style={{fontSize:'16px',fontWeight:700,color:'#14181f'}}>ต้องติดตาม ({al.length})</div>
-            <div style={{fontSize:'11.5px',color:'#a99fa8',marginTop:'2px'}}>ETA เลยกำหนด หรือถึงภายใน 3 วัน (ยังไม่ปิดงาน)</div></div>
-          <button onClick={()=>this.setState({alertsOpen:false})} style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid #e8dde4',background:'#fff',color:'#7a818d',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
+      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'420px',maxWidth:'94vw',background:'var(--color-surface)',zIndex:61,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid var(--color-border)'}}>
+          <div><div style={{fontSize:'16px',fontWeight:700,color:'var(--color-text)'}}>ต้องติดตาม ({al.length})</div>
+            <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'2px'}}>ETA เลยกำหนด หรือถึงภายใน 3 วัน (ยังไม่ปิดงาน)</div></div>
+          <button onClick={()=>this.setState({alertsOpen:false})} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'14px 16px'}}>
           {al.length===0&&<div style={{textAlign:'center',color:'#bcb2ba',fontSize:'13px',padding:'40px 0'}}>ไม่มีรายการค้างติดตาม 🎉</div>}
           {al.map(({s,days,kind})=>{
             const tab=s._board==='export'?'export':'import';
-            return <div key={s.id} style={{padding:'11px 13px',marginBottom:'8px',border:'1px solid #ece3e8',borderLeft:'3px solid '+(kind==='late'?'#dc2626':'#d97706'),borderRadius:'0 10px 10px 0',background:'#fff'}}>
+            return <div key={s.id} style={{padding:'11px 13px',marginBottom:'8px',border:'1px solid var(--color-border)',borderLeft:'3px solid '+(kind==='late'?'var(--color-danger)':'#d97706'),borderRadius:'0 10px 10px 0',background:'var(--color-surface)'}}>
               <div onClick={()=>this.setState({alertsOpen:false,tab:s._board,detailId:s.id,editing:false,editForm:null})} style={{display:'flex',alignItems:'center',gap:'11px',cursor:'pointer'}}>
                 <div style={{minWidth:0,flex:1}}>
                   <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
-                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'#14181f'}}>{s.poNo}</span>
+                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</span>
                     <span style={coBadgeSty(s.company)}>{s.company}</span>
                   </div>
-                  <div style={{fontSize:'11.5px',color:'#7a818d',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.party}</div>
+                  <div style={{fontSize:'11.5px',color:'var(--color-text-tertiary)',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.party}</div>
                   <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'5px'}}>
                     <span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{stageMeta(tab,s.stage).label}</span>
-                    <span style={{fontSize:'11px',color:'#a99fa8'}}>ETA {fmtDate(s.eta)}</span>
+                    <span style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ETA {fmtDate(s.eta)}</span>
                   </div>
                 </div>
-                <span style={{fontSize:'11.5px',fontWeight:700,color:kind==='late'?'#dc2626':'#d97706',whiteSpace:'nowrap',flexShrink:0}}>{days<0?('เลย '+Math.abs(days)+' วัน'):days===0?'ถึงวันนี้':('อีก '+days+' วัน')}</span>
+                <span style={{fontSize:'11.5px',fontWeight:700,color:kind==='late'?'var(--color-danger)':'#d97706',whiteSpace:'nowrap',flexShrink:0}}>{days<0?('เลย '+Math.abs(days)+' วัน'):days===0?'ถึงวันนี้':('อีก '+days+' วัน')}</span>
               </div>
               <div style={{display:'flex',gap:'7px',marginTop:'9px'}}>
                 <button onClick={e=>{e.stopPropagation();this.quickCloseAlert(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1.5px solid #bbf7d0',borderRadius:'8px',background:'#f0fdf4',color:'#15803d',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="check" size={13} sw={2.4}/>{s._board==='export'?'ถึงปลายทางแล้ว':'รับเข้าคลังแล้ว'}</button>
-                <button onClick={e=>{e.stopPropagation();this.openAlertEdit(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1.5px solid #e8dde4',borderRadius:'8px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="cal" size={13} sw={1.8}/>แก้ ETA / สถานะ</button>
+                <button onClick={e=>{e.stopPropagation();this.openAlertEdit(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1.5px solid var(--color-border)',borderRadius:'8px',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="cal" size={13} sw={1.8}/>แก้ ETA / สถานะ</button>
               </div>
             </div>;
           })}
@@ -2152,10 +2206,10 @@ class App extends Component {
     const sf=(k,v)=>this.setState(s=>({form:{...s.form,[k]:v}}));
     return <>
       <div onClick={()=>this.setState({creating:false})} style={{position:'fixed',inset:0,background:'rgba(20,24,31,.4)',zIndex:62,animation:'kobFadeIn .2s ease'}}/>
-      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'520px',maxWidth:'96vw',background:'#fff',zIndex:63,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid #e8dde4'}}>
-          <div style={{fontSize:'16px',fontWeight:700,color:'#14181f'}}>{form.board==='export'?'เพิ่มรายการส่งออก':'เพิ่มรายการนำเข้า'}</div>
-          <button onClick={()=>this.setState({creating:false})} style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid #e8dde4',background:'#fff',color:'#7a818d',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
+      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'520px',maxWidth:'96vw',background:'var(--color-surface)',zIndex:63,boxShadow:'-12px 0 40px rgba(20,24,31,.16)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid var(--color-border)'}}>
+          <div style={{fontSize:'16px',fontWeight:700,color:'var(--color-text)'}}>{form.board==='export'?'เพิ่มรายการส่งออก':'เพิ่มรายการนำเข้า'}</div>
+          <button onClick={()=>this.setState({creating:false})} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'9px',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'20px 22px'}}>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'14px'}}>
@@ -2191,7 +2245,7 @@ class App extends Component {
             <FInput label="ETD (ออกเดินทาง)" value={form.etd} type="date" onChange={e=>sf('etd',e.target.value)}/>
             <FInput label="ETA (ถึงปลายทาง ประมาณ)" value={form.eta} type="date" onChange={e=>sf('eta',e.target.value)}/>
             <FInput label={form.board==='export'?'วันที่ถึงปลายทางจริง (ถ้ามี)':'วันที่รับเข้าคลังจริง (ถ้ามี)'} value={form.actualDate} type="date" onChange={e=>sf('actualDate',e.target.value)}/>
-            <div style={{gridColumn:'1 / -1',height:'1px',background:'#f0e9ed',margin:'2px 0'}}/>
+            <div style={{gridColumn:'1 / -1',height:'1px',background:'var(--color-surface-muted2)',margin:'2px 0'}}/>
             <FInput label="ค่าขนส่ง (฿)" value={form.freight} type="number" placeholder="0" onChange={e=>sf('freight',e.target.value)}/>
             <FInput label="ค่าเดินพิธีการ (฿)" value={form.clearance} type="number" placeholder="0" onChange={e=>sf('clearance',e.target.value)}/>
             <FInput label="ค่าประกันภัย (฿)" value={form.insurance} type="number" placeholder="0" onChange={e=>sf('insurance',e.target.value)}/>
@@ -2199,9 +2253,9 @@ class App extends Component {
             <FInput label="ภาษีมูลค่าเพิ่ม (฿)" value={form.vat} type="number" placeholder="0" onChange={e=>sf('vat',e.target.value)}/>
           </div>
         </div>
-        <div style={{padding:'14px 22px',borderTop:'1px solid #e8dde4',display:'flex',gap:'10px'}}>
-          <button onClick={()=>this.setState({creating:false})} style={{flex:1,height:'42px',border:'1.5px solid #e8dde4',borderRadius:'10px',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-          <button onClick={()=>this.submitCreate()} style={{flex:2,height:'42px',border:0,borderRadius:'10px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:saving?'default':'pointer',opacity:saving?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>{saving?'กำลังบันทึก…':'บันทึก'}</button>
+        <div style={{padding:'14px 22px',borderTop:'1px solid var(--color-border)',display:'flex',gap:'10px'}}>
+          <button onClick={()=>this.setState({creating:false})} style={{flex:1,height:'42px',border:'1.5px solid var(--color-border)',borderRadius:'10px',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
+          <button onClick={()=>this.submitCreate()} style={{flex:2,height:'42px',border:0,borderRadius:'10px',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:saving?'default':'pointer',opacity:saving?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>{saving?'กำลังบันทึก…':'บันทึก'}</button>
         </div>
       </div>
     </>;
@@ -2210,13 +2264,13 @@ class App extends Component {
   // ── AI ตรวจเอกสาร: หน้าอัปโหลด + ผลลัพธ์ ──
   renderVerify(){
     const {verifyFiles,verifyPo,verifyMode,verifyLoading,verifyResult,verifyError}=this.state;
-    const box={border:'1px solid #e8dde4',borderRadius:'12px',background:'#fff',padding:'20px'};
+    const box={border:'1px solid var(--color-border)',borderRadius:'12px',background:'var(--color-surface)',padding:'20px'};
     const modeBtn=(k,label)=><button onClick={()=>this.setState({verifyMode:k,verifyResult:null,verifyError:null})} disabled={verifyLoading}
-      style={{padding:'7px 16px',borderRadius:'99px',border:verifyMode===k?'1.5px solid #c91253':'1.5px solid #e8dde4',background:verifyMode===k?'#c91253':'#fff',color:verifyMode===k?'#fff':'#5b6371',fontFamily:'inherit',fontSize:'12.5px',fontWeight:verifyMode===k?600:500,cursor:verifyLoading?'default':'pointer'}}>{label}</button>;
+      style={{padding:'7px 16px',borderRadius:'99px',border:verifyMode===k?'1.5px solid var(--color-brand)':'1.5px solid var(--color-border)',background:verifyMode===k?'var(--color-brand)':'var(--color-surface)',color:verifyMode===k?'var(--color-surface)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:verifyMode===k?600:500,cursor:verifyLoading?'default':'pointer'}}>{label}</button>;
     return <div style={{flex:1,overflow:'auto',padding:'22px',display:'flex',flexDirection:'column',gap:'16px',maxWidth:'820px'}}>
       <div>
-        <div style={{fontSize:'15px',fontWeight:700,color:'#14181f'}}>ตรวจเอกสาร shipment ด้วย AI</div>
-        <div style={{fontSize:'12.5px',color:'#7a818d',marginTop:'4px'}}>อัปโหลด Invoice / Packing List / Bill of Lading (หรือ กศก.101/1 สำหรับขาออก) แล้วให้ AI ตรวจไขว้ให้</div>
+        <div style={{fontSize:'15px',fontWeight:700,color:'var(--color-text)'}}>ตรวจเอกสาร shipment ด้วย AI</div>
+        <div style={{fontSize:'12.5px',color:'var(--color-text-tertiary)',marginTop:'4px'}}>อัปโหลด Invoice / Packing List / Bill of Lading (หรือ กศก.101/1 สำหรับขาออก) แล้วให้ AI ตรวจไขว้ให้</div>
       </div>
       <div style={box}>
         <Field label="ประเภท shipment">
@@ -2228,9 +2282,9 @@ class App extends Component {
         </Field>
         <div style={{height:'12px'}}/>
         <div onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();this.onVerifyFilesAdd(e.dataTransfer.files);}}
-             style={{border:'2px dashed #e8dde4',borderRadius:'10px',padding:'28px',textAlign:'center'}}>
-          <div style={{color:'#7a818d',fontSize:'13px',marginBottom:'10px'}}>ลากไฟล์มาวางที่นี่ หรือ</div>
-          <label style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 16px',borderRadius:'8px',background:'#f3edf0',color:'#c91253',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>
+             style={{border:'2px dashed var(--color-border)',borderRadius:'10px',padding:'28px',textAlign:'center'}}>
+          <div style={{color:'var(--color-text-tertiary)',fontSize:'13px',marginBottom:'10px'}}>ลากไฟล์มาวางที่นี่ หรือ</div>
+          <label style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 16px',borderRadius:'8px',background:'var(--color-surface-muted)',color:'var(--color-brand)',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>
             <Ico name="plus" size={14} sw={2}/> เลือกไฟล์
             <input type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style={{display:'none'}}
                    onChange={e=>{this.onVerifyFilesAdd(e.target.files);e.target.value='';}}/>
@@ -2238,36 +2292,36 @@ class App extends Component {
         </div>
         {verifyFiles.length>0&&<div style={{marginTop:'14px',display:'flex',flexDirection:'column',gap:'6px'}}>
           {verifyFiles.map((f,i)=><div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'7px 11px',borderRadius:'7px',background:'#f7f3f5',fontSize:'12.5px'}}>
-            <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{f.name}</span>
+            <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'#14181f'}}>{f.name}</span>
             <button onClick={()=>this.removeVerifyFile(i)} style={{border:0,background:'transparent',color:'#a99fa8',cursor:'pointer',fontSize:'15px',lineHeight:1,padding:'0 4px'}}>×</button>
           </div>)}
         </div>}
         <button onClick={()=>this.submitVerify()} disabled={verifyLoading}
-                style={{marginTop:'16px',display:'flex',alignItems:'center',gap:'8px',padding:'10px 20px',border:0,borderRadius:'9px',background:'#c91253',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:verifyLoading?'default':'pointer',opacity:verifyLoading?0.75:1}}>
+                style={{marginTop:'16px',display:'flex',alignItems:'center',gap:'8px',padding:'10px 20px',border:0,borderRadius:'9px',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:verifyLoading?'default':'pointer',opacity:verifyLoading?0.75:1}}>
           {verifyLoading&&<span style={{display:'flex',animation:'kobSpin 1s linear infinite'}}><Ico name="sync" size={15} sw={2}/></span>}
           {verifyLoading?'กำลังตรวจสอบ… อาจใช้เวลา 30 วิ - 2 นาที':'เริ่มตรวจสอบ'}
         </button>
       </div>
-      {verifyError&&<div style={{...box,borderColor:'#fca5a5',background:'#fef2f2',color:'#dc2626',fontSize:'13px'}}>{verifyError}</div>}
+      {verifyError&&<div style={{...box,borderColor:'#fca5a5',background:'#fef2f2',color:'var(--color-danger)',fontSize:'13px'}}>{verifyError}</div>}
       {verifyResult&&<div style={box}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'14px'}}>
-          <div style={{fontSize:'13.5px',fontWeight:700,color:'#14181f'}}>ผลตรวจสอบ</div>
-          <button onClick={()=>this.exportVerifyExcel()} style={{display:'flex',alignItems:'center',gap:'6px',padding:'6px 13px',borderRadius:'8px',border:'1px solid #e8dde4',background:'#fff',color:'#5b6371',fontFamily:'inherit',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>
+          <div style={{fontSize:'13.5px',fontWeight:700,color:'var(--color-text)'}}>ผลตรวจสอบ</div>
+          <button onClick={()=>this.exportVerifyExcel()} style={{display:'flex',alignItems:'center',gap:'6px',padding:'6px 13px',borderRadius:'8px',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>
             <Ico name="dl" size={14} sw={1.8}/> Export Excel
           </button>
         </div>
         {[
-          {icon:'✅',title:'ส่วนที่ถูกต้อง',items:verifyResult.sections.correct,color:'#16a34a'},
+          {icon:'✅',title:'ส่วนที่ถูกต้อง',items:verifyResult.sections.correct,color:'var(--color-success)'},
           {icon:'🟡',title:'ค่าประมาณการในร่าง / ประเด็นที่ควรตรวจสอบ',items:verifyResult.sections.review,color:'#d97706'},
-          {icon:'❌',title:'ข้อผิดพลาดที่ต้องแก้ไข',items:verifyResult.sections.errors,color:'#dc2626'},
+          {icon:'❌',title:'ข้อผิดพลาดที่ต้องแก้ไข',items:verifyResult.sections.errors,color:'var(--color-danger)'},
         ].map((sec,i)=><div key={i} style={{marginBottom:'16px'}}>
           <div style={{fontSize:'12.5px',fontWeight:700,color:sec.color,marginBottom:'7px'}}>{sec.icon} {sec.title} ({sec.items.length})</div>
           {sec.items.length?<ul style={{margin:0,paddingLeft:'20px',display:'flex',flexDirection:'column',gap:'5px'}}>
             {sec.items.map((t,j)=><li key={j} style={{fontSize:'12.5px',color:'#3a4150'}}>{t}</li>)}
-          </ul>:<div style={{fontSize:'12px',color:'#a99fa8'}}>— ไม่มี —</div>}
+          </ul>:<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>— ไม่มี —</div>}
         </div>)}
         <div>
-          <div style={{fontSize:'12.5px',fontWeight:700,color:'#14181f',marginBottom:'7px'}}>📋 สรุป + ข้อเสนอแนะ</div>
+          <div style={{fontSize:'12.5px',fontWeight:700,color:'var(--color-text)',marginBottom:'7px'}}>📋 สรุป + ข้อเสนอแนะ</div>
           <div style={{fontSize:'12.5px',color:'#3a4150',lineHeight:1.6}}>{verifyResult.summary}</div>
         </div>
         {verifyResult.meta&&verifyResult.meta.filesSkipped&&verifyResult.meta.filesSkipped.length>0&&<div style={{marginTop:'14px',padding:'10px 12px',borderRadius:'7px',background:'#fffbeb',fontSize:'11.5px',color:'#92400e'}}>
@@ -2284,7 +2338,7 @@ class App extends Component {
   render(){
     const {tab,view,toast}=this.state;
     const isBoard=tab==='import'||tab==='export';
-    return <div style={{display:'flex',flexDirection:'column',height:'100vh',width:'100%',overflow:'hidden',background:'#f7f3f5'}}>
+    return <div style={{display:'flex',flexDirection:'column',height:'100vh',width:'100%',overflow:'hidden',background:'var(--color-page-bg)'}}>
       {this.renderTopbar()}
       {this.renderTabs()}
       <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
@@ -2300,18 +2354,18 @@ class App extends Component {
       {this.renderDetail()}
       {this.renderCreateForm()}
       {this.state.alertsOpen&&this.renderAlerts()}
-      {toast&&<div style={{position:'fixed',bottom:'24px',right:'24px',zIndex:80,display:'flex',alignItems:'center',gap:'9px',padding:'12px 16px',borderRadius:'11px',background:toast.kind==='error'?'#dc2626':toast.kind==='success'?'#16a34a':'#14181f',color:'#fff',fontSize:'13px',fontWeight:500,boxShadow:'0 14px 40px rgba(20,24,31,.24)',maxWidth:'360px',animation:'kobFadeIn .2s ease'}}>{toast.msg}</div>}
+      {toast&&<div style={{position:'fixed',bottom:'24px',right:'24px',zIndex:80,display:'flex',alignItems:'center',gap:'9px',padding:'12px 16px',borderRadius:'11px',background:toast.kind==='error'?'var(--color-danger)':toast.kind==='success'?'var(--color-success)':'#14181f',color:'#fff',fontSize:'13px',fontWeight:500,boxShadow:'0 14px 40px rgba(20,24,31,.24)',maxWidth:'360px',animation:'kobFadeIn .2s ease'}}>{toast.msg}</div>}
     </div>;
   }
 }
 
 function SectionTitle({children}){
-  return <div style={{fontSize:'11px',fontWeight:700,color:'#a99fa8',letterSpacing:'.6px',textTransform:'uppercase',paddingBottom:'9px',borderBottom:'1px solid #e8dde4',marginBottom:'13px'}}>{children}</div>;
+  return <div style={{fontSize:'11px',fontWeight:700,color:'var(--color-text-muted)',letterSpacing:'.6px',textTransform:'uppercase',paddingBottom:'9px',borderBottom:'1px solid var(--color-border)',marginBottom:'13px'}}>{children}</div>;
 }
 function Row({label,value}){
   return <div style={{display:'flex',justifyContent:'space-between',gap:'12px'}}>
-    <span style={{fontSize:'12.5px',color:'#7a818d'}}>{label}</span>
-    <span style={{fontSize:'12.5px',color:'#14181f',fontWeight:500,textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{value}</span>
+    <span style={{fontSize:'12.5px',color:'var(--color-text-tertiary)'}}>{label}</span>
+    <span style={{fontSize:'12.5px',color:'var(--color-text)',fontWeight:500,textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{value}</span>
   </div>;
 }
 
