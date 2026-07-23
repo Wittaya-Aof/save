@@ -301,7 +301,7 @@ class App extends Component {
   constructor(props){
     super(props);
     const w=typeof window!=='undefined'?window.innerWidth:1280;
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false};
     this._plan=null; this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   componentDidMount(){
@@ -825,11 +825,11 @@ class App extends Component {
     this.setState(s=>({verifyFiles:s.verifyFiles.filter((_,i)=>i!==idx)}));
   }
   async submitVerify(){
-    const {verifyFiles,verifyPo}=this.state;
+    const {verifyFiles,verifyPo,verifyMode}=this.state;
     if(!verifyFiles.length){this.showToast('กรุณาเลือกไฟล์ก่อน','info');return;}
     this.setState({verifyLoading:true,verifyResult:null,verifyError:null});
     const fd=new FormData();
-    fd.append('mode','import');
+    fd.append('mode',verifyMode);
     if((verifyPo||'').trim())fd.append('po',verifyPo.trim());
     verifyFiles.forEach(f=>fd.append('files',f,f.name));
     try{
@@ -2209,15 +2209,21 @@ class App extends Component {
 
   // ── AI ตรวจเอกสาร: หน้าอัปโหลด + ผลลัพธ์ ──
   renderVerify(){
-    const {verifyFiles,verifyPo,verifyLoading,verifyResult,verifyError}=this.state;
+    const {verifyFiles,verifyPo,verifyMode,verifyLoading,verifyResult,verifyError}=this.state;
     const box={border:'1px solid #e8dde4',borderRadius:'12px',background:'#fff',padding:'20px'};
+    const modeBtn=(k,label)=><button onClick={()=>this.setState({verifyMode:k,verifyResult:null,verifyError:null})} disabled={verifyLoading}
+      style={{padding:'7px 16px',borderRadius:'99px',border:verifyMode===k?'1.5px solid #c91253':'1.5px solid #e8dde4',background:verifyMode===k?'#c91253':'#fff',color:verifyMode===k?'#fff':'#5b6371',fontFamily:'inherit',fontSize:'12.5px',fontWeight:verifyMode===k?600:500,cursor:verifyLoading?'default':'pointer'}}>{label}</button>;
     return <div style={{flex:1,overflow:'auto',padding:'22px',display:'flex',flexDirection:'column',gap:'16px',maxWidth:'820px'}}>
       <div>
         <div style={{fontSize:'15px',fontWeight:700,color:'#14181f'}}>ตรวจเอกสาร shipment ด้วย AI</div>
-        <div style={{fontSize:'12.5px',color:'#7a818d',marginTop:'4px'}}>อัปโหลด Invoice / Packing List / Bill of Lading / Form E-D-AK / ใบขนสินค้าขาเข้า แล้วให้ AI ตรวจไขว้ให้ (รองรับเฉพาะ import ในตอนนี้)</div>
+        <div style={{fontSize:'12.5px',color:'#7a818d',marginTop:'4px'}}>อัปโหลด Invoice / Packing List / Bill of Lading (หรือ กศก.101/1 สำหรับขาออก) แล้วให้ AI ตรวจไขว้ให้</div>
       </div>
       <div style={box}>
-        <Field label="เลข PO (ถ้าใส่ไว้ — ระบบจะบันทึก ETD ที่ดึงได้จาก B/L ให้ PO นี้อัตโนมัติ ไม่บังคับ)">
+        <Field label="ประเภท shipment">
+          <div style={{display:'flex',gap:'8px'}}>{modeBtn('import','ขาเข้า (Import)')}{modeBtn('export','ขาออก (Export)')}</div>
+        </Field>
+        <div style={{height:'12px'}}/>
+        <Field label="เลข PO/SO (ถ้าใส่ไว้ — ระบบจะบันทึก ETD ที่ดึงได้จาก B/L ให้เลขนี้อัตโนมัติ ไม่บังคับ)">
           <input style={INP} value={verifyPo} placeholder="เช่น KOBPO2607-00485" onChange={e=>this.setState({verifyPo:e.target.value})}/>
         </Field>
         <div style={{height:'12px'}}/>
