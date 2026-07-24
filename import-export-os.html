@@ -2293,8 +2293,8 @@ class App extends Component {
       style={{padding:'7px 16px',borderRadius:'99px',border:verifyMode===k?'1.5px solid var(--color-brand)':'1.5px solid var(--color-border)',background:verifyMode===k?'var(--color-brand)':'var(--color-surface)',color:verifyMode===k?'var(--color-surface)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:verifyMode===k?600:500,cursor:verifyLoading?'default':'pointer'}}>{label}</button>;
     return <div style={{flex:1,overflow:'auto',padding:'22px',display:'flex',flexDirection:'column',gap:'16px',maxWidth:'820px'}}>
       <div>
-        <div style={{fontSize:'15px',fontWeight:700,color:'var(--color-text)'}}>ตรวจเอกสาร shipment ด้วย AI</div>
-        <div style={{fontSize:'12.5px',color:'var(--color-text-tertiary)',marginTop:'4px'}}>อัปโหลด Invoice / Packing List / Bill of Lading (หรือ กศก.101/1 สำหรับขาออก) แล้วให้ AI ตรวจไขว้ให้</div>
+        <div style={{fontSize:'15px',fontWeight:700,color:'var(--color-text)'}}>ตรวจเอกสาร shipment (ตรวจในเครื่อง)</div>
+        <div style={{fontSize:'12.5px',color:'var(--color-text-tertiary)',marginTop:'4px'}}>อัปโหลด Invoice / Packing List / Bill of Lading (หรือ กศก.101/1 สำหรับขาออก) — เทียบรหัสอ้างอิง (PO/SO, เลขตู้, B/L-AWB, Invoice) ข้ามไฟล์ให้อัตโนมัติด้วย regex ในเครื่อง ไม่ส่งข้อมูลออกไปที่ไหน ไม่มีค่าใช้จ่าย</div>
       </div>
       <div style={box}>
         <Field label="ประเภท shipment">
@@ -2323,7 +2323,7 @@ class App extends Component {
         <button onClick={()=>this.submitVerify()} disabled={verifyLoading}
                 style={{marginTop:'16px',display:'flex',alignItems:'center',gap:'8px',padding:'10px 20px',border:0,borderRadius:'9px',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:verifyLoading?'default':'pointer',opacity:verifyLoading?0.75:1}}>
           {verifyLoading&&<span style={{display:'flex',animation:'kobSpin 1s linear infinite'}}><Ico name="sync" size={15} sw={2}/></span>}
-          {verifyLoading?'กำลังตรวจสอบ… อาจใช้เวลา 30 วิ - 2 นาที':'เริ่มตรวจสอบ'}
+          {verifyLoading?'กำลังตรวจสอบ…':'เริ่มตรวจสอบ'}
         </button>
       </div>
       {verifyError&&<div style={{...box,borderColor:'#fca5a5',background:'#fef2f2',color:'var(--color-danger)',fontSize:'13px'}}>{verifyError}</div>}

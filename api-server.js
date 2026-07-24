@@ -9,7 +9,7 @@ const { Pool } = require('pg');
 const fs    = require('fs');
 const path  = require('path');
 const nodemailer = require('nodemailer');
-const { verifyShipmentRequest } = require('./lib/verify-shipment');
+const { verifyShipmentLocal } = require('./lib/verify-shipment-local');
 
 const PORT = 3000;
 const ROOT = __dirname;
@@ -2094,17 +2094,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ── AI ตรวจเอกสาร shipment (layer 4) — เรียก Claude API ตรงจาก server ──
+    // ── ตรวจเอกสาร shipment (layer 4) — ตรวจในเครื่องล้วนๆ ด้วย regex/keyword ──
     // multipart/form-data: field "mode" (import|export) + field "files" (หลายไฟล์)
-    // มีค่าใช้จ่ายจริงต่อครั้ง (ต้องตั้ง ANTHROPIC_API_KEY ใน .env ก่อน)
+    // ไม่มี network call ออกไปที่ไหนเลย ไม่มีค่าใช้จ่าย (เดิมเรียก Anthropic API ตรง แต่ผู้ใช้ขอ
+    // ให้เปลี่ยนเป็นตรวจในเครื่องแทน หลัง API key ใช้งานไม่ได้ — ดู lib/verify-shipment.js
+    // สำหรับเวอร์ชัน AI เดิมถ้าต้องการกลับไปใช้ในอนาคต)
     if (reqUrl === '/api/verify-shipment' && method === 'POST') {
-      if (!process.env.ANTHROPIC_API_KEY) {
-        jsonErr(res, 503, 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY ใน .env — ฟีเจอร์ตรวจเอกสารยังใช้งานไม่ได้');
-        return;
-      }
       try {
-        const result = await verifyShipmentRequest(req);
-        // ถ้าผู้ใช้ระบุเลข PO มาด้วย และ AI ดึงวันที่ ETD จาก B/L/AWB ได้จริง (ไม่ใช่ draft ที่ยังว่าง)
+        const result = await verifyShipmentLocal(req);
+        // ถ้าผู้ใช้ระบุเลข PO มาด้วย และดึงวันที่ ETD จาก B/L/AWB ได้จริง (ไม่ใช่ draft ที่ยังว่าง)
         // → บันทึก etd ให้อัตโนมัติ กัน manual entry ที่พิสูจน์แล้วว่าแทบไม่มีใครกรอกเอง (ดู comment
         // ที่ poLeadTimeDays() ใน frontend) merge เฉพาะ etd ทับ override เดิมของ PO นั้น ไม่แตะฟิลด์อื่น
         if (result.po && result.shipmentInfo && result.shipmentInfo.etd) {
@@ -2125,7 +2123,7 @@ const server = http.createServer(async (req, res) => {
         jsonOk(res, result);
       } catch (e) {
         console.error('[API] verify-shipment:', e.message);
-        jsonErr(res, e.code === 'NO_API_KEY' ? 503 : 400, e.message);
+        jsonErr(res, 400, e.message);
       }
       return;
     }
@@ -2164,9 +2162,8 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// การตรวจเอกสารด้วย AI (/api/verify-shipment) เป็น request เดียวที่ใช้เวลานาน (30 วิ - 2 นาที)
-// ค่า default ของ Node (headersTimeout 60s, requestTimeout 5min) พอไหวอยู่แล้ว แต่ตั้งชัดเจน
-// ไว้กันเคสไฟล์เยอะ/เอกสารยาวผิดปกติที่อาจใช้เวลาเกิน 5 นาที
+// /api/verify-shipment (ตรวจในเครื่อง) เร็วกว่าตอนเรียก AI มาก แต่ยังตั้ง timeout ไว้กว้างๆ
+// เผื่อเคสไฟล์เยอะ/PDF ใหญ่ผิดปกติที่ extraction อาจใช้เวลานานกว่าปกติ
 server.requestTimeout = 6 * 60 * 1000;
 server.headersTimeout = 65 * 1000;
 
