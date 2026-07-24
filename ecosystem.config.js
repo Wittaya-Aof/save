@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'logistics-api',
+      name: 'import-export-os',
       script: 'api-server.js',
       cwd: __dirname,
       out_file: './server.log',

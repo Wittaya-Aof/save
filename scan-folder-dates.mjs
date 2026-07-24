@@ -22,7 +22,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const IMPORT_ROOT = 'D:\\Aof\\1. Shipment\\1. Import';
 const MIN_YEAR = 2025;
 const PO_MATCH_RE = /(?:KOB|BTV)PO\d{4}-\d{5}/gi;
-const APP_URL = 'http://localhost:3000/logistics-tracking-app.html';
+const APP_URL = 'http://localhost:3000/import-export-os.html';
 
 const APPLY = process.argv.includes('--apply');
 const APPLY_READY = process.argv.includes('--apply-ready');
@@ -36,7 +36,7 @@ const APPLY_READY = process.argv.includes('--apply-ready');
   });
 })();
 
-// ── มาตรฐาน Transit KPI — คัดลอกจาก logistics-tracking-app.html (PORT_KPI) ให้ตรงกันเป๊ะ ──
+// ── มาตรฐาน Transit KPI — คัดลอกจาก import-export-os.html (PORT_KPI) ให้ตรงกันเป๊ะ ──
 const PORT_KPI = [
   { match: ['SHEKOU', 'NANSHA'], label: 'Shekou / Nansha', fcl: 9, lcl: 12 },
   { match: ['SHENZHEN'], label: 'Shenzhen (Yantian)', fcl: 11, lcl: 14 },

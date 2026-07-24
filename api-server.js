@@ -161,7 +161,7 @@ async function mcpRpc(sid, method, params, id) {
 }
 async function mcpConnect() {
   const init = await mcpRpc(null, 'initialize',
-    { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'logistics-api-server', version: '1.0' } }, 0);
+    { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'import-export-os-server', version: '1.0' } }, 0);
   if (init.status !== 200) throw new Error('MCP initialize HTTP ' + init.status);
   await mcpRpc(init.sid, 'notifications/initialized', null, null);
   return init.sid;
@@ -2138,10 +2138,10 @@ const server = http.createServer(async (req, res) => {
   // Allowlist เท่านั้น — ห้าม serve reqUrl ตรงๆ ผ่าน path.join เพราะ reqUrl ไม่ได้ decode/sanitize
   // "/.env", "/api-server.js", "/tracking_data.json" หรือ "/../../Windows/..." จะโดน serve ออกไปทันที
   // (ยืนยันแล้วว่า path.join(ROOT, reqUrl) เดินออกนอก ROOT ได้จริงถ้ามี ../ พอ)
-  const ALIASES = ['/', '/index.html', '/logistics-tracking-app.html'];
+  const ALIASES = ['/', '/index.html', '/import-export-os.html'];
   let filePath;
   if (ALIASES.includes(reqUrl)) {
-    filePath = path.join(ROOT, 'logistics-tracking-app.html');
+    filePath = path.join(ROOT, 'import-export-os.html');
   } else if (reqUrl === '/container-loading-calculator.html') {
     filePath = path.join(ROOT, 'container-loading-calculator.html');
   } else if (/^\/vendor\/[\w.-]+\.(js|css|map)$/.test(reqUrl)) {
