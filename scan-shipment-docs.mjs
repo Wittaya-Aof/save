@@ -485,8 +485,8 @@ async function main() {
         if (result.vessel) {
           try {
             if (!etsSession) { log('  เปิด ETS session ครั้งแรก...'); etsSession = await openEtsSession(); }
-            const etaResult = await searchVesselActualDate(etsSession.page, result.vessel, result.mode === 'air' ? 'air' : 'sea');
-            log(`  ETA lookup (${result.vessel}): status=${etaResult.status} eta=${etaResult.eta}`);
+            const etaResult = await searchVesselActualDate(etsSession.page, result.vessel, result.mode === 'air' ? 'air' : 'sea', result.voyage);
+            log(`  ETA lookup (${result.vessel} voy=${result.voyage}): status=${etaResult.status} eta=${etaResult.eta} matchedVoyage=${etaResult.matchedVoyage} ของทั้งหมด ${etaResult.totalVoyagesFound} เที่ยว`);
             if (etaResult.eta) fields.eta = etaResult.eta;
           } catch (e) {
             log(`  [WARN] ETA lookup ล้มเหลว: ${e.message}`);
