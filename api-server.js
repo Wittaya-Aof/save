@@ -2142,6 +2142,8 @@ const server = http.createServer(async (req, res) => {
   let filePath;
   if (ALIASES.includes(reqUrl)) {
     filePath = path.join(ROOT, 'logistics-tracking-app.html');
+  } else if (reqUrl === '/container-loading-calculator.html') {
+    filePath = path.join(ROOT, 'container-loading-calculator.html');
   } else if (/^\/vendor\/[\w.-]+\.(js|css|map)$/.test(reqUrl)) {
     filePath = path.join(ROOT, reqUrl);
   } else {

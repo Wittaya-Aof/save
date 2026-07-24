@@ -1003,7 +1003,7 @@ class App extends Component {
     const {tab,isNarrow}=this.state;
     const impAll=this.imports(),expAll=this.exports();
     return <div style={{display:'flex',alignItems:'center',gap:'2px',padding:'0 22px',background:'var(--color-surface)',borderBottom:'1px solid var(--color-border)',flexShrink:0,overflowX:'auto'}}>
-      {[{key:'import',label:'Import Board',icon:'down',count:impAll.length},{key:'export',label:'Export Board',icon:'up',count:expAll.length},{key:'dashboard',label:'Dashboard',icon:'chart',count:false},{key:'verify',label:'ตรวจเอกสาร',icon:'check',count:false}].map(t=>{
+      {[{key:'import',label:'Import Board',icon:'down',count:impAll.length},{key:'export',label:'Export Board',icon:'up',count:expAll.length},{key:'dashboard',label:'Dashboard',icon:'chart',count:false},{key:'verify',label:'ตรวจเอกสาร',icon:'check',count:false},{key:'container',label:'บรรจุตู้คอนเทนเนอร์',icon:'boxes',count:false}].map(t=>{
         const active=tab===t.key;
         return <button key={t.key} onClick={()=>this.setState({tab:t.key,detailId:null})} style={{display:'flex',alignItems:'center',gap:'7px',padding:'13px 16px 12px',border:0,borderBottom:active?'2px solid var(--color-brand)':'2px solid transparent',background:'transparent',color:active?'var(--color-brand)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap',marginBottom:'-1px'}}>
           <Ico name={t.icon} size={16} sw={1.8}/>
@@ -2350,6 +2350,7 @@ class App extends Component {
         </>}
         {tab==='dashboard'&&this.renderDashboard()}
         {tab==='verify'&&this.renderVerify()}
+        {tab==='container'&&<iframe src="/container-loading-calculator.html" title="บรรจุตู้คอนเทนเนอร์" style={{flex:1,width:'100%',border:0,background:'#fff'}}/>}
       </div>
       {this.renderDetail()}
       {this.renderCreateForm()}

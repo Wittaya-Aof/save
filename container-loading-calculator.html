@@ -1,0 +1,2938 @@
+﻿<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Load & Stuffing Calculator</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#f5f7fa;color:#333;font-size:14px}
+.header{background:white;border-bottom:1px solid #e0e0e0;padding:14px 24px;text-align:center}
+.header h1{font-size:22px;font-weight:700;color:#1a56db}
+.header p{font-size:12px;color:#888;margin-top:2px}
+.tabs{display:flex;background:white;border-bottom:2px solid #e8e8e8;padding:0 24px}
+.tab{padding:13px 22px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;color:#666;font-size:14px;transition:all 0.15s}
+.tab.active{border-bottom-color:#1a56db;color:#1a56db;font-weight:600}
+.tab:hover:not(.active){background:#f9f9f9}
+.content{max-width:1100px;margin:20px auto;padding:0 20px}
+.tab-pane{display:none}.tab-pane.active{display:block}
+.btn{padding:9px 18px;border:none;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s}
+.btn-primary{background:#1a56db;color:white}.btn-primary:hover{background:#1648c0}
+.btn-outline{background:white;color:#1a56db;border:1px solid #1a56db}.btn-outline:hover{background:#f0f5ff}
+.btn-sm{padding:6px 13px;font-size:12px}
+.btn-danger{background:#fff0f0;color:#c0392b;border:1px solid #f5c6cb}
+.action-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.card{background:white;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:16px;overflow:hidden}
+.card-header{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid #f0f0f0;gap:10px}
+.group-dot{width:14px;height:14px;border-radius:50%;flex-shrink:0}
+.group-name-input{border:none;font-size:15px;font-weight:600;flex:1;outline:none;background:transparent}
+.card-footer{padding:10px 18px;background:#fafafa;display:flex;gap:8px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f8f9fa;padding:8px 12px;text-align:left;font-weight:600;color:#666;font-size:12px}
+td{padding:9px 12px;border-bottom:1px solid #f5f5f5}
+tr:last-child td{border-bottom:none}
+.empty-row{text-align:center;padding:24px;color:#aaa}
+.type-emoji{font-size:16px}
+.color-box{width:16px;height:16px;border-radius:4px;display:inline-block;vertical-align:middle}
+.badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-ok{background:#e8f5e9;color:#2e7d32}
+.badge-warn{background:#fff8e1;color:#e65100}
+.badge-err{background:#fce4ec;color:#c62828}
+.calc-bar{text-align:center;padding:28px 0}
+.btn-calc{background:#1a56db;color:white;padding:13px 48px;font-size:16px;font-weight:700;border-radius:10px;border:none;cursor:pointer;box-shadow:0 4px 12px rgba(26,86,219,0.3)}
+.btn-calc:hover{background:#1648c0;transform:translateY(-1px)}
+.container-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.cont-card{background:white;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,0.08);padding:18px;cursor:pointer;border:2px solid transparent;transition:all 0.15s}
+.cont-card.sel{border-color:#1a56db;background:#f0f5ff}
+.cont-card:hover:not(.sel){border-color:#ccc}
+.cont-icon{font-size:36px;margin-bottom:10px}
+.cont-name{font-size:15px;font-weight:700;margin-bottom:6px}
+.cont-dims{font-size:12px;color:#666;line-height:1.6}
+.sel-badge{display:inline-block;background:#1a56db;color:white;padding:3px 12px;border-radius:20px;font-size:11px;margin-top:10px}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.stat-box{background:#f8f9fa;border-radius:8px;padding:12px;text-align:center}
+.stat-val{font-size:26px;font-weight:700;color:#1a56db}
+.stat-lbl{font-size:11px;color:#888;margin-top:3px}
+.progress{height:7px;background:#eee;border-radius:4px;overflow:hidden;margin-top:3px}
+.progress-fill{height:100%;border-radius:4px}
+.fill-green{background:#43a047}.fill-orange{background:#fb8c00}.fill-red{background:#e53935}.fill-blue{background:#1a73e8}
+.info-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f5f5f5;font-size:13px}
+.info-row:last-child{border-bottom:none}
+canvas{display:block;width:100%;background:#16213e}
+.results-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.no-result{text-align:center;padding:60px 20px;color:#999}
+.no-result-icon{font-size:56px;margin-bottom:12px}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:200;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:white;border-radius:16px;width:660px;max-width:96vw;max-height:92vh;overflow-y:auto}
+.modal.modal-wide{width:920px}
+.modal-hdr{padding:18px 22px;border-bottom:1px solid #eee;font-size:17px;font-weight:700;display:flex;justify-content:space-between;align-items:center}
+.modal-body{padding:22px}
+.modal-ftr{padding:14px 22px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:10px}
+.type-selector{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.type-btn{padding:10px 14px;border:2px solid #e0e0e0;border-radius:10px;cursor:pointer;text-align:center;background:white;transition:all 0.15s;min-width:76px}
+.type-btn.sel{border-color:#1a56db;background:#f0f5ff}
+.type-btn span:first-child{font-size:22px;display:block;margin-bottom:3px}
+.type-btn span:last-child{font-size:11px;color:#555}
+.fs{margin-bottom:16px}
+.fs-title{font-size:13px;font-weight:700;color:#444;margin-bottom:10px;padding-bottom:5px;border-bottom:1px solid #eee}
+.form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fg{display:flex;flex-direction:column;gap:3px}
+.fl{font-size:11px;color:#666;font-weight:600}
+.fi{padding:8px 10px;border:1px solid #ddd;border-radius:7px;font-size:13px;width:100%}
+.fi:focus{outline:none;border-color:#1a56db;box-shadow:0 0 0 3px rgba(26,86,219,0.1)}
+.chk{display:flex;align-items:center;gap:8px;padding:7px 0;cursor:pointer}
+.chk input{width:15px;height:15px;cursor:pointer;accent-color:#1a56db}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:700px){.results-grid{grid-template-columns:1fr}.two-col{grid-template-columns:1fr}}
+/* ── CI/PL REVIEW MODAL ── */
+.cipl-warn{background:#fff7e6;border:1px solid #ffd591;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#874d00;margin-bottom:14px}
+.cipl-warn ul{margin:6px 0 0 18px;padding:0}
+.cipl-ok{background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#166534;margin-bottom:14px}
+.cipl-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.cipl-table th{text-align:left;color:#98a2b3;font-weight:600;padding:6px 8px;border-bottom:1px solid #eef0f3;white-space:nowrap}
+.cipl-table td{padding:5px 8px;border-bottom:1px solid #f4f5f7;vertical-align:middle}
+.cipl-table input{padding:5px 7px;border:1px solid #ddd;border-radius:6px;font-size:12.5px;width:88px}
+.cipl-table input.bad{border-color:#e65100;background:#fff4ec}
+.cipl-profile-row{display:flex;gap:8px;align-items:end;margin-bottom:10px}
+.cipl-profile-row select{flex:1}
+.cipl-sec-note{font-size:11px;color:#98a2b3;margin-top:-4px;margin-bottom:8px}
+/* ── RESULTS DASHBOARD ── */
+.res-block{margin-bottom:30px}
+.res-summary{background:#fff;border-radius:14px;box-shadow:0 1px 5px rgba(0,0,0,.08);padding:18px 22px;display:flex;align-items:center;gap:22px;margin-bottom:16px}
+.rs-img{width:170px;height:90px;background:#f5faff;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:7px;flex-shrink:0}
+.rs-img svg{max-width:100%;max-height:100%}
+.rs-info{flex:1}
+.rs-name{font-size:21px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#1f2d3d}
+.rs-units{font-size:16px;color:#1a56db;font-weight:700;margin:5px 0}
+.rs-meta{font-size:13px;color:#667085}
+.rs-badge{margin-left:auto;align-self:flex-start}
+.res-detail{background:#fff;border-radius:14px;box-shadow:0 1px 5px rgba(0,0,0,.08);padding:22px;margin-bottom:14px}
+.rd-top{display:grid;grid-template-columns:320px 1fr;gap:26px}
+.rd-title{font-size:16px;font-weight:700;margin-bottom:12px;color:#1f2d3d}
+.rd-left canvas{width:100%;border-radius:10px;background:#fff;border:1px solid #eef2f7}
+.rd-units{font-size:14px;font-weight:700;margin:10px 0;text-align:center;color:#1f2d3d}
+.rd-totals .tot-row{font-size:14px;margin-bottom:12px;color:#344054;line-height:1.5}
+.rd-totals .tot-row b{font-weight:700;color:#1f2d3d}
+.rd-totals .tot-pct{color:#1a56db;font-weight:600}
+.rd-divider{border:none;border-top:1px solid #eef0f3;margin:20px 0}
+.rd-bottom{display:grid;grid-template-columns:190px 1fr;gap:24px;align-items:center}
+.donut-wrap{display:flex;align-items:center;justify-content:center;position:relative}
+.donut-center{position:absolute;text-align:center;font-size:12px;color:#667085}
+.donut-center b{display:block;font-size:20px;color:#1f2d3d}
+.res-table{width:100%;border-collapse:collapse;font-size:13px}
+.res-table th{text-align:left;color:#98a2b3;font-weight:600;padding:7px 10px;border-bottom:1px solid #eef0f3;font-size:12px}
+.res-table th.r,.res-table td.r{text-align:right}
+.res-table td{padding:9px 10px;border-bottom:1px solid #f5f6f8;color:#344054}
+.res-table tr:last-child td{border-bottom:none}
+.res-table .dot{width:11px;height:11px;border-radius:3px;display:inline-block;margin-right:8px;vertical-align:middle}
+.res-table tr.res-tot td{border-top:2px solid #e3e7eb;background:#f7f8fa;font-weight:700;border-bottom:none}
+.res-footer{display:flex;gap:10px;justify-content:flex-end;margin-bottom:8px}
+/* ── PALLET MANIFEST ── */
+.pm-wrap{margin-top:18px}
+.pm-title{font-size:13px;font-weight:700;color:#344054;margin-bottom:10px}
+.pm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.pm-card{background:#f9fafb;border:1px solid #e3e7eb;border-radius:10px;padding:12px 14px}
+.pm-card-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.pm-card-num{font-size:13px;font-weight:700;color:#1a56db}
+.pm-card-gw{font-size:12px;font-weight:600;color:#344054}
+.pm-card-dims{font-size:11px;color:#667085;margin-bottom:8px}
+.pm-product-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#344054;margin-bottom:3px}
+.pm-product-qty{margin-left:auto;font-size:11px;color:#667085;white-space:nowrap}
+@media(max-width:700px){.rd-top{grid-template-columns:1fr}.rd-bottom{grid-template-columns:1fr}.res-summary{flex-wrap:wrap}}
+@media print{.tabs,.calc-bar,.res-footer,.v3d-btn,.btn-calc{display:none!important}}
+/* ── COLOR PICKER ── */
+.cp-swatch{width:100%;height:37px;border-radius:7px;border:1px solid #ddd;cursor:pointer;display:flex;align-items:center;padding:4px 8px;gap:8px;background:white}
+.cp-swatch-dot{width:24px;height:24px;border-radius:5px;border:1px solid rgba(0,0,0,0.1);flex-shrink:0}
+.cp-swatch-txt{font-size:12px;color:#555;flex:1}
+.cp-popup{display:none;position:fixed;z-index:9999;background:white;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,0.18);padding:16px;width:280px}
+.cp-popup.open{display:block}
+.cp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:14px}
+.cp-cell{width:32px;height:32px;border-radius:6px;cursor:pointer;border:2px solid transparent;transition:transform 0.1s}
+.cp-cell:hover{transform:scale(1.15);z-index:1;position:relative}
+.cp-cell.active{border-color:#333;box-shadow:0 0 0 1px white inset}
+.cp-btns{display:flex;justify-content:flex-end;gap:8px}
+.cp-btn{padding:7px 20px;border-radius:7px;border:none;cursor:pointer;font-size:13px;font-weight:600}
+.cp-btn-cancel{background:#f0f0f0;color:#555}
+.cp-btn-ok{background:#1a56db;color:white}
+/* ── PREDICT POPUP ── */
+.btn-predict{background:#1a8cff;color:#fff;border:none;border-radius:10px;padding:0 22px;height:38px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.btn-predict:hover{background:#1577e0}
+.predict-pop{display:none;position:absolute;top:calc(100% + 8px);right:0;z-index:50;background:#fff;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,0.2);padding:16px 18px;min-width:300px}
+.predict-pop.open{display:block}
+.predict-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:15px;border-top:1px solid #f2f2f2}
+.predict-row:first-of-type{border-top:none}
+.predict-name{color:#333;font-weight:500}
+.predict-cnt{color:#1a8cff;font-weight:700;display:flex;align-items:center;gap:6px}
+.predict-cnt small{color:#9aa;font-weight:500;font-size:12px}
+/* ── PICKER TABS ── */
+.picker-tabs{display:flex;gap:26px;border-bottom:1px solid #eee}
+.picker-tab{padding:8px 2px 12px;font-size:15px;font-weight:600;color:#9aa3ad;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-1px}
+.picker-tab.active{color:#1a8cff;border-bottom-color:#1a8cff}
+/* ── PICKER GRID (type cards) ── */
+.pk-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+.pk-card{border:1px solid #e3e7eb;border-radius:12px;padding:14px 10px 12px;text-align:center;cursor:pointer;background:#fff;transition:all .12s}
+.pk-card:hover{border-color:#b9c4e8;box-shadow:0 2px 8px rgba(80,100,200,.08)}
+.pk-card.on{background:#5b6bd6;border-color:#5b6bd6}
+.pk-art{height:64px;display:flex;align-items:center;justify-content:center;margin-bottom:8px}
+.pk-art svg{max-width:100%;max-height:64px}
+.pk-card.on .pk-art svg{filter:brightness(0) invert(1)}
+.pk-name{font-size:13px;font-weight:700;color:#5b6bd6;letter-spacing:.3px}
+.pk-card.on .pk-name{color:#fff}
+/* ── PICKER DETAIL PANEL ── */
+.pk-detail{display:flex;gap:30px;align-items:center;background:#f4f5f7;border-radius:12px;padding:24px 28px;min-height:150px}
+.pk-detail-art{flex:0 0 320px;max-width:46%;display:flex;align-items:center;justify-content:center}
+.pk-detail-art svg{width:100%;max-height:200px}
+.pk-detail-info{flex:1}
+.pk-detail-title{font-size:19px;font-weight:800;color:#5b6bd6;margin-bottom:10px;letter-spacing:.4px}
+.pk-spec{font-size:14px;color:#465065;line-height:1.85}
+.pk-spec b{color:#1f2d3d;font-weight:700}
+@media(max-width:680px){.pk-grid{grid-template-columns:repeat(2,1fr)}.pk-detail{flex-direction:column;align-items:flex-start}.pk-detail-art{max-width:100%}}
+/* ── SELECTED UNIT ROWS ── */
+.unit-row{display:flex;align-items:flex-end;gap:14px;background:#fff;border:1px solid #eef0f3;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.05);padding:14px 16px;margin-bottom:12px;flex-wrap:nowrap;overflow-x:auto}
+.ur-thumb{flex:0 0 64px;height:42px;display:flex;align-items:center;justify-content:center}
+.ur-thumb svg{max-width:64px;max-height:42px}
+.ur-type{flex:0 0 165px;padding:8px 10px;border:1px solid #d7dce5;border-radius:8px;font-size:13px;font-weight:600;color:#333;background:#fff;cursor:pointer;align-self:center}
+.ur-field{display:flex;flex-direction:column;gap:4px;flex:1;min-width:84px}
+.ur-field label{font-size:12px;font-weight:600}
+.ur-field:nth-child(3) label{color:#e0457b}.ur-field:nth-child(4) label{color:#e0457b}.ur-field:nth-child(5) label{color:#e0457b}
+.ur-field:nth-child(6) label{color:#e0457b}.ur-field:nth-child(7) label{color:#7b61c9}
+.ur-field input{padding:8px 10px;border:1px solid #e3e7eb;border-radius:8px;font-size:13px;background:#fafbfc;width:100%}
+.ur-field input.ur-lock{background:#eef0f3;color:#8a93a0;cursor:not-allowed}
+.ur-qty{flex:0 0 90px}
+.ur-remove{flex:0 0 auto;align-self:center;background:#e8453c;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer}
+.ur-remove:hover{background:#cf3a32}
+.btn-addcont{background:#6b73c9;color:#fff;border:none;border-radius:10px;padding:13px 22px;font-size:14px;font-weight:700;letter-spacing:.5px;cursor:pointer;box-shadow:0 2px 8px rgba(107,115,201,.3)}
+.btn-addcont:hover{background:#5a62b8}
+/* ── 3D VIEWER ── */
+.v3d-btn{width:46px;height:46px;border:1px solid #e3e7eb;background:#fff;border-radius:10px;font-size:18px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.08);color:#555;display:flex;align-items:center;justify-content:center}
+.v3d-btn:hover{background:#f5f8fc;border-color:#1a8cff;color:#1a8cff}
+/* ── PALLET ── */
+.pallet-row{display:grid;grid-template-columns:auto repeat(6,1fr) auto;gap:10px;align-items:end;padding:10px 4px 4px;font-size:12px}
+.pallet-row .fl{font-size:11px;color:#9aa3ad;margin-bottom:4px;display:block}
+.pallet-row input{padding:9px 10px;border:1px solid #e3e7eb;border-radius:9px;font-size:13px;width:100%;background:#fafbfc;color:#9aa}
+/* ── CATEGORY SECTIONS ── */
+.cat-section-label{font-size:12px;font-weight:700;color:#999;letter-spacing:0.8px;text-transform:uppercase;margin:18px 0 10px;display:flex;align-items:center;gap:8px}
+.cat-section-label:first-child{margin-top:0}
+.cat-section-label::after{content:'';flex:1;height:1px;background:#e8e8e8}
+/* ── LANGUAGE SWITCH ── */
+.lang-switch{position:absolute;top:50%;right:24px;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:14px}
+.lang-switch .lang-opt{cursor:pointer;color:#8a93a0;transition:color .15s}
+.lang-switch .lang-opt:hover{color:#1a56db}
+.lang-switch .lang-opt.active{color:#1a56db;font-weight:700}
+.lang-switch .lang-sep{color:#d0d5dd}
+.lang-switch .lang-flag{width:26px;height:17px;border-radius:3px;object-fit:cover;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
+/* ── EMPTY STATES ── */
+.empty-state{text-align:center;padding:64px 20px}
+.empty-badge{width:128px;height:128px;margin:0 auto 18px;border-radius:50%;background:radial-gradient(circle at 50% 45%,#eef4ff 0%,#f7faff 60%,#fbfdff 100%);display:flex;align-items:center;justify-content:center;position:relative;box-shadow:inset 0 0 0 1px #eef2f9}
+.empty-badge .ico{font-size:46px;line-height:1;filter:saturate(1.1)}
+.empty-badge .spark{position:absolute;font-size:13px;opacity:.35;color:#9cc2f5}
+.empty-badge .s1{top:14px;right:20px}.empty-badge .s2{bottom:20px;left:16px}.empty-badge .s3{top:26px;left:24px}.empty-badge .s4{bottom:16px;right:26px}
+.empty-title{font-size:22px;font-weight:800;color:#1f2d3d}
+.empty-sub{font-size:13px;color:#98a2b3;margin-top:6px}
+/* ── PALLET SELECT ── */
+.pallet-row select{padding:9px 10px;border:1px solid #e3e7eb;border-radius:9px;font-size:13px;width:100%;background:#fff;color:#333;font-weight:600;cursor:pointer;text-align:center}
+.pallet-row input:disabled{background:#f0f2f5;color:#aab2bd;cursor:not-allowed}
+.pallet-dot{width:22px;height:22px;border-radius:6px;cursor:pointer;border:1px solid rgba(0,0,0,.12)}
+/* ── INLINE-EDITABLE ITEM TABLE ── */
+.item-table th{font-size:12px;color:#98a2b3;font-weight:600;padding:6px 8px;text-align:left;white-space:nowrap}
+.item-table td{padding:5px 8px;vertical-align:middle}
+.it-cell-inp{display:flex;align-items:center;border:1px solid #e3e7eb;border-radius:9px;background:#fff;min-width:84px}
+.it-cell-inp input{border:none;outline:none;width:100%;padding:8px 6px 8px 10px;font-size:13px;background:transparent;border-radius:9px}
+.it-cell-inp .u{font-size:11px;color:#bcc3cc;padding:0 8px 0 2px;white-space:nowrap}
+.it-cell-inp.dis{background:#f0f2f5}
+.it-cell-inp.dis input{color:#c4ccd5;cursor:not-allowed}
+.it-name-inp{border:1px solid #e3e7eb;border-radius:9px;padding:8px 12px;font-size:13px;width:100%;min-width:140px;outline:none}
+.it-name-inp:focus,.it-cell-inp input:focus{border-color:#4f8cff}
+.it-color-dot{width:26px;height:26px;border-radius:50%;cursor:pointer;border:1px solid rgba(0,0,0,.12);margin:auto}
+</style>
+</head>
+<body>
+
+<div class="header" style="position:relative">
+  <h1>Load &amp; Stuffing Calculation</h1>
+  <p data-i18n="app_sub">คำนวณการบรรจุสินค้าเข้าตู้คอนเทนเนอร์</p>
+  <div class="lang-switch">
+    <span class="lang-opt" id="lang-en" onclick="setLang('en')">English</span>
+    <span class="lang-sep">|</span>
+    <span class="lang-opt" id="lang-th" onclick="setLang('th')">ภาษาไทย</span>
+    <svg class="lang-flag" id="lang-flag" viewBox="0 0 30 20" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('products')" data-i18n="tab_products">📦 สินค้า</div>
+  <div class="tab" onclick="switchTab('containers')" data-i18n="tab_containers">🚛 ตู้คอนเทนเนอร์/รถบรรทุก</div>
+  <div class="tab" onclick="switchTab('results')" data-i18n="tab_results">📊 ผลการบรรจุ</div>
+</div>
+
+<div id="tab-products" class="content tab-pane active">
+  <div class="action-bar">
+    <button class="btn btn-primary" onclick="addGroup()" data-i18n="add_group">+ เพิ่มกลุ่ม</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-outline btn-sm" onclick="doExport()" data-i18n="export_csv">📤 ส่งออก CSV</button>
+      <button class="btn btn-outline btn-sm" onclick="doImport()" data-i18n="import_csv">📥 นำเข้า CSV</button>
+    </div>
+  </div>
+  <div id="groups"></div>
+  <div class="calc-bar">
+    <button class="btn-calc" onclick="switchTab('containers')" data-i18n="next">ถัดไป →</button>
+  </div>
+</div>
+
+<div id="tab-containers" class="content tab-pane">
+  <div class="action-bar">
+    <div style="font-size:16px;font-weight:700;color:#1f2d3d" data-i18n="sec_sea">ตู้คอนเทนเนอร์</div>
+    <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+      <label class="chk"><input type="checkbox" id="auto-count" checked onchange="toggleFlag('count')"> <span data-i18n="auto_count">นับอัตโนมัติ</span></label>
+      <label class="chk"><input type="checkbox" id="auto-select" onchange="toggleFlag('select')"> <span data-i18n="auto_select">เลือกตู้คอนเทนเนอร์อัตโนมัติ</span></label>
+    </div>
+  </div>
+  <div id="cont-grid"></div>
+  <div class="calc-bar" style="display:flex;gap:12px;justify-content:center">
+    <button class="btn btn-outline" style="padding:13px 30px;font-size:15px;font-weight:700;border-radius:10px" onclick="switchTab('products')" data-i18n="back">← กลับ</button>
+    <button class="btn-calc" onclick="calculate()" data-i18n="calculate">คำนวณ →</button>
+  </div>
+</div>
+
+<div id="tab-results" class="content tab-pane">
+  <div id="results-area">
+    <div class="no-result">
+      <div class="no-result-icon">📦</div>
+      <div style="font-size:16px;font-weight:600;margin-bottom:8px" data-i18n="no_result_title">ยังไม่มีผลการคำนวณ</div>
+      <div data-i18n="no_result_desc">กรอกข้อมูลสินค้า เลือกตู้ แล้วกด "คำนวณ"</div>
+    </div>
+  </div>
+</div>
+
+<!-- COLOR PICKER POPUP -->
+<div id="cp-popup" class="cp-popup">
+  <div class="cp-grid" id="cp-grid"></div>
+  <div class="cp-btns">
+    <button class="cp-btn cp-btn-cancel" onclick="cpCancel()">Cancel</button>
+    <button class="cp-btn cp-btn-ok" onclick="cpOk()">OK</button>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div id="modal" class="modal-bg">
+  <div class="modal">
+    <div class="modal-hdr">
+      <span id="modal-title">เพิ่มสินค้า</span>
+      <button onclick="closeModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-ftr">
+      <button class="btn btn-outline" onclick="closeModal()" data-i18n="cancel">ยกเลิก</button>
+      <button class="btn btn-primary" id="modal-save-btn" onclick="saveItem()">เพิ่ม</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONTAINER / TRUCK PICKER MODAL -->
+<div id="cont-picker" class="modal-bg">
+  <div class="modal modal-wide">
+    <div class="modal-hdr">
+      <span id="picker-title" data-i18n="picker_choose">เลือกตู้คอนเทนเนอร์</span>
+      <button onclick="closeContPicker()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888">×</button>
+    </div>
+    <div style="padding:0 22px">
+      <div class="picker-tabs" style="margin-top:8px">
+        <div class="picker-tab" id="ptab-sea" onclick="pickerCatSwitch('sea')" data-i18n="ptab_sea">🚪 ตู้คอนเทนเนอร์</div>
+        <div class="picker-tab" id="ptab-truck" onclick="pickerCatSwitch('truck')" data-i18n="ptab_truck">🚛 รถบรรทุก</div>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="pk-grid" id="picker-grid"></div>
+      <div class="pk-detail" id="picker-detail"></div>
+    </div>
+    <div class="modal-ftr" style="justify-content:center;gap:14px">
+      <button class="btn btn-outline" onclick="closeContPicker()" data-i18n="cancel">ยกเลิก</button>
+      <button class="btn btn-primary" onclick="pickerConfirm()" data-i18n="pick_select">เลือก</button>
+    </div>
+  </div>
+</div>
+
+<!-- 3D VIEWER MODAL -->
+<div id="viewer3d" class="modal-bg">
+  <div class="modal" style="width:96vw;max-width:1120px;height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div class="modal-hdr">
+      <span id="v3d-title" data-i18n="v3d_title">มุมมอง 3D</span>
+      <button onclick="close3DViewer()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#888">×</button>
+    </div>
+    <div style="flex:1;position:relative;background:#fff;overflow:hidden">
+      <div style="position:absolute;left:16px;top:16px;display:flex;flex-direction:column;gap:10px;z-index:2">
+        <button class="v3d-btn" id="v3d-reset" onclick="reset3D()">↺</button>
+        <button class="v3d-btn" id="v3d-auto" onclick="autoRotate3D()">▶</button>
+        <button class="v3d-btn" id="v3d-stop" onclick="stopRotate3D()">⏸</button>
+      </div>
+      <canvas id="v3d-canvas" style="display:block;width:100%;height:100%;background:#fff;cursor:grab"></canvas>
+    </div>
+    <div style="padding:11px 18px;color:#999;font-size:13px;border-top:1px solid #eee" data-i18n="v3d_hint">ลากเมาส์เพื่อหมุน 360° • เลื่อนล้อเมาส์เพื่อซูม • ▶ หมุนอัตโนมัติ</div>
+  </div>
+</div>
+
+<!-- CI/PL REVIEW & EXPORT MODAL -->
+<div id="cipl-modal" class="modal-bg">
+  <div class="modal modal-wide">
+    <div class="modal-hdr">
+      <span>🧾 <span data-i18n="cipl_review_title">ตรวจสอบก่อนส่งออก CI/PL</span></span>
+      <button onclick="closeCIPLModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888">×</button>
+    </div>
+    <div class="modal-body" id="cipl-modal-body"></div>
+    <div class="modal-ftr">
+      <button class="btn btn-outline" onclick="closeCIPLModal()" data-i18n="cancel">ยกเลิก</button>
+      <button class="btn btn-primary" onclick="ciplConfirmExport()" data-i18n="cipl_confirm_btn">✅ ยืนยันและส่งออก</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── DATA ──────────────────────────────────────────────────────────────────────
+var groups=[], selUnits=[], uidSeq=0, pickerCat='sea', pickerSel='20GP', autoCount=true, autoSelect=false, modalGid=null, modalIid=null;
+var colorIdx=0, itemAutoSeq=0;
+var COLORS=['#4CAF50','#2196F3','#FF9800','#9C27B0','#F44336','#00BCD4','#FF5722','#795548','#8BC34A','#607D8B'];
+
+// ── I18N (TH / EN) ──────────────────────────────────────────────────────────────
+var LANG='th';
+var I18N={
+  th:{
+    app_sub:'คำนวณการบรรจุสินค้าเข้าตู้คอนเทนเนอร์',
+    tab_products:'📦 สินค้า', tab_containers:'🚛 ตู้คอนเทนเนอร์/รถบรรทุก', tab_results:'📊 ผลการบรรจุ',
+    add_group:'+ เพิ่มกลุ่ม', export_csv:'📤 ส่งออก CSV', import_csv:'📥 นำเข้า CSV',
+    next:'ถัดไป →', back:'← กลับ', calculate:'คำนวณ →',
+    add_item:'+ เพิ่มสินค้า', add_item_short:'เพิ่มสินค้า', no_items_prefix:'ยังไม่มีสินค้า — ',
+    use_pallet:'ใช้พาเลท', pallet_help:'วางสินค้าบนพาเลทก่อนบรรจุเข้าตู้',
+    please_add_group:'กรุณาเพิ่มกลุ่ม', please_add_group_sub:'กดปุ่ม “+ เพิ่มกลุ่ม” เพื่อเริ่มต้น',
+    please_add_transport:'กรุณาเพิ่มการขนส่ง', remove_group_confirm:'ลบกลุ่มนี้?',
+    th_type:'ประเภท', th_name:'ชื่อสินค้า', th_dims:'ขนาด (ซม.)', th_weight:'น้ำหนัก (กก.)', th_qty:'จำนวน', th_color:'สี', th_action:'จัดการ',
+    it_type:'ประเภท', it_name:'ชื่อสินค้า', it_len:'ยาว / เส้นผ่าศก.', it_wid:'กว้าง', it_hei:'สูง', it_weight:'น้ำหนัก', it_qty:'จำนวน', it_pieces:'จำนวนชิ้น', it_cartons:'จำนวนกล่อง', it_color:'สี', it_stack:'ตั้งค่า', new_product:'สินค้าใหม่',
+    f_pieces:'จำนวนชิ้น', f_pcsctn:'ชิ้น/กล่อง',
+    pallet_type:'ประเภทพาเลท', f_length:'ความยาว', f_width:'ความกว้าง', f_height:'ความสูง', f_depth:'ความลึก', f_maxw:'น้ำหนักสูงสุด', color:'สี',
+    add_container:'+ เพิ่มตู้คอนเทนเนอร์', add_truck:'+ เพิ่มรถบรรทุก', auto_count:'นับอัตโนมัติ', auto_select:'เลือกตู้คอนเทนเนอร์อัตโนมัติ',
+    auto_sel_title:'ระบบจะเลือกตู้ที่เหมาะสมที่สุดให้อัตโนมัติ', auto_sel_desc:'เมื่อกดคำนวณ ระบบจะประเมินตู้คอนเทนเนอร์ทุกชนิด แล้วแนะนำตู้ที่บรรจุได้คุ้มค่าที่สุด',
+    sel_empty_hint:'กดปุ่ม “+ เพิ่มตู้คอนเทนเนอร์” แล้วเลือกชนิดตู้เพื่อเริ่มต้น',
+    picker_sub:'ประเภทตู้คอนเทนเนอร์และรถบรรทุก', picker_title_sea:'เลือกตู้คอนเทนเนอร์ที่ต้องการใช้', picker_title_truck:'เลือกรถบรรทุกที่ต้องการใช้',
+    ptab_sea:'🚪 ตู้คอนเทนเนอร์', ptab_truck:'🚛 รถบรรทุก', done:'เสร็จสิ้น',
+    picker_choose:'เลือกตู้คอนเทนเนอร์', pick_select:'เลือก', add_container_btn:'+ เพิ่มตู้คอนเทนเนอร์', remove:'ลบ',
+    spec_len:'ความยาวภายใน', spec_wid:'ความกว้างภายใน', spec_hei:'ความสูงภายใน', spec_cap:'ความจุ', spec_tare:'น้ำหนักตู้เปล่า', spec_max:'น้ำหนักบรรทุกสูงสุด',
+    hdr_length:'ความยาว (มม.)', hdr_width:'ความกว้าง (มม.)', hdr_height:'ความสูง (มม.)', hdr_maxw:'น้ำหนักสูงสุด (กก.)', hdr_qty:'จำนวน',
+    inside:'ภายใน', volume:'ปริมาตร', max_weight:'น้ำหนักสูงสุด', click_select:'คลิกเพื่อเลือก', selected:'✓ เลือกแล้ว',
+    qty_label:'จำนวน', sec_sea:'ตู้คอนเทนเนอร์', sec_truck:'รถบรรทุก',
+    modal_add:'เพิ่มสินค้า', modal_edit:'แก้ไขสินค้า', save_add:'เพิ่ม', save_edit:'บันทึก', cancel:'ยกเลิก',
+    step1:'1. เลือกประเภทสินค้า', step2:'2. ข้อมูลสินค้า',
+    f_diameter:'เส้นผ่านศูนย์กลาง (ซม.)', f_height_cm:'ความสูง (ซม.)', f_len_l:'ความยาว L (ซม.)', f_wid_w:'ความกว้าง W (ซม.)', f_hei_h:'ความสูง H (ซม.)', f_weight_kg:'น้ำหนัก (กก.)', f_name:'ชื่อสินค้า', f_qty:'จำนวน',
+    predict:'การทำนาย', step3_rot:'3. การตั้งค่าการหมุน', rot_l:'เอียงไปตามความยาว', rot_w:'เอียงไปตามความกว้าง', rot_h:'เอียงไปตามความสูง',
+    step4_lim:'4. ข้อจำกัดการบรรจุ', max_layers:'จำนวนชั้นสูงสุด', max_height:'ความสูงสูงสุด (ซม.)', max_total_w:'น้ำหนักรวมสูงสุด (กก.)',
+    step3_place:'3. การจัดวาง', square_pack:'สี่เหลี่ยม (Square packing)', hex_pack:'หกเหลี่ยม (Hex packing ~15% ประหยัดกว่า)',
+    max_capacity:'ความจุสูงสุด', items_unit:'รายการ',
+    kmb_pick_title:'เลือกสินค้า (Kiss My Body / Skinoxy)', kmb_pick_help:'เลือกแล้วระบบจะกรอกขนาดกล่อง (ยาว×กว้าง×สูง) ให้อัตโนมัติ — หรือเลือก "กรอกเอง" เพื่อกำหนดเอง', kmb_manual:'— กรอกเอง / กำหนดขนาดเอง —',
+    no_result_title:'ยังไม่มีผลการคำนวณ', no_result_desc:'กรอกข้อมูลสินค้า เลือกตู้ แล้วกด "คำนวณ"',
+    recommended:'★ แนะนำ', fit_all:'✓ บรรจุได้ครบ', fit_partial:'⚠ บางส่วน',
+    warn_3d_partial:'จำนวนที่วางได้จริงในตู้นี้ — ส่วนที่เหลือต้องใช้ตู้เพิ่ม',
+    unit:'หน่วย', weight:'น้ำหนัก', total_pkg_pre:'รวม', total_pkg_post:'แพ็คเกจ',
+    cargo_vol:'ปริมาณสินค้า', cargo_wt:'น้ำหนักสินค้า', vol_of:'ของปริมาตร', wt_of:'ของน้ำหนักสูงสุด',
+    inside_dims:'ขนาดภายใน', cont_vol:'ปริมาตรตู้', cont_cap:'รับน้ำหนัก', view3d:'🧊 มุมมอง 3D',
+    col_name:'ชื่อ', col_pkg:'แพ็คเกจ', col_pcs:'จำนวนชิ้น', col_vol:'ปริมาตร (ม³)', col_wt:'น้ำหนัก (กก.)', col_total:'รวม',
+    col_acrossW:'ตามกว้าง', col_alongL:'ตามยาว', col_layers:'ชั้นซ้อน',
+    pm_title:'รายละเอียดพาเลท', pm_pallet:'พาเลทที่', pm_dims:'ขนาด (ยาว×กว้าง×สูง มม.)', pm_gw:'G.W. (กก.)', pm_tare:'น้ำหนักพาเลท', pm_products:'สินค้า', pm_pcs:'ชิ้น',
+    export_pdf:'📄 ส่งออกเป็น PDF', copy_req:'📋 คัดลอกคำขอ', copied:'คัดลอกคำขอแล้ว', copy_fail:'คัดลอกไม่สำเร็จ',
+    export_cipl:'🧾 Export ข้อมูลสำหรับ CI/PL', cipl_exported:'ดาวน์โหลดไฟล์ข้อมูล CI/PL แล้ว — นำไฟล์นี้ไปให้ Claude เพื่อกรอกข้อมูลการค้าที่เหลือและสร้างเอกสารจริง',
+    cipl_review_title:'ตรวจสอบก่อนส่งออก CI/PL', cipl_confirm_btn:'✅ ยืนยันและส่งออก',
+    cipl_sec_consignee:'ผู้ซื้อ (Consignee)', cipl_sec_shipment:'ข้อมูลชิปเมนต์', cipl_sec_items:'รายการสินค้า — ราคา/น้ำหนักสุทธิ',
+    cipl_sec_payment:'การชำระเงิน / ธนาคาร', cipl_sec_notes:'หมายเหตุ / Shipping Marks',
+    cipl_saved_profile:'โปรไฟล์ที่บันทึกไว้', cipl_new_profile:'+ ผู้ซื้อใหม่', cipl_save_profile_btn:'💾 บันทึกโปรไฟล์นี้',
+    cipl_col_price:'ราคา/หน่วย', cipl_col_nw:'NW/กล่อง (kg)', cipl_col_gw:'GW/กล่อง (kg)',
+    cipl_warn_title:'ยังมีข้อมูลไม่ครบ — กรอกก่อนส่งออก:', cipl_ok_title:'ข้อมูลครบถ้วน พร้อมส่งออก',
+    cipl_util_vol:'ปริมาตรใช้ไป', cipl_util_wt:'น้ำหนักใช้ไป',
+    cipl_saved_toast:'บันทึกโปรไฟล์และราคาสินค้าแล้ว — ครั้งหน้าจะกรอกให้อัตโนมัติ',
+    v3d_title:'มุมมอง 3D', v3d_hint:'ลากเมาส์เพื่อหมุน 360° • เลื่อนล้อเมาส์เพื่อซูม • ▶ หมุนอัตโนมัติ', v3d_reset:'รีเซ็ตมุมมอง', v3d_auto:'หมุนอัตโนมัติ', v3d_stop:'หยุดหมุน',
+    alert_no_items:'กรุณาเพิ่มสินค้าก่อนคำนวณ', alert_no_cont:'กรุณาเลือกตู้หรือรถบรรทุก',
+    unit_m3:'ม³', unit_mm:'มม.', unit_kg:'กก.', unit_cm:'ซม.'
+  },
+  en:{
+    app_sub:'Calculate cargo stuffing into containers & trucks',
+    tab_products:'📦 Products', tab_containers:'🚛 Containers & Trucks', tab_results:'📊 Stuffing Result',
+    add_group:'+ Add Group', export_csv:'📤 Export', import_csv:'📥 Import',
+    next:'Next →', back:'← Back', calculate:'Calculate →',
+    add_item:'+ Add Product', add_item_short:'Add product', no_items_prefix:'No products yet — ',
+    use_pallet:'Use pallet', pallet_help:'Place products on a pallet before stuffing',
+    please_add_group:'Please add group', please_add_group_sub:'Click “+ Add Group” to start',
+    please_add_transport:'Please add transport', remove_group_confirm:'Delete this group?',
+    th_type:'Type', th_name:'Product', th_dims:'Size (cm)', th_weight:'Weight (kg)', th_qty:'Qty', th_color:'Color', th_action:'Action',
+    it_type:'Type', it_name:'Product Name', it_len:'Length / Diameter', it_wid:'Width', it_hei:'Height', it_weight:'Weight', it_qty:'Quantity', it_pieces:'Pieces', it_cartons:'Cartons', it_color:'Color', it_stack:'Stack', new_product:'New product',
+    f_pieces:'Pieces', f_pcsctn:'Pcs/Carton',
+    pallet_type:'Pallet type', f_length:'Length', f_width:'Width', f_height:'Height', f_depth:'Depth', f_maxw:'Max weight', color:'Color',
+    add_container:'+ Add Container', add_truck:'+ Add Truck', auto_count:'Auto count', auto_select:'Automatic Container Selection',
+    auto_sel_title:'The system will pick the most suitable container automatically', auto_sel_desc:'On Calculate, every container type is evaluated and the most efficient one is recommended',
+    sel_empty_hint:'Click “+ Add Container” and choose a container type to start',
+    picker_sub:'Container & truck types', picker_title_sea:'Select containers to use', picker_title_truck:'Select trucks to use',
+    ptab_sea:'🚪 Containers', ptab_truck:'🚛 Trucks', done:'Done',
+    picker_choose:'Select Container', pick_select:'Select', add_container_btn:'+ ADD CONTAINER', remove:'Remove',
+    spec_len:'Inside Length', spec_wid:'Inside Width', spec_hei:'Inside Height', spec_cap:'Capacity', spec_tare:'Tare Weight', spec_max:'Max Weight',
+    hdr_length:'Length (mm)', hdr_width:'Width (mm)', hdr_height:'Height (mm)', hdr_maxw:'Max Weight (kg)', hdr_qty:'Quantity',
+    inside:'Internal', volume:'Volume', max_weight:'Max weight', click_select:'Click to select', selected:'✓ Selected',
+    qty_label:'Qty', sec_sea:'Containers', sec_truck:'Trucks',
+    modal_add:'Add Product', modal_edit:'Edit Product', save_add:'Add', save_edit:'Save', cancel:'Cancel',
+    step1:'1. Select product type', step2:'2. Product details',
+    f_diameter:'Diameter (cm)', f_height_cm:'Height (cm)', f_len_l:'Length L (cm)', f_wid_w:'Width W (cm)', f_hei_h:'Height H (cm)', f_weight_kg:'Weight (kg)', f_name:'Product name', f_qty:'Quantity',
+    predict:'Predict', step3_rot:'3. Rotation settings', rot_l:'Tip along length', rot_w:'Tip along width', rot_h:'Tip along height',
+    step4_lim:'4. Packing constraints', max_layers:'Max layers', max_height:'Max height (cm)', max_total_w:'Max total weight (kg)',
+    step3_place:'3. Placement', square_pack:'Square packing', hex_pack:'Hex packing (~15% denser)',
+    max_capacity:'Maximum capacity', items_unit:'items',
+    kmb_pick_title:'Select product (Kiss My Body / Skinoxy)', kmb_pick_help:'Picking a product auto-fills its carton size (L×W×H) — or choose "Custom" to enter your own', kmb_manual:'— Custom / enter size manually —',
+    no_result_title:'No results yet', no_result_desc:'Enter products, pick a container, then press "Calculate"',
+    recommended:'★ Recommended', fit_all:'✓ All fit', fit_partial:'⚠ Partial',
+    warn_3d_partial:'Cartons actually placed in this container — load the remainder in another unit.',
+    unit:'units', weight:'Weight', total_pkg_pre:'Total', total_pkg_post:'packages',
+    cargo_vol:'Cargo volume', cargo_wt:'Cargo weight', vol_of:'of volume', wt_of:'of max weight',
+    inside_dims:'Internal size', cont_vol:'Container volume', cont_cap:'Capacity', view3d:'🧊 3D View',
+    col_name:'Name', col_pkg:'Packages', col_pcs:'Qty (PCS)', col_vol:'Volume (m³)', col_wt:'Weight (kg)', col_total:'Total',
+    col_acrossW:'Across W', col_alongL:'Along L', col_layers:'Layers',
+    pm_title:'Pallet details', pm_pallet:'Pallet', pm_dims:'Dimensions (L×W×H mm)', pm_gw:'G.W. (kg)', pm_tare:'Pallet tare', pm_products:'Products', pm_pcs:'pcs',
+    export_pdf:'📄 Export PDF', copy_req:'📋 Copy request', copied:'Request copied', copy_fail:'Copy failed',
+    export_cipl:'🧾 Export CI/PL data', cipl_exported:'CI/PL data file downloaded — bring it to Claude to fill in remaining trade details and generate the actual documents',
+    cipl_review_title:'Review before exporting CI/PL', cipl_confirm_btn:'✅ Confirm & Export',
+    cipl_sec_consignee:'Consignee', cipl_sec_shipment:'Shipment info', cipl_sec_items:'Items — price / net weight',
+    cipl_sec_payment:'Payment / Bank', cipl_sec_notes:'Remarks / Shipping Marks',
+    cipl_saved_profile:'Saved profile', cipl_new_profile:'+ New consignee', cipl_save_profile_btn:'💾 Save this profile',
+    cipl_col_price:'Price/unit', cipl_col_nw:'NW/ctn (kg)', cipl_col_gw:'GW/ctn (kg)',
+    cipl_warn_title:'Still missing — fill in before exporting:', cipl_ok_title:'All required fields complete',
+    cipl_util_vol:'Volume used', cipl_util_wt:'Weight used',
+    cipl_saved_toast:'Profile and pricing saved — auto-filled next time',
+    v3d_title:'3D View', v3d_hint:'Drag to rotate 360° • scroll to zoom • ▶ auto-rotate', v3d_reset:'Reset view', v3d_auto:'Auto-rotate', v3d_stop:'Stop',
+    alert_no_items:'Please add products before calculating', alert_no_cont:'Please select a container or truck',
+    unit_m3:'m³', unit_mm:'mm', unit_kg:'kg', unit_cm:'cm'
+  }
+};
+function t(k){var d=I18N[LANG]||I18N.th;return (k in d)?d[k]:(I18N.th[k]!==undefined?I18N.th[k]:k);}
+
+var FLAG_TH='<rect width="30" height="20" fill="#fff"/><rect width="30" height="3.33" y="0" fill="#A51931"/><rect width="30" height="3.33" y="16.67" fill="#A51931"/><rect width="30" height="6.67" y="6.67" fill="#2D2A4A"/>';
+var FLAG_EN='<clipPath id="gb"><rect width="30" height="20"/></clipPath><g clip-path="url(#gb)"><rect width="30" height="20" fill="#012169"/><path d="M0,0 30,20 M30,0 0,20" stroke="#fff" stroke-width="3"/><path d="M0,0 30,20 M30,0 0,20" stroke="#C8102E" stroke-width="1.6"/><path d="M15,0 V20 M0,10 H30" stroke="#fff" stroke-width="5"/><path d="M15,0 V20 M0,10 H30" stroke="#C8102E" stroke-width="3"/></g>';
+function applyI18n(){
+  document.querySelectorAll('[data-i18n]').forEach(function(el){el.textContent=t(el.getAttribute('data-i18n'));});
+  document.getElementById('lang-en').classList.toggle('active',LANG==='en');
+  document.getElementById('lang-th').classList.toggle('active',LANG==='th');
+  var fl=document.getElementById('lang-flag'); if(fl)fl.innerHTML=(LANG==='en'?FLAG_EN:FLAG_TH);
+  document.documentElement.lang=LANG;
+  ['v3d-reset','v3d-auto','v3d-stop'].forEach(function(id,i){var b=document.getElementById(id);if(b)b.title=t(['v3d_reset','v3d_auto','v3d_stop'][i]);});
+}
+function setLang(l){
+  LANG=l; applyI18n();
+  // auto-named products follow the selected language
+  groups.forEach(function(g){g.items.forEach(function(it){if(it._auto&&it._autoNum)it.name=defaultItemName(it._autoNum);});});
+  renderGroups(); renderContainers();
+  if(document.getElementById('modal').classList.contains('open'))renderModal();
+  if(document.getElementById('cont-picker').classList.contains('open')){pickerCatSwitch(pickerCat);}
+  if(window._lastResults)renderResults(window._lastResults);
+}
+
+// Color palette (7×7 = 49 colors)
+var PALETTE=[
+  '#F8BBD9','#FFCCBC','#FFE0B2','#FFF9C4','#F0F4C3','#DCEDC8','#C8E6C9',
+  '#F48FB1','#FF8A65','#FFB74D','#FFF176','#E6EE9C','#AED581','#81C784',
+  '#E91E63','#FF5722','#FF9800','#FFEB3B','#CDDC39','#8BC34A','#4CAF50',
+  '#C2185B','#E64A19','#F57C00','#F9A825','#9E9D24','#558B2F','#2E7D32',
+  '#B2EBF2','#B2DFDB','#BBDEFB','#C5CAE9','#E1BEE7','#D7CCC8','#CFD8DC',
+  '#00BCD4','#009688','#2196F3','#3F51B5','#9C27B0','#795548','#607D8B',
+  '#006064','#004D40','#0D47A1','#1A237E','#4A148C','#37474F','#000000',
+];
+var _cpSelected=PALETTE[0], _cpPrev=PALETTE[0], _cpCtx=null;
+
+// ctx = {color:'#..', dotId:'..', apply:function(c){...}, isPallet:bool}
+function cpOpenCtx(swatchId,ctx){
+  _cpCtx=ctx;
+  _cpPrev=ctx.color;
+  _cpSelected=ctx.color;
+  document.getElementById('cp-grid').innerHTML=PALETTE.map(c=>
+    `<div class="cp-cell ${c===_cpSelected?'active':''}" style="background:${c}" onclick="cpPick('${c}',this)"></div>`
+  ).join('');
+  var swatch=document.getElementById(swatchId);
+  var popup=document.getElementById('cp-popup');
+  popup.classList.add('open');
+  var r=swatch.getBoundingClientRect();
+  var top=r.bottom+6, left=r.left;
+  if(left+280>window.innerWidth)left=window.innerWidth-290;
+  if(top+320>window.innerHeight)top=r.top-320;
+  popup.style.top=top+'px'; popup.style.left=left+'px';
+  setTimeout(()=>document.addEventListener('mousedown',cpOutside),0);
+}
+function cpOpen(swatchId){
+  cpOpenCtx(swatchId,{color:_mitem.color,dotId:'cp-dot',apply:function(c){_mitem.color=c;}});
+}
+function cpOpenPallet(gid,swatchId){
+  var g=groups.find(x=>x.id===gid); if(!g)return;
+  if(!g.pallet)g.pallet={...PALLET_PRESET};
+  cpOpenCtx(swatchId,{color:g.pallet.color||'#8d6e63',dotId:swatchId,isPallet:true,apply:function(c){g.pallet.color=c;}});
+}
+
+function cpOutside(e){
+  if(!document.getElementById('cp-popup').contains(e.target)){cpCancel();}
+}
+
+function cpPick(c,el){
+  _cpSelected=c;
+  document.querySelectorAll('.cp-cell').forEach(x=>x.classList.remove('active'));
+  el.classList.add('active');
+  var dot=document.getElementById(_cpCtx?_cpCtx.dotId:'cp-dot');
+  if(dot)dot.style.background=c;
+}
+
+function cpOk(){
+  if(_cpCtx&&_cpCtx.apply)_cpCtx.apply(_cpSelected);
+  document.getElementById('cp-popup').classList.remove('open');
+  document.removeEventListener('mousedown',cpOutside);
+  var dot=document.getElementById(_cpCtx?_cpCtx.dotId:'cp-dot');
+  if(dot)dot.style.background=_cpSelected;
+  var txt=document.getElementById('cp-txt');
+  if(txt&&_cpCtx&&!_cpCtx.isPallet)txt.textContent=_cpSelected;
+  if(_cpCtx&&_cpCtx.isPallet)renderGroups();
+}
+
+function cpCancel(){
+  _cpSelected=_cpPrev;
+  var dot=document.getElementById(_cpCtx?_cpCtx.dotId:'cp-dot');
+  if(dot)dot.style.background=_cpPrev;
+  document.getElementById('cp-popup').classList.remove('open');
+  document.removeEventListener('mousedown',cpOutside);
+}
+
+var CONTAINERS=[
+  /* ── Sea Containers ──  (L/W/H = inside, mm | vol = capacity m³ | tare/maxW = kg) */
+  {id:'20GP', cat:'sea', name:"20' STANDARD",     full:"20' Standard",        fullEn:"20' Standard",     L:5895, W:2350,H:2392,maxW:28230,tare:2230,vol:33,icon:'🚢',tag:'Dry'},
+  {id:'40HC', cat:'sea', name:"40' HIGH-CUBE",    full:"40' High-Cube",       fullEn:"40' High-Cube",    L:12192,W:2350,H:2698,maxW:30480,tare:3890,vol:76,icon:'🚢',tag:'Dry'},
+  {id:'20RF', cat:'sea', name:"20' REFRIGERATED", full:"20' Refrigerated",    fullEn:"20' Refrigerated", L:5455, W:2290,H:2260,maxW:30480,tare:3400,vol:28,icon:'❄️',tag:'Reefer'},
+  {id:'40RF', cat:'sea', name:"40' REFRIGERATED", full:"40' Refrigerated",    fullEn:"40' Refrigerated", L:11550,W:2290,H:2260,maxW:30480,tare:4500,vol:60,icon:'❄️',tag:'Reefer'},
+  /* ── Trucks ── */
+  {id:'T18W', cat:'truck',name:"รถพ่วง",    full:"รถพ่วง 18 ล้อ",   fullEn:"18-Wheel Trailer",      L:12000,W:2400,H:2400,maxW:22000,tare:0,vol:69.1,icon:'🚛',tag:'Heavy'},
+  {id:'T10W', cat:'truck',name:"รถ 10 ล้อ", full:"รถบรรทุก 10 ล้อ", fullEn:"10-Wheel Truck",        L:8000, W:2300,H:2100,maxW:15000,tare:0,vol:38.6,icon:'🚚',tag:'Heavy'},
+  {id:'T6WL', cat:'truck',name:"รถ 6 ล้อใหญ่",full:"รถ 6 ล้อ ตู้ทึบ", fullEn:"6-Wheel Truck (Large)", L:7000, W:2200,H:2000,maxW:8000, tare:0,vol:30.8,icon:'🚐',tag:'Medium'},
+  {id:'T6WS', cat:'truck',name:"รถ 6 ล้อเล็ก",full:"รถ 6 ล้อ ตู้เล็ก",fullEn:"6-Wheel Truck (Small)", L:5500, W:2100,H:1900,maxW:5000, tare:0,vol:21.9,icon:'🚐',tag:'Medium'},
+  {id:'T4W',  cat:'truck',name:"รถ 4 ล้อ",  full:"รถ 4 ล้อ ตู้ทึบ", fullEn:"4-Wheel Truck",         L:4000, W:1900,H:1900,maxW:3000, tare:0,vol:14.4,icon:'🚌',tag:'Light'},
+  {id:'TPK',  cat:'truck',name:"รถกระบะ",   full:"รถกระบะ (Pickup)",fullEn:"Pickup Truck",          L:1800, W:1500,H:500, maxW:800,  tare:0,vol:1.4, icon:'🛻',tag:'Light'},
+];
+function getCont(id){return CONTAINERS.find(function(c){return c.id===id})||CONTAINERS[0];}
+function contFull(c){return (LANG==='en'&&c.fullEn)?c.fullEn:c.full;}
+function palletSVG(){
+  return '<svg viewBox="0 0 36 30" width="30" height="25" fill="none" xmlns="http://www.w3.org/2000/svg">'
+    +'<rect x="2" y="6" width="32" height="6" rx="1.5" fill="#C99A5B" stroke="#A9763A" stroke-width="1.2"/>'
+    +'<line x1="11" y1="6.5" x2="11" y2="11.5" stroke="#A9763A" stroke-width="1"/>'
+    +'<line x1="20" y1="6.5" x2="20" y2="11.5" stroke="#A9763A" stroke-width="1"/>'
+    +'<line x1="29" y1="6.5" x2="29" y2="11.5" stroke="#A9763A" stroke-width="1"/>'
+    +'<rect x="3"  y="12" width="6" height="7" fill="#B98847" stroke="#A9763A" stroke-width="1.1"/>'
+    +'<rect x="15" y="12" width="6" height="7" fill="#B98847" stroke="#A9763A" stroke-width="1.1"/>'
+    +'<rect x="27" y="12" width="6" height="7" fill="#B98847" stroke="#A9763A" stroke-width="1.1"/>'
+    +'<rect x="2" y="19" width="32" height="5" rx="1.5" fill="#C99A5B" stroke="#A9763A" stroke-width="1.2"/>'
+    +'</svg>';
+}
+
+var TYPES=[
+  {id:'box',   label:'กล่อง',   en:'Box',     emoji:'📦', dims:['L','W','H']},
+  {id:'bigbag',label:'ถุงใหญ่', en:'Big bag', emoji:'🛍️', dims:['L','W','H']},
+  {id:'drum',  label:'ถัง',    en:'Drum',    emoji:'🥁', dims:['D','H']},
+  {id:'roll',  label:'ม้วน',   en:'Roll',    emoji:'🌀', dims:['L','D']},
+];
+
+function getTypeInfo(t){return TYPES.find(x=>x.id===t)||TYPES[0]}
+function typeLabel(tp){return LANG==='en'?(tp.en||tp.label):tp.label}
+
+// ── KISS MY BODY — PRODUCT MASTER LIST (41 SKUs) ─────────────────────────────────
+// Dimensions are CARTON (per CTN) size in CM: L=length, W=width, H=height.
+// Selecting a product in the modal auto-fills type/name/L/W/H.
+var KMB_PRODUCTS=[
+  {code:'KMI088', name:'PERFUME MIST FIERCE 88ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KME088', name:'PERFUME MIST DESIRE 88ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KMC088', name:'PERFUME MIST CRAZY IN LOVE 88ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KML088', name:'PERFUME MIST LOST IN PARADISE 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KMS088', name:'PERFUME MIST SWEET VANILLA COTTON 88ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KMP088', name:'PERFUME MIST SWEET POISON 88ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KMA088', name:'PERFUME MIST ADORE YOU 88ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KMD088', name:'PERFUME MIST DELIGHT 88ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KMT088', name:'PERFUME MIST SWEETIE 88ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTMH088', name:'EAU DE TOILETTE KISS ME HARDER 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTMM088', name:'EAU DE TOILETTE LOTION LOVE ME MORE 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTAP088', name:'EAU DE TOILETTE APPLE SHERBET 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTCC088', name:'EAU DE TOILETTE CARAMEL CREAMY 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTSD088', name:'EAU DE TOILETTE SUNDAE WHIP 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTBG088', name:'EAU DE TOILETTE BOOM BOOM GIRL', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTBM088', name:'EAU DE TOILETTE BABY ONE MORE', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTCP088', name:'EAU DE TOILETTE CLASSY PUNCH 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTLM088', name:'EAU DE TOILETTE LOVELY MARTINI 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KTSM088', name:'EAU DE TOILETTE SEXY MARGARITA 88 ML', cat:'EDT/Body Mist', L:30, W:20, H:13.5, pcs:24, cbm:0.0081},
+  {code:'KPNN050', name:'EAU DE PARFUM NUDE & NAKED 50 ML', cat:'EDP', L:29, W:18, H:24, pcs:20, cbm:0.012528},
+  {code:'KPWF050', name:'EAU DE PARFUM WILD & FREE 50 ML', cat:'EDP', L:29, W:18, H:24, pcs:20, cbm:0.012528},
+  {code:'KPSS050', name:'EAU DE PARFUM SOUL & SUN 50 ML', cat:'EDP', L:29, W:18, H:24, pcs:20, cbm:0.012528},
+  {code:'KPDD050', name:'EAU DE PARFUM DARE & DESIRE 50 ML', cat:'EDP', L:29, W:18, H:24, pcs:20, cbm:0.012528},
+  {code:'KPVD050', name:'EAU DE PARFUM VANILLA DANGER 50ML (NEW VERSION)', cat:'EDP', L:29, W:18, H:24, pcs:20, cbm:0.012528},
+  {code:'KPGK050', name:'EAU DE PARFUM GELATO KISS 50ML (NEW VERSION)', cat:'EDP', L:29, W:18, H:24, pcs:20, cbm:0.012528},
+  {code:'KPCL050', name:'EAU DE PARFUM CANDY LUST 50ML (NEW VERSION)', cat:'EDP', L:29, W:18, H:24, pcs:20, cbm:0.012528},
+  {code:'KLAP200', name:'BRIGHT & SHINE PERFUME LOTION APPLE SHERBET 200 G', cat:'Body Lotion', L:22, W:20, H:21.5, pcs:12, cbm:0.00946},
+  {code:'KLCC200', name:'BRIGHT & SHINE PERFUME LOTION CARAMEL CREAMY 200 G', cat:'Body Lotion', L:22, W:20, H:21.5, pcs:12, cbm:0.00946},
+  {code:'KLSD200', name:'BRIGHT & SHINE PERFUME LOTION SUNDAE WHIP 200 G', cat:'Body Lotion', L:22, W:20, H:21.5, pcs:12, cbm:0.00946},
+  {code:'KLC226', name:'BRIGHT & SHINE PERFUME LOTION CRAZY IN LOVE 200G', cat:'Body Lotion', L:22, W:20, H:21.5, pcs:12, cbm:0.00946},
+  {code:'KLL226', name:'BRIGHT & SHINE PERFUME LOTION LOST IN PARADISE 200G', cat:'Body Lotion', L:22, W:20, H:21.5, pcs:12, cbm:0.00946},
+  {code:'KLS226', name:'BRIGHT & SHINE PERFUME LOTION SWEET VANILLA COTTON 200G', cat:'Body Lotion', L:22, W:20, H:21.5, pcs:12, cbm:0.00946},
+  {code:'KLP226', name:'BRIGHT & SHINE PERFUME LOTION SWEET POISON 200G', cat:'Body Lotion', L:22, W:20, H:21.5, pcs:12, cbm:0.00946},
+  {code:'KHKB038', name:'PERFUME HAIR MIST KISSY BERRY 38 ML', cat:'Hair Mist', L:25.3, W:25.3, H:14, pcs:64, cbm:0.008961},
+  {code:'KUBB045', name:'BLINK BRIGHT UNDERARM DRY SERUM 45 G', cat:'Underarm Serum', L:30, W:20, H:15.5, pcs:24, cbm:0.0093},
+  {code:'KUSS045', name:'SNOWY SMOOTH UNDERARM DRY SERUM 45 G', cat:'Underarm Serum', L:30, W:20, H:15.5, pcs:24, cbm:0.0093},
+  {code:'KWC380', name:'PERFUME SHOWER GEL CRAZY IN LOVE 380ML', cat:'Shower Gel', L:28.5, W:22, H:19.4, pcs:12, cbm:0.012164},
+  {code:'KWP380', name:'PERFUME SHOWER GEL SWEET POISON 380ML', cat:'Shower Gel', L:28.5, W:22, H:19.4, pcs:12, cbm:0.012164},
+  {code:'KWS380', name:'PERFUME SHOWER GEL SWEET VANILLA COTTON', cat:'Shower Gel', L:28.5, W:22, H:19.4, pcs:12, cbm:0.012164},
+  {code:'KWAP380', name:'PERFUME SHOWER GEL APPLE SHERBET', cat:'Shower Gel', L:28.5, W:22, H:19.4, pcs:12, cbm:0.012164},
+  {code:'KWCC380', name:'PERFUME SHOWER GEL CARAMEL CREAMY', cat:'Shower Gel', L:28.5, W:22, H:19.4, pcs:12, cbm:0.012164},
+  // ── SKINOXY (ZS India) — carton (CTN) size in CM ──
+  {code:'SBA275', name:'PRO AHA BHA CONCENTRATE BODY SERUM 275g', cat:'Skinoxy · Body Care', L:28, W:21, H:23.5, pcs:12, cbm:0.013818},
+  {code:'SBB275', name:'PRO B3 AHA CONCENTRATE BODY SERUM 275g', cat:'Skinoxy · Body Care', L:28, W:21, H:23.5, pcs:12, cbm:0.013818},
+  {code:'SBR275', name:'PRO RETINOL CONCENTRATE BODY SERUM 275g', cat:'Skinoxy · Body Care', L:28, W:21, H:23.5, pcs:12, cbm:0.013818},
+  {code:'SBPS180', name:'PRO SUN PROTECTION BODY LOTION SPF50+ PA++++ (180)', cat:'Skinoxy · Body Care', L:22.1, W:19.7, H:24, pcs:12, cbm:0.01044888},
+  {code:'SBPS030', name:'PRO SUN PROTECTION BODY LOTION SPF50+ PA++++ (30)', cat:'Skinoxy · Body Care', L:33.5, W:26.6, H:34.2, pcs:144, cbm:0.03047562},
+  {code:'SBPR275', name:'PRO RESORCINOL CONCENTRATE BODY SERUM', cat:'Skinoxy · Body Care', L:28, W:21, H:23.5, pcs:12, cbm:0.013818},
+  {code:'SBPU275', name:'PRO UREA CONCENTRATE BODY CREAM', cat:'Skinoxy · Body Care', L:28, W:21, H:23.5, pcs:12, cbm:0.013818},
+  {code:'SAVH230', name:'ALOE VERA HYALURON SOOTHING GEL 230g', cat:'Skinoxy · Facial Care', L:22.1, W:19.7, H:24, pcs:12, cbm:0.01044888},
+  {code:'SAVC230', name:'ALOE VERA CERAMIDE SOOTHING GEL 230g', cat:'Skinoxy · Facial Care', L:22.1, W:19.7, H:24, pcs:12, cbm:0.01044888},
+  {code:'SAVH050', name:'ALOE VERA HYALURON SOOTHING GEL 50g', cat:'Skinoxy · Facial Care', L:33.5, W:26.6, H:34, pcs:144, cbm:0.0302974},
+  {code:'SAVC050', name:'ALOE VERA CERAMIDE SOOTHING GEL 50g', cat:'Skinoxy · Facial Care', L:33.5, W:26.6, H:34.2, pcs:144, cbm:0.03047562},
+  {code:'SSPC030', name:'PRO VIT C BOOSTER SERUM 30ml', cat:'Skinoxy · Pro Series', L:31.6, W:21.3, H:15.7, pcs:24, cbm:0.010567356},
+  {code:'SSPH030', name:'PRO HYALURON BOOSTER SERUM 30ml', cat:'Skinoxy · Pro Series', L:31.6, W:21.3, H:15.7, pcs:24, cbm:0.010567356},
+  {code:'SSPR030', name:'PRO RETINOL BOOSTER SERUM 30ml', cat:'Skinoxy · Pro Series', L:31.6, W:21.3, H:15.7, pcs:24, cbm:0.010567356},
+  {code:'SSPH010', name:'PRO HYALURON BOOSTER SERUM 10ml', cat:'Skinoxy · Pro Series', L:39, W:33, H:35.2, pcs:96, cbm:0.0453024},
+  {code:'SSPR010', name:'PRO RETINOL BOOSTER SERUM 10ml', cat:'Skinoxy · Pro Series', L:39, W:33, H:35.2, pcs:96, cbm:0.0453024},
+  {code:'SSPC010', name:'PRO VIT C BOOSTER SERUM 10ml', cat:'Skinoxy · Pro Series', L:39, W:33, H:35.2, pcs:96, cbm:0.0453024},
+  {code:'SMA025', name:'ACNE CALM & CLEAR OVERNIGHT MASK 25g', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:72, cbm:0.0157275},
+  {code:'SMD025', name:'DETOX & PURIFY CLAY MASK 25g', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:72, cbm:0.0157275},
+  {code:'SMB025', name:'BRIGHT & GLOW OVERNIGHT MASK 25g', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:72, cbm:0.0157275},
+  {code:'SMHB025', name:'HYDRATE & BARRIER BOOST OVERNIGHT MASK 25g', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:144, cbm:0.0157275},
+  {code:'SMLR025', name:'LIFT & RENEW OVERNIGHT MASK 25g', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:144, cbm:0.0157275},
+  {code:'SMSR025', name:'SLEEP & RECHARGE OVERNIGHT MASK 25g', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:144, cbm:0.0157275},
+  {code:'SMGG022', name:'GLASS & GLOW PEEL OFF MASK 22g', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:144, cbm:0.0157275},
+  {code:'SMBS025', name:'BRIGHT & SMOOTH SCRUB MASK 25g', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:144, cbm:0.0157275},
+  {code:'SHGG030', name:'GLOSSY GLOW HYDROGEL MASK', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:144, cbm:0.0157275},
+  {code:'SHLF030', name:'LIFTING FIRM HYDROGEL MASK', cat:'Skinoxy · Mask', L:37.5, W:18, H:23.3, pcs:144, cbm:0.0157275},
+  {code:'SCPH220', name:'PRO HYDRATING CLEANSER 220ml', cat:'Skinoxy · Pro Cleanser', L:35.5, W:23.3, H:19.9, pcs:30, cbm:0.016460285},
+  {code:'SCPS220', name:'PRO SMOOTHING CLEANSER 220ml', cat:'Skinoxy · Pro Cleanser', L:35.5, W:23.3, H:19.9, pcs:30, cbm:0.016460285},
+  {code:'STBG080', name:'BRIGHT & GLOW TONER PAD', cat:'Skinoxy · Toner Pads', L:36, W:18, H:18.8, pcs:16, cbm:0.0121824},
+  {code:'STDH080', name:'DEWY & HYDRATING TONER PAD', cat:'Skinoxy · Toner Pads', L:36, W:18, H:18.8, pcs:16, cbm:0.0121824},
+  {code:'STBG080-REFILL', name:'BRIGHT & GLOW TONER PAD (Refill)', cat:'Skinoxy · Toner Pads', L:46, W:27, H:24, pcs:16, cbm:0.029808},
+  {code:'STDH080-REFILL', name:'DEWY & HYDRATING TONER PAD (Refill)', cat:'Skinoxy · Toner Pads', L:46, W:27, H:24, pcs:16, cbm:0.029808},
+  {code:'SWH700', name:'PH 5.5 HYDRATING BODY WASH', cat:'Skinoxy · Shower Cream', L:22.1, W:19.7, H:24, pcs:8, cbm:0.01044888},
+  {code:'SWB700', name:'PH 5.5 BRIGHTENING BODY WASH', cat:'Skinoxy · Shower Cream', L:22.1, W:19.7, H:24, pcs:8, cbm:0.01044888},
+];
+// Build the grouped <option> list for the modal product picker.
+function kmbOptionsHTML(selectedCode){
+  var groups={}, order=[];
+  KMB_PRODUCTS.forEach(function(p){ if(!groups[p.cat]){groups[p.cat]=[];order.push(p.cat);} groups[p.cat].push(p); });
+  var html='<option value="">'+t('kmb_manual')+'</option>';
+  order.forEach(function(cat){
+    html+='<optgroup label="'+cat+'">';
+    groups[cat].forEach(function(p){
+      var sel=(p.code===selectedCode)?' selected':'';
+      html+='<option value="'+p.code+'"'+sel+'>'+p.code+' — '+p.name+'  ('+p.L+'×'+p.W+'×'+p.H+' cm)</option>';
+    });
+    html+='</optgroup>';
+  });
+  return html;
+}
+// Apply a selected KMB product to the in-modal item, preserving weight/pieces already typed.
+function applyKMBProduct(code){
+  var wEl=document.getElementById('mi-weight'), pEl=document.getElementById('mi-pieces');
+  if(wEl){var w=parseFloat(wEl.value); if(!isNaN(w))_mitem.weight=w;}
+  if(pEl){var pc=parseFloat(pEl.value); if(!isNaN(pc))_mitem.pieces=Math.max(1,Math.round(pc));}
+  if(code){
+    var p=KMB_PRODUCTS.find(function(x){return x.code===code});
+    if(p){
+      _mitem.type='box';
+      _mitem.name=p.code+' — '+p.name;
+      _mitem.L=p.L; _mitem.W=p.W; _mitem.H=p.H;
+      _mitem.pcsPerCtn=(p.pcs&&p.pcs>0)?p.pcs:1;   // pieces-per-carton from the master list
+      _mitem._kmb=p.code;
+      _mitem._auto=false;   // product-named — don't let language switch overwrite it
+    }
+  }else{
+    _mitem._kmb='';
+  }
+  renderModal();
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+function init(){
+  applyI18n();
+  selUnits=[];   // start empty every session — user must pick a container type manually
+  renderContainers();
+  addGroup();
+  // Default product (auto-named — translates with the language switch)
+  var d=makeDefaultItem(); d.pieces=100; d.pcsPerCtn=1; d.qty=100;
+  addItemToGroup(groups[0].id,d);
+  renderGroups();
+  bindViewer3D();
+}
+
+// ── TABS ──────────────────────────────────────────────────────────────────────
+function switchTab(t){
+  document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',['products','containers','results'][i]===t));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+  document.getElementById('tab-'+t).classList.add('active');
+}
+
+// ── CONTAINERS ────────────────────────────────────────────────────────────────
+function getSVGStyle(id){
+  if(id.indexOf('OT')>=0)return'opentop';
+  if(id.indexOf('FR')>=0)return'flatrack';
+  if(id.indexOf('RF')>=0)return'reefer';
+  return'dry';
+}
+
+function mkContainerSVG(isLong,isTall,style){
+  var fw=isLong?112:74,fh=isTall?52:42;
+  var dx=isLong?22:26,dy=isLong?13:16;
+  var ox=6,oy=82;
+  var FL=[ox,oy],FR=[ox+fw,oy],TR=[ox+fw,oy-fh],TL=[ox,oy-fh];
+  var FLb=[FL[0]+dx,FL[1]-dy],FRb=[FR[0]+dx,FR[1]-dy];
+  var TRb=[TR[0]+dx,TR[1]-dy],TLb=[TL[0]+dx,TL[1]-dy];
+  var S='#6E9AC4',sw=1.5,cf='#E9F3FB',cr='#D3E3F2',ct='#F4FAFE',cc='#C3D5E6';
+  function pp(a){return a.map(function(v){return v[0].toFixed(1)+','+v[1].toFixed(1)}).join(' ')}
+  function ln(x1,y1,x2,y2,a){return'<line x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" '+a+'/>'}
+  function pg(pts,f){return'<polygon points="'+pp(pts)+'" fill="'+f+'" stroke="'+S+'" stroke-width="'+sw+'" stroke-linejoin="round"/>'}
+  // Corner casting block (small parallelogram cube) at a front-face corner point p
+  function cast(p){
+    var w=3.4,h=3.4,d=dx*0.16,dd=dy*0.16;
+    var a=[p[0],p[1]],b=[p[0]+w,p[1]],cpt=[p[0]+w,p[1]-h],dpt=[p[0],p[1]-h];
+    var s2='';
+    s2+=pg([a,b,cpt,dpt],cc);
+    s2+=pg([cpt,dpt,[dpt[0]+d,dpt[1]-dd],[cpt[0]+d,cpt[1]-dd]],ct);
+    s2+=pg([b,cpt,[cpt[0]+d,cpt[1]-dd],[b[0]+d,b[1]-dd]],cr);
+    return s2;
+  }
+  var s='<svg viewBox="0 0 150 88" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">';
+  var i,nc,lx,j,ly,ph,ewW,cx,cy,dX,frac;
+  nc=Math.round(fw/4.5);
+  function corr(){var o='';for(i=1;i<nc;i++){lx=ox+i*fw/nc;o+=ln(lx,oy-1,lx,oy-fh+1,'stroke="'+S+'" stroke-width="0.5" opacity="0.4"');}return o;}
+  if(style==='flatrack'){
+    ph=8;ewW=11;
+    s+=pg([[FL[0],FL[1]-ph],[FR[0],FR[1]-ph],[FRb[0],FRb[1]-ph],[FLb[0],FLb[1]-ph]],ct);
+    s+=pg([FL,FR,[FR[0],FR[1]-ph],[FL[0],FL[1]-ph]],cf);
+    s+=pg([FR,FRb,[FRb[0],FRb[1]-ph],[FR[0],FR[1]-ph]],cr);
+    // deck slats on top face
+    for(i=1;i<6;i++){frac=i/6;s+=ln(FL[0]+(FR[0]-FL[0])*frac,FL[1]-ph,FLb[0]+(FRb[0]-FLb[0])*frac,FLb[1]-ph,'stroke="'+S+'" stroke-width="0.5" opacity="0.4"');}
+    // Left end frame
+    s+=pg([FL,[FL[0]+ewW,FL[1]],[FL[0]+ewW,FL[1]-fh],[FL[0],FL[1]-fh]],cf);
+    s+=pg([[FL[0]+ewW,FL[1]],[FL[0]+ewW+dx,FL[1]-dy],[FL[0]+ewW+dx,FL[1]-dy-fh],[FL[0]+ewW,FL[1]-fh]],cr);
+    s+=pg([[FL[0],FL[1]-fh],[FL[0]+ewW,FL[1]-fh],[FL[0]+ewW+dx,FL[1]-fh-dy],[FL[0]+dx,FL[1]-fh-dy]],ct);
+    // Right end frame
+    s+=pg([[FR[0]-ewW,FR[1]],FR,[FR[0],FR[1]-fh],[FR[0]-ewW,FR[1]-fh]],cf);
+    s+=pg([FR,FRb,[FRb[0],FRb[1]-fh],[FR[0],FR[1]-fh]],cr);
+    s+=pg([[FR[0]-ewW,FR[1]-fh],[FR[0],FR[1]-fh],[FRb[0],FRb[1]-fh],[FRb[0]-ewW,FRb[1]-fh]],ct);
+  }else if(style==='opentop'){
+    s+=pg([FR,FRb,TRb,TR],cr);
+    s+=pg([FL,FR,TR,TL],cf);
+    s+=corr();
+    // tinted wavy tarp roof
+    var midY=(TL[1]+TLb[1])/2, midYr=(TR[1]+TRb[1])/2;
+    s+=pg([TL,TLb,TRb,TR],ct);
+    s+='<path d="M'+TL[0].toFixed(1)+' '+TL[1].toFixed(1)+' Q'+((TL[0]+TLb[0])/2).toFixed(1)+' '+(midY-3).toFixed(1)+' '+TLb[0].toFixed(1)+' '+TLb[1].toFixed(1)+' L'+TRb[0].toFixed(1)+' '+TRb[1].toFixed(1)+' Q'+((TR[0]+TRb[0])/2).toFixed(1)+' '+(midYr-3).toFixed(1)+' '+TR[0].toFixed(1)+' '+TR[1].toFixed(1)+' Z" fill="'+cr+'" stroke="'+S+'" stroke-width="'+sw+'" stroke-linejoin="round" opacity="0.85"/>';
+    s+=ln(FRb[0],FRb[1],TRb[0],TRb[1],'stroke="'+S+'" stroke-width="'+sw+'"');
+    s+=cast(FL)+cast(FR)+cast([TR[0],TR[1]]);
+  }else{
+    // Dry or Reefer
+    s+=pg([TL,TR,TRb,TLb],ct);
+    s+=pg([FR,FRb,TRb,TR],cr);
+    s+=pg([FL,FR,TR,TL],cf);
+    s+=corr();
+    if(style==='reefer'){
+      // ribbed lower band
+      for(j=1;j<4;j++){ly=oy-j*fh/9;s+=ln(ox+1,ly,ox+fw-1,ly,'stroke="'+S+'" stroke-width="0.7" opacity="0.5"');}
+      // snowflake (6-point)
+      cx=ox+fw*0.26;cy=oy-fh*0.55;var R=8;
+      s+='<circle cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="'+R+'" stroke="'+S+'" stroke-width="1" fill="'+ct+'" opacity="0.85"/>';
+      var ang;
+      for(i=0;i<6;i++){ang=Math.PI/3*i;var ex=cx+Math.cos(ang)*R,ey=cy+Math.sin(ang)*R;
+        s+=ln(cx,cy,ex,ey,'stroke="'+S+'" stroke-width="1" opacity="0.7"');
+        // small barbs
+        var bx=cx+Math.cos(ang)*R*0.55,by=cy+Math.sin(ang)*R*0.55;
+        s+=ln(bx,by,bx+Math.cos(ang+0.6)*2.4,by+Math.sin(ang+0.6)*2.4,'stroke="'+S+'" stroke-width="0.8" opacity="0.6"');
+        s+=ln(bx,by,bx+Math.cos(ang-0.6)*2.4,by+Math.sin(ang-0.6)*2.4,'stroke="'+S+'" stroke-width="0.8" opacity="0.6"');
+      }
+    }else{
+      // doors: vertical seam + two handle bars
+      dX=ox+fw-fw*0.22;
+      s+=ln(dX,oy-1,dX,oy-fh+1,'stroke="'+S+'" stroke-width="1" opacity="0.5"');
+      s+=ln(dX-5,oy-fh*0.36,dX-1,oy-fh*0.36,'stroke="'+S+'" stroke-width="1.2" opacity="0.55"');
+      s+=ln(dX+1,oy-fh*0.6,dX+5,oy-fh*0.6,'stroke="'+S+'" stroke-width="1.2" opacity="0.55"');
+    }
+    s+=cast(FL)+cast(FR)+cast([TL[0],TL[1]])+cast([TR[0],TR[1]])+cast(FRb)+cast(TRb);
+  }
+  s+='</svg>';
+  return s;
+}
+
+// ── TRUCK SVG (side view) ──────────────────────────────────────────────────────
+function getTruckKind(id){
+  return {T18W:'semi',T10W:'rigidL',T6WL:'rigid',T6WS:'rigid',T4W:'small',TPK:'pickup'}[id]||'rigid';
+}
+function mkTruckSVG(kind){
+  var S='#5E7E9F',sw=1.6,cabF='#A6B9CC',boxF='#F2F8FD',whF='#3F4D5F',hubF='#9EADBF',glF='#CFE0F2';
+  var cy=68,r=9,hub=3.2;
+  function A(x){return x.toFixed(1)}
+  function wheel(cx){
+    return '<circle cx="'+A(cx)+'" cy="'+A(cy)+'" r="'+r+'" fill="'+whF+'" stroke="'+S+'" stroke-width="'+sw+'"/>'
+      +'<circle cx="'+A(cx)+'" cy="'+A(cy)+'" r="'+hub+'" fill="'+hubF+'" stroke="'+S+'" stroke-width="1"/>';
+  }
+  function rect(x,y,w,h,f){return '<rect x="'+A(x)+'" y="'+A(y)+'" width="'+A(w)+'" height="'+A(h)+'" rx="2" fill="'+f+'" stroke="'+S+'" stroke-width="'+sw+'"/>';}
+  function ribs(x,y,w,h,n){var o='',i,lx;for(i=1;i<n;i++){lx=x+i*w/n;o+='<line x1="'+A(lx)+'" y1="'+A(y+2)+'" x2="'+A(lx)+'" y2="'+A(y+h-2)+'" stroke="'+S+'" stroke-width="0.6" opacity="0.4"/>';}return o;}
+  // cab drawn as body + slanted windscreen + window
+  function cab(xf,cw,yt,ch){
+    var o='';
+    o+='<path d="M'+A(xf)+' '+A(yt+ch)+' L'+A(xf)+' '+A(yt+ch*0.32)+' Q'+A(xf)+' '+A(yt)+' '+A(xf+cw*0.34)+' '+A(yt)+' L'+A(xf+cw)+' '+A(yt)+' L'+A(xf+cw)+' '+A(yt+ch)+' Z" fill="'+cabF+'" stroke="'+S+'" stroke-width="'+sw+'" stroke-linejoin="round"/>';
+    // windscreen + side window
+    o+='<path d="M'+A(xf+cw*0.40)+' '+A(yt+2.5)+' L'+A(xf+cw-2.5)+' '+A(yt+2.5)+' L'+A(xf+cw-2.5)+' '+A(yt+ch*0.5)+' L'+A(xf+cw*0.30)+' '+A(yt+ch*0.5)+' Z" fill="'+glF+'" stroke="'+S+'" stroke-width="0.8"/>';
+    return o;
+  }
+  var s='<svg viewBox="0 0 212 84" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">';
+  var bx,bw,bh,by,cx1,cw,cyt,ch;
+  if(kind==='semi'){
+    // tractor + long trailer (rgba)
+    ch=30;cw=30;cx1=6;cyt=cy-r-ch;
+    bx=cx1+cw+3;bw=160;bh=42;by=cy-r-bh;
+    s+=rect(bx,by,bw,bh,boxF)+ribs(bx,by,bw,bh,16);
+    s+=cab(cx1,cw,cyt,ch);
+    // trailer landing + chassis line
+    s+='<line x1="'+A(bx)+'" y1="'+A(cy)+'" x2="'+A(bx+bw)+'" y2="'+A(cy)+'" stroke="'+S+'" stroke-width="1" opacity="0.5"/>';
+    s+=wheel(cx1+cw*0.62)+wheel(bx+bw*0.78)+wheel(bx+bw*0.78+22)+wheel(bx+bw*0.62);
+  }else if(kind==='rigidL'){
+    // rigid 6m+ box, 3 axles look (10-wheeler)
+    cw=30;ch=30;cx1=6;cyt=cy-r-ch;
+    bx=cx1+cw+2;bw=150;bh=40;by=cy-r-bh;
+    s+=rect(bx,by,bw,bh,boxF)+ribs(bx,by,bw,bh,14);
+    s+=cab(cx1,cw,cyt,ch);
+    s+=wheel(cx1+cw*0.6)+wheel(bx+bw*0.7)+wheel(bx+bw*0.7+22)+wheel(bx+bw*0.92);
+  }else if(kind==='rigid'){
+    // 6-wheeler box
+    cw=30;ch=30;cx1=6;cyt=cy-r-ch;
+    bx=cx1+cw+2;bw=120;bh=38;by=cy-r-bh;
+    s+=rect(bx,by,bw,bh,boxF)+ribs(bx,by,bw,bh,10);
+    s+=cab(cx1,cw,cyt,ch);
+    s+=wheel(cx1+cw*0.6)+wheel(bx+bw*0.74)+wheel(bx+bw*0.74+22);
+  }else if(kind==='small'){
+    // 4-wheeler small box truck
+    cw=26;ch=27;cx1=8;cyt=cy-r-ch;
+    bx=cx1+cw+2;bw=86;bh=33;by=cy-r-bh;
+    s+=rect(bx,by,bw,bh,boxF)+ribs(bx,by,bw,bh,7);
+    s+=cab(cx1,cw,cyt,ch);
+    s+=wheel(cx1+cw*0.55)+wheel(bx+bw*0.78);
+  }else{ // pickup
+    cw=34;ch=24;cx1=14;cyt=cy-r-ch;
+    // bed
+    bx=cx1+cw-2;bw=66;bh=18;by=cy-r-bh;
+    s+=rect(bx,by,bw,bh,boxF);
+    // cab (taller, with rear window)
+    s+='<path d="M'+A(cx1)+' '+A(cy-r)+' L'+A(cx1)+' '+A(cyt+ch*0.4)+' Q'+A(cx1+2)+' '+A(cyt)+' '+A(cx1+cw*0.4)+' '+A(cyt)+' L'+A(cx1+cw)+' '+A(cyt+ch*0.3)+' L'+A(cx1+cw)+' '+A(cy-r)+' Z" fill="'+cabF+'" stroke="'+S+'" stroke-width="'+sw+'" stroke-linejoin="round"/>';
+    s+='<path d="M'+A(cx1+cw*0.46)+' '+A(cyt+3)+' L'+A(cx1+cw-3)+' '+A(cyt+ch*0.34)+' L'+A(cx1+cw-3)+' '+A(cyt+ch*0.66)+' L'+A(cx1+cw*0.46)+' '+A(cyt+ch*0.66)+' Z" fill="'+glF+'" stroke="'+S+'" stroke-width="0.8"/>';
+    s+=wheel(cx1+cw*0.5)+wheel(bx+bw*0.6);
+  }
+  // ground line
+  s+='<line x1="2" y1="'+A(cy+r+1)+'" x2="210" y2="'+A(cy+r+1)+'" stroke="'+S+'" stroke-width="1" opacity="0.3"/>';
+  s+='</svg>';
+  return s;
+}
+
+var TAG_COLORS={
+  Dry:'#e3f2fd:#1565c0',Reefer:'#e0f7fa:#006064',Special:'#fce4ec:#880e4f',
+  Heavy:'#fbe9e7:#bf360c',Medium:'#f3e5f5:#6a1b9a',Light:'#f1f8e9:#33691e'
+};
+
+var SEC_LABELS={sea:'🚢 ตู้คอนเทนเนอร์ทางทะเล',truck:'🚛 รถบรรทุก'};
+
+// SVG line-art for a container/truck spec object.
+function contArtSVG(c){
+  return c.cat==='sea'?mkContainerSVG(c.L>8000,c.H>2600,getSVGStyle(c.id)):mkTruckSVG(getTruckKind(c.id));
+}
+// ── SELECTED-UNIT MODEL ─────────────────────────────────────────────────────────
+// selUnits = [{uid, type(id), L, W, H, maxW, qty}]  (dims in mm)
+function makeUnit(typeId){
+  var c=getCont(typeId);
+  return {uid:++uidSeq, type:typeId, L:c.L, W:c.W, H:c.H, maxW:c.maxW, qty:1};
+}
+// Resolve a unit into a full container spec object (base props + the unit's own dims).
+function unitSpec(u){
+  var base=getCont(u.type);
+  var vol=Math.round(u.L*u.W*u.H/1e7)/100; // geometric m³
+  return Object.assign({},base,{L:u.L,W:u.W,H:u.H,maxW:u.maxW,vol:vol,_uid:u.uid});
+}
+
+// ── PICKER GRID + DETAIL PANEL ──────────────────────────────────────────────────
+function openContPicker(cat){
+  if(autoSelect)return;
+  pickerCatSwitch(cat||'sea');
+  document.getElementById('cont-picker').classList.add('open');
+}
+function pickerCatSwitch(cat){
+  pickerCat=cat;
+  document.getElementById('ptab-sea').classList.toggle('active',cat==='sea');
+  document.getElementById('ptab-truck').classList.toggle('active',cat==='truck');
+  var list=CONTAINERS.filter(function(c){return c.cat===cat});
+  if(!list.some(function(c){return c.id===pickerSel}))pickerSel=list[0].id;
+  renderPicker();
+}
+function pickerSelect(id){ pickerSel=id; renderPicker(); }
+function renderPicker(){
+  var items=CONTAINERS.filter(function(c){return c.cat===pickerCat});
+  var grid=items.map(function(c){
+    var on=(c.id===pickerSel);
+    return '<div class="pk-card'+(on?' on':'')+'" onclick="pickerSelect(\''+c.id+'\')">'
+      +'<div class="pk-art">'+contArtSVG(c)+'</div>'
+      +'<div class="pk-name">'+contFull(c).toUpperCase()+'</div></div>';
+  }).join('');
+  document.getElementById('picker-grid').innerHTML=grid;
+  // detail panel
+  var c=getCont(pickerSel);
+  var m=function(v){return (v/1000).toFixed(3)+' m';};
+  var rows=[
+    [t('spec_len'), m(c.L)],
+    [t('spec_wid'), m(c.W)],
+    [t('spec_hei'), m(c.H)],
+    [t('spec_cap'), c.vol+' m³'],
+  ];
+  if(c.tare)rows.push([t('spec_tare'), c.tare.toLocaleString()+' Kgs']);
+  rows.push([t('spec_max'), c.maxW.toLocaleString()+' Kgs']);
+  var specHtml=rows.map(function(r){return '<div class="pk-spec"><b>'+r[0]+':</b> '+r[1]+'</div>';}).join('');
+  document.getElementById('picker-detail').innerHTML=
+     '<div class="pk-detail-art">'+contArtSVG(c)+'</div>'
+    +'<div class="pk-detail-info"><div class="pk-detail-title">'+contFull(c).toUpperCase()+'</div>'+specHtml+'</div>';
+}
+function closeContPicker(){ document.getElementById('cont-picker').classList.remove('open'); }
+function pickerConfirm(){
+  selUnits.push(makeUnit(pickerSel));
+  closeContPicker();
+  renderContainers();
+}
+
+// ── SELECTED LIST (editable rows) ────────────────────────────────────────────────
+function renderContainers(){
+  var grid=document.getElementById('cont-grid');
+  if(autoSelect){
+    grid.innerHTML='<div style="text-align:center;padding:50px 20px;background:#f0f7ff;border-radius:12px;border:1px solid #d6e4ff">'
+      +'<div style="font-size:46px;margin-bottom:12px">✨</div>'
+      +'<div style="font-size:16px;font-weight:700;color:#1a56db;margin-bottom:6px">'+t('auto_sel_title')+'</div>'
+      +'<div style="font-size:13px;color:#666">'+t('auto_sel_desc')+'</div>'
+      +'</div>';
+    return;
+  }
+  var addBtn='<button class="btn-addcont" onclick="openContPicker(\'sea\')">'+t('add_container_btn')+'</button>';
+  if(!selUnits.length){
+    grid.innerHTML='<div class="empty-state" style="padding:40px 20px">'
+      +'<div class="empty-badge"><span class="ico">🚛</span>'
+      +'<span class="spark s1">✦</span><span class="spark s2">✦</span><span class="spark s3">✦</span><span class="spark s4">✦</span></div>'
+      +'<div class="empty-title">'+t('please_add_transport')+'</div>'
+      +'<div class="empty-sub">'+t('sel_empty_hint')+'</div></div>'
+      +'<div style="text-align:center;margin-top:8px">'+addBtn+'</div>';
+    return;
+  }
+  // grouped type options for the row dropdown
+  var optSea=CONTAINERS.filter(function(c){return c.cat==='sea'}).map(function(c){return c;});
+  var optTruck=CONTAINERS.filter(function(c){return c.cat==='truck'});
+  function optsFor(u){
+    var o='<optgroup label="'+t('sec_sea')+'">'+optSea.map(function(c){return '<option value="'+c.id+'"'+(c.id===u.type?' selected':'')+'>'+contFull(c)+'</option>';}).join('')+'</optgroup>';
+    o+='<optgroup label="'+t('sec_truck')+'">'+optTruck.map(function(c){return '<option value="'+c.id+'"'+(c.id===u.type?' selected':'')+'>'+contFull(c)+'</option>';}).join('')+'</optgroup>';
+    return o;
+  }
+  var ucm=t('unit_mm');
+  var rows=selUnits.map(function(u){
+    var c=getCont(u.type);
+    var f=function(key,val){return '<div class="ur-field"><label>'+t(key)+'</label>'
+      +'<input type="number" min="1" value="'+val+'" onchange="setUnitField('+u.uid+',\''+key.replace('hdr_','')+'\',this.value)"></div>';};
+    // L/W/H + Max Weight are LOCKED (fixed per container type) — only Quantity is editable.
+    return '<div class="unit-row">'
+      +'<div class="ur-thumb" title="'+contFull(c)+'">'+contArtSVG(c)+'</div>'
+      +'<select class="ur-type" onchange="setUnitType('+u.uid+',this.value)">'+optsFor(u)+'</select>'
+      +'<div class="ur-field"><label>'+t('hdr_length')+'</label><input type="number" class="ur-lock" value="'+u.L+'" disabled></div>'
+      +'<div class="ur-field"><label>'+t('hdr_width')+'</label><input type="number" class="ur-lock" value="'+u.W+'" disabled></div>'
+      +'<div class="ur-field"><label>'+t('hdr_height')+'</label><input type="number" class="ur-lock" value="'+u.H+'" disabled></div>'
+      +'<div class="ur-field"><label>'+t('hdr_maxw')+'</label><input type="number" class="ur-lock" value="'+u.maxW+'" disabled></div>'
+      +'<div class="ur-field ur-qty"><label>'+t('hdr_qty')+'</label><input type="number" min="1" value="'+u.qty+'" onchange="setUnitField('+u.uid+',\'qty\',this.value)"></div>'
+      +'<button class="ur-remove" onclick="removeUnit('+u.uid+')">'+t('remove')+'</button>'
+      +'</div>';
+  }).join('');
+  grid.innerHTML=rows+'<div style="margin-top:4px">'+addBtn+'</div>';
+}
+function findUnit(uid){return selUnits.find(function(u){return u.uid===uid});}
+function setUnitType(uid,typeId){
+  var u=findUnit(uid); if(!u)return;
+  var c=getCont(typeId);
+  u.type=typeId; u.L=c.L; u.W=c.W; u.H=c.H; u.maxW=c.maxW; // reset dims to the new type's defaults
+  renderContainers();
+}
+function setUnitField(uid,key,v){
+  var u=findUnit(uid); if(!u)return;
+  var n=Math.max(1,parseInt(v)||1);
+  u[key]=n; // stored directly; no re-render so the input keeps focus
+}
+function removeUnit(uid){
+  selUnits=selUnits.filter(function(u){return u.uid!==uid});
+  renderContainers();
+}
+
+function toggleFlag(which){
+  if(which==='count')autoCount=document.getElementById('auto-count').checked;
+  if(which==='select')autoSelect=document.getElementById('auto-select').checked;
+  renderContainers();
+}
+
+// ── GROUPS ────────────────────────────────────────────────────────────────────
+function addGroup(){
+  var id=Date.now()+Math.random();
+  var color=COLORS[groups.length%COLORS.length];
+  groups.push({id,name:'Group #'+(groups.length+1),color,items:[]});
+  renderGroups();
+}
+
+function removeGroup(id){
+  if(!confirm(t('remove_group_confirm')))return;
+  groups=groups.filter(g=>g.id!==id);
+  renderGroups();
+}
+
+function renameGroup(id,v){var g=groups.find(g=>g.id===id);if(g)g.name=v}
+
+function renderGroups(){
+  var el=document.getElementById('groups');
+  if(!groups.length){
+    el.innerHTML='<div class="empty-state">'
+      +'<div class="empty-badge"><span class="ico">📦</span>'
+      +'<span class="spark s1">✦</span><span class="spark s2">✦</span><span class="spark s3">✦</span><span class="spark s4">✦</span></div>'
+      +'<div class="empty-title">'+t('please_add_group')+'</div>'
+      +'<div class="empty-sub">'+t('please_add_group_sub')+'</div>'
+      +'</div>';
+    return;
+  }
+  el.innerHTML=groups.map(g=>`
+    <div class="card">
+      <div class="card-header">
+        <div class="group-dot" style="background:${g.color}"></div>
+        <input class="group-name-input" value="${esc(g.name)}" onchange="renameGroup(${g.id},this.value)">
+        <button class="btn btn-outline btn-sm" onclick="addProductInline(${g.id})">${t('add_item')}</button>
+        <button class="btn btn-danger btn-sm" onclick="removeGroup(${g.id})">🗑️</button>
+      </div>
+      ${g.items.length?renderItemTable(g):'<div class="empty-row">'+t('no_items_prefix')+'<a href="#" onclick="addProductInline('+g.id+');return false">'+t('add_item_short')+'</a></div>'}
+      <div class="card-footer" style="flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="addProductInline(${g.id})">${t('add_item')}</button>
+        <label class="chk" style="margin-left:14px"><input type="checkbox" ${g.usePallet?'checked':''} onchange="togglePallet(${g.id})"> ${t('use_pallet')}</label>
+        <span title="${t('pallet_help')}" style="color:#bbb;cursor:help;font-size:14px">?</span>
+      </div>
+      ${g.usePallet?renderPalletRow(g):''}
+    </div>`).join('');
+}
+
+function renderItemTable(g){
+  var ucm=LANG==='en'?'cm':'ซม.', ukg=LANG==='en'?'kg':'กก.';
+  return `<div style="overflow-x:auto"><table class="item-table">
+    <thead><tr>
+      <th style="text-align:center">${t('it_type')}</th><th>${t('it_name')}</th>
+      <th>${t('it_len')}</th><th>${t('it_wid')}</th><th>${t('it_hei')}</th>
+      <th>${t('it_weight')}</th><th>${t('it_pieces')}</th><th>${t('it_cartons')}</th>
+      <th style="text-align:center">${t('it_color')}</th><th style="text-align:center">${t('it_stack')}</th>
+    </tr></thead>
+    <tbody>${g.items.map(it=>{
+      var dimHtml=itemDimCells(it).map(c=> c.k
+        ? `<td><div class="it-cell-inp"><input type="number" min="0.1" step="0.1" value="${c.v}" onchange="setItemField(${g.id},${it.id},'${c.k}',this.value)"><span class="u">${ucm}</span></div></td>`
+        : `<td><div class="it-cell-inp dis"><input type="text" disabled value="—"></div></td>`
+      ).join('');
+      return `<tr>
+        <td style="text-align:center"><span title="${typeLabel(getTypeInfo(it.type))}" style="font-size:19px">${getTypeInfo(it.type).emoji}</span></td>
+        <td><input class="it-name-inp" value="${esc(it.name)}" onchange="setItemField(${g.id},${it.id},'name',this.value)"></td>
+        ${dimHtml}
+        <td><div class="it-cell-inp"><input type="number" min="0" step="0.1" value="${it.weight}" onchange="setItemField(${g.id},${it.id},'weight',this.value)"><span class="u">${ukg}</span></div></td>
+        <td><div class="it-cell-inp"><input type="number" min="1" value="${it.pieces!=null?it.pieces:it.qty}" onchange="setItemField(${g.id},${it.id},'pieces',this.value)"></div></td>
+        <td><div class="it-cell-inp dis" title="${(it.pcsPerCtn||1)} ${LANG==='en'?'pcs/carton':'ชิ้น/กล่อง'}"><input type="text" disabled value="${cartonsOf(it).toLocaleString()}"></div></td>
+        <td style="text-align:center"><div class="it-color-dot" id="it-dot-${it.id}" style="background:${it.color}" onclick="cpOpenItemRow(${g.id},${it.id},'it-dot-${it.id}')"></div></td>
+        <td style="text-align:center;white-space:nowrap">
+          <button class="btn btn-outline btn-sm" title="${t('it_stack')}" onclick="openEditModal(${g.id},${it.id})">⚙️</button>
+          <button class="btn btn-danger btn-sm" onclick="removeItem(${g.id},${it.id})">🗑️</button>
+        </td>
+      </tr>`;
+    }).join('')}
+    </tbody></table></div>`;
+}
+
+var PALLET_PRESETS=[
+  {key:'standard', th:'พาเลทมาตรฐาน (1200×1000)', en:'Standard (1200×1000)',    L:1200,W:1000},
+  {key:'euro',     th:'พาเลทยุโรป (1200×800)',   en:'Euro pallet (1200×800)',  L:1200,W:800},
+  {key:'asia',     th:'พาเลทเอเชีย (1100×1100)',  en:'Asia pallet (1100×1100)', L:1100,W:1100},
+  {key:'us',       th:'พาเลทอเมริกา (1219×1016)', en:'US pallet (1219×1016)',   L:1219,W:1016},
+  {key:'custom',   th:'พาเลทกำหนดเอง',           en:'Custom pallet',           L:1200,W:800},
+];
+var PALLET_PRESET={presetKey:'standard',L:1200,W:1000,H:2000,D:150,maxW:1500,tare:5.2,color:'#8d6e63'};
+// Width squeeze allowance for pallet fitting (mm) — real-world loaders accept
+// 2×1200mm pallets across a 2350mm container (20'GP standard practice = 10 pallets).
+var PAL_TOL=60;
+function togglePallet(gid){
+  var g=groups.find(g=>g.id===gid); if(!g)return;
+  g.usePallet=!g.usePallet;
+  if(g.usePallet&&!g.pallet)g.pallet={...PALLET_PRESET};
+  renderGroups();
+}
+function setPalletPreset(gid,key){
+  var g=groups.find(g=>g.id===gid); if(!g)return;
+  if(!g.pallet)g.pallet={...PALLET_PRESET};
+  g.pallet.presetKey=key;
+  var pr=PALLET_PRESETS.find(p=>p.key===key);
+  if(pr&&key!=='custom'){g.pallet.L=pr.L;g.pallet.W=pr.W;}
+  renderGroups();
+}
+function renderPalletRow(g){
+  var p=g.pallet||PALLET_PRESET;
+  var custom=(p.presetKey==='custom');
+  var dis=custom?'':'disabled';
+  var opts=PALLET_PRESETS.map(pr=>`<option value="${pr.key}" ${pr.key===p.presetKey?'selected':''}>${LANG==='en'?pr.en:pr.th}</option>`).join('');
+  return `<div class="pallet-row">
+    <div style="display:flex;align-items:center;justify-content:center">${palletSVG()}</div>
+    <div><span class="fl">${t('pallet_type')}</span><select onchange="setPalletPreset(${g.id},this.value)">${opts}</select></div>
+    <div><span class="fl">${t('f_length')}</span><input type="number" value="${p.L}" ${dis} onchange="setPallet(${g.id},'L',this.value)"></div>
+    <div><span class="fl">${t('f_width')}</span><input type="number" value="${p.W}" ${dis} onchange="setPallet(${g.id},'W',this.value)"></div>
+    <div><span class="fl">${t('f_height')}</span><input type="number" value="${p.H}" onchange="setPallet(${g.id},'H',this.value)"></div>
+
+    <div><span class="fl">${t('f_maxw')}</span><input type="number" value="${p.maxW}" onchange="setPallet(${g.id},'maxW',this.value)"></div>
+    <div><span class="fl">${t('color')}</span><div class="pallet-dot" id="pallet-dot-${g.id}" style="background:${p.color||'#8d6e63'}" onclick="cpOpenPallet(${g.id},'pallet-dot-${g.id}')"></div></div>
+  </div>`;
+}
+function setPallet(gid,k,v){
+  var g=groups.find(g=>g.id===gid); if(!g)return;
+  if(!g.pallet)g.pallet={...PALLET_PRESET};
+  g.pallet[k]=parseFloat(v)||0;
+}
+
+function fmtDims(it){
+  var f=v=>parseFloat(v).toFixed(1).replace(/\.0$/,'');
+  var u=LANG==='en'?'cm':'ซม.';
+  if(it.type==='drum')return '⌀'+f(it.D)+' × H'+f(it.H)+' '+u;
+  if(it.type==='roll'||it.type==='pipe')return 'L'+f(it.L)+' × ⌀'+f(it.D)+' '+u;
+  return f(it.L)+' × '+f(it.W)+' × '+f(it.H)+' '+u;
+}
+
+function removeItem(gid,iid){
+  var g=groups.find(g=>g.id===gid);
+  if(g)g.items=g.items.filter(i=>i.id!==iid);
+  renderGroups();
+}
+
+function addItemToGroup(gid,data){
+  var g=groups.find(g=>g.id===gid);
+  if(g)g.items.push({id:Date.now()+Math.random(),...data});
+}
+
+// ── INLINE ITEM EDITING ─────────────────────────────────────────────────────────
+function defaultItemName(n){return LANG==='en'?('Product '+n):('สินค้า '+n);}
+function makeDefaultItem(){
+  itemAutoSeq++;
+  return {type:'box',name:defaultItemName(itemAutoSeq),_auto:true,_autoNum:itemAutoSeq,
+    L:40,W:30,H:25,D:20,weight:5,pieces:1,pcsPerCtn:1,qty:1,color:COLORS[colorIdx++%COLORS.length],
+    rotL:true,rotW:true,rotH:true,maxLayers:0,maxH2:0,maxWt:0,hexPack:false};
+}
+// Cartons = ceil(pieces / pieces-per-carton). qty is kept = cartons (used by the packer).
+function cartonsOf(it){
+  var pcs=Math.max(1,it.pcsPerCtn||1);
+  var pieces=(it.pieces!=null)?it.pieces:(it.qty||1);
+  return Math.max(1,Math.ceil(pieces/pcs));
+}
+function addProductInline(gid){
+  addItemToGroup(gid,makeDefaultItem());
+  renderGroups();
+}
+function setItemField(gid,iid,key,v){
+  var g=groups.find(x=>x.id===gid); var it=g&&g.items.find(i=>i.id===iid); if(!it)return;
+  if(key==='name'){it.name=v; it._auto=false;}
+  else if(key==='pieces'||key==='pcsPerCtn'){
+    it[key]=Math.max(1,Math.round(parseFloat(v)||1));
+    it.qty=cartonsOf(it);          // keep carton count in sync
+    renderGroups();                // refresh the read-only "จำนวนกล่อง" cell
+  }
+  else if(key==='qty'){it.qty=Math.max(1,Math.round(parseFloat(v)||1));}
+  else{it[key]=parseFloat(v)||0;}
+}
+function cpOpenItemRow(gid,iid,dotId){
+  var g=groups.find(x=>x.id===gid); var it=g&&g.items.find(i=>i.id===iid); if(!it)return;
+  cpOpenCtx(dotId,{color:it.color,dotId:dotId,apply:function(c){it.color=c;}});
+}
+// columns: [Length/Diameter, Width, Height] — null key = disabled (n/a for this type)
+function itemDimCells(it){
+  if(it.type==='drum')return [{k:'D',v:it.D},{k:null},{k:'H',v:it.H}];
+  if(it.type==='roll'||it.type==='pipe')return [{k:'L',v:it.L},{k:'D',v:it.D},{k:null}];
+  return [{k:'L',v:it.L},{k:'W',v:it.W},{k:'H',v:it.H}];
+}
+
+// ── MODAL ─────────────────────────────────────────────────────────────────────
+var _mitem=null;
+
+function openAddModal(gid){
+  modalGid=gid; modalIid=null;
+  document.getElementById('modal-title').textContent=t('modal_add');
+  document.getElementById('modal-save-btn').textContent=t('save_add');
+  _mitem={type:'box',name:'',L:40,W:30,H:25,D:20,weight:5,qty:1,
+    color:COLORS[colorIdx++%COLORS.length],rotL:true,rotW:true,rotH:true,
+    maxLayers:0,maxH2:0,maxWt:0,hexPack:false};
+  renderModal();
+  document.getElementById('modal').classList.add('open');
+}
+
+function openEditModal(gid,iid){
+  var g=groups.find(g=>g.id===gid);
+  var it=g&&g.items.find(i=>i.id===iid);
+  if(!it)return;
+  modalGid=gid; modalIid=iid;
+  document.getElementById('modal-title').textContent=t('modal_edit');
+  document.getElementById('modal-save-btn').textContent=t('save_edit');
+  _mitem={...it};
+  renderModal();
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal(){document.getElementById('modal').classList.remove('open')}
+document.getElementById('modal').addEventListener('click',function(e){if(e.target===this)closeModal()});
+
+function renderModal(){
+  var m=_mitem, ty=m.type;
+  var isDrum=ty==='drum', isCyl=(ty==='roll'||ty==='pipe'), isBox=!isDrum&&!isCyl;
+  document.getElementById('modal-body').innerHTML=`
+    <div class="fs">
+      <div class="fs-title">${t('kmb_pick_title')}</div>
+      <select class="fi" id="mi-kmb" onchange="applyKMBProduct(this.value)" style="cursor:pointer;font-weight:600">
+        ${kmbOptionsHTML(m._kmb||'')}
+      </select>
+      <div style="font-size:11px;color:#9aa3ad;margin-top:5px">${t('kmb_pick_help')}</div>
+    </div>
+    <div class="fs">
+      <div class="fs-title">${t('step1')}</div>
+      <div class="type-selector">
+        ${TYPES.map(tp=>`<div class="type-btn ${tp.id===ty?'sel':''}" onclick="chType('${tp.id}')">
+          <span>${tp.emoji}</span><span>${typeLabel(tp)}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="fs">
+      <div class="fs-title">${t('step2')}</div>
+      <div class="form-grid-2" style="margin-bottom:10px">
+        <div class="fg"><label class="fl">${t('f_name')}</label>
+          <input class="fi" id="mi-name" value="${esc(m.name)}" placeholder="${t('f_name')}"></div>
+        <div class="fg"><label class="fl">${t('color')}</label>
+          <div class="cp-swatch" id="cp-swatch" onclick="cpOpen('cp-swatch')">
+            <div class="cp-swatch-dot" id="cp-dot" style="background:${m.color}"></div>
+            <span style="font-size:10px;color:#bbb">▼</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:flex-start">
+        <canvas id="box3d-cv" width="200" height="160"
+          style="flex-shrink:0;width:200px;height:160px;border-radius:10px;background:#f5f6f7"></canvas>
+        <div style="flex:1">
+          <div class="form-grid">
+            ${isDrum?`
+              <div class="fg"><label class="fl">${t('f_diameter')}</label><input class="fi" id="mi-D" type="number" min="0.1" step="0.1" value="${m.D||20}" oninput="update3DBox()"></div>
+              <div class="fg"><label class="fl">${t('f_height_cm')}</label><input class="fi" id="mi-H" type="number" min="0.1" step="0.1" value="${m.H||40}" oninput="update3DBox()"></div>
+            `:isCyl?`
+              <div class="fg"><label class="fl">${t('f_len_l')}</label><input class="fi" id="mi-L" type="number" min="0.1" step="0.1" value="${m.L||100}" oninput="update3DBox()"></div>
+              <div class="fg"><label class="fl">${t('f_diameter')}</label><input class="fi" id="mi-D" type="number" min="0.1" step="0.1" value="${m.D||10}" oninput="update3DBox()"></div>
+            `:`
+              <div class="fg"><label class="fl">${t('f_len_l')}</label><input class="fi" id="mi-L" type="number" min="0.1" step="0.1" value="${m.L||40}" oninput="update3DBox()"></div>
+              <div class="fg"><label class="fl">${t('f_wid_w')}</label><input class="fi" id="mi-W" type="number" min="0.1" step="0.1" value="${m.W||30}" oninput="update3DBox()"></div>
+              <div class="fg"><label class="fl">${t('f_hei_h')}</label><input class="fi" id="mi-H" type="number" min="0.1" step="0.1" value="${m.H||25}" oninput="update3DBox()"></div>
+            `}
+          </div>
+          <div style="display:flex;gap:10px;margin-top:10px;align-items:flex-end;position:relative">
+            <div class="fg" style="flex:1"><label class="fl">${t('f_weight_kg')}</label><input class="fi" id="mi-weight" type="number" min="0" step="0.1" value="${m.weight||1}"></div>
+            <div class="fg" style="flex:1"><label class="fl">${t('f_pieces')}</label><input class="fi" id="mi-pieces" type="number" min="1" value="${m.pieces!=null?m.pieces:(m.qty||1)}" oninput="updModalCartons()"></div>
+            <div class="fg" style="flex:1"><label class="fl">${t('f_pcsctn')}</label><input class="fi" id="mi-pcsctn" type="number" min="1" value="${m.pcsPerCtn||1}" oninput="updModalCartons()"></div>
+            <button type="button" class="btn-predict" onclick="predictCapacity()">${t('predict')}</button>
+            <div id="predict-pop" class="predict-pop"></div>
+          </div>
+          <div style="font-size:12px;color:#667085;margin-top:6px">${t('it_cartons')}: <b id="mi-cartons" style="color:#1a56db">${cartonsOf(m)}</b></div>
+        </div>
+      </div>
+    </div>
+    ${isBox?`
+    <div class="two-col">
+      <div class="fs">
+        <div class="fs-title">${t('step3_rot')}</div>
+        <label class="chk"><input type="checkbox" id="mi-rotL" ${m.rotL?'checked':''}> ${t('rot_l')}</label>
+        <label class="chk"><input type="checkbox" id="mi-rotW" ${m.rotW?'checked':''}> ${t('rot_w')}</label>
+        <label class="chk"><input type="checkbox" id="mi-rotH" ${m.rotH?'checked':''}> ${t('rot_h')}</label>
+      </div>
+      <div class="fs">
+        <div class="fs-title">${t('step4_lim')}</div>
+        <label class="chk"><input type="checkbox" id="cb-layers" ${m.maxLayers>0?'checked':''} onchange="togCon('layers')"> ${t('max_layers')}</label>
+        <input class="fi" id="mi-maxLayers" type="number" min="0" value="${m.maxLayers||1}" style="${m.maxLayers>0?'':'display:none'};margin-bottom:6px">
+        <label class="chk"><input type="checkbox" id="cb-mh" ${m.maxH2>0?'checked':''} onchange="togCon('mh')"> ${t('max_height')}</label>
+        <input class="fi" id="mi-maxH2" type="number" min="0" value="${m.maxH2||0}" style="${m.maxH2>0?'':'display:none'};margin-bottom:6px">
+        <label class="chk"><input type="checkbox" id="cb-mwt" ${m.maxWt>0?'checked':''} onchange="togCon('mwt')"> ${t('max_total_w')}</label>
+        <input class="fi" id="mi-maxWt" type="number" min="0" value="${m.maxWt||0}" style="${m.maxWt>0?'':'display:none'}">
+      </div>
+    </div>`:(isDrum?`
+    <div class="fs">
+      <div class="fs-title">${t('step3_place')}</div>
+      <label class="chk"><input type="radio" name="dp" value="sq" ${!m.hexPack?'checked':''}> ${t('square_pack')}</label>
+      <label class="chk"><input type="radio" name="dp" value="hx" ${m.hexPack?'checked':''}> ${t('hex_pack')}</label>
+    </div>`:'')}`;
+  setTimeout(update3DBox, 20);
+}
+
+function chType(t){_mitem={..._mitem,type:t};renderModal()}
+
+// Predict how many of the current item fit into the standard sea containers
+function predictCapacity(){
+  var pop=document.getElementById('predict-pop');
+  if(!pop)return;
+  if(pop.classList.contains('open')){pop.classList.remove('open');return;}
+  var it=getMVals();
+  var std=[['20GP','20 STANDARD'],['40HC','40 HIGH CUBE']];
+  var rows=std.map(function(s){
+    var c=CONTAINERS.find(function(x){return x.id===s[0]});
+    var fits=c?calcFit(it,c).fits:0;
+    return '<div class="predict-row"><span class="predict-name">'+s[1]+'</span>'
+      +'<span class="predict-cnt">📦 '+fits.toLocaleString()+' <small>'+t('items_unit')+'</small></span></div>';
+  }).join('');
+  pop.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+    +'<span style="font-weight:700;font-size:15px;color:#222">'+t('max_capacity')+'</span>'
+    +'<span onclick="document.getElementById(\'predict-pop\').classList.remove(\'open\')" '
+    +'style="cursor:pointer;color:#999;font-size:20px;line-height:1">&times;</span></div>'+rows;
+  pop.classList.add('open');
+}
+
+function togCon(k){
+  var m={layers:['cb-layers','mi-maxLayers'],mh:['cb-mh','mi-maxH2'],mwt:['cb-mwt','mi-maxWt']}[k];
+  var inp=document.getElementById(m[1]);
+  if(inp)inp.style.display=document.getElementById(m[0]).checked?'':'none';
+}
+
+// Live update of the "จำนวนกล่อง" hint inside the modal as pieces / pcs-per-carton change.
+function updModalCartons(){
+  var pcs=Math.max(1,Math.round(parseFloat(document.getElementById('mi-pcsctn')?.value)||1));
+  var pieces=Math.max(1,Math.round(parseFloat(document.getElementById('mi-pieces')?.value)||1));
+  var el=document.getElementById('mi-cartons'); if(el)el.textContent=Math.max(1,Math.ceil(pieces/pcs)).toLocaleString();
+}
+function getMVals(){
+  var n=id=>parseFloat(document.getElementById(id)?.value)||0;
+  var b=id=>!!(document.getElementById(id)?.checked);
+  var s=id=>document.getElementById(id)?.value||'';
+  var pieces=Math.max(1,Math.round(n('mi-pieces')||1));
+  var pcsPerCtn=Math.max(1,Math.round(n('mi-pcsctn')||1));
+  return{
+    type:_mitem.type, name:s('mi-name'), color:_mitem.color, // color from palette picker
+    L:n('mi-L')||40, W:n('mi-W')||30, H:n('mi-H')||25, D:n('mi-D')||20,
+    weight:n('mi-weight')||0.001,
+    pieces:pieces, pcsPerCtn:pcsPerCtn, qty:Math.max(1,Math.ceil(pieces/pcsPerCtn)),
+    rotL:b('mi-rotL'), rotW:b('mi-rotW'), rotH:b('mi-rotH'),
+    maxLayers:b('cb-layers')?n('mi-maxLayers'):0,
+    maxH2:b('cb-mh')?n('mi-maxH2'):0,
+    maxWt:b('cb-mwt')?n('mi-maxWt'):0,
+    hexPack:document.querySelector('input[name="dp"]:checked')?.value==='hx'||false,
+    _kmb:_mitem._kmb||'',           // remember the linked KMB product (for re-edit)
+  };
+}
+
+function saveItem(){
+  var v=getMVals();
+  if(!v.name)v.name=typeLabel(getTypeInfo(v.type));
+  var g=groups.find(g=>g.id===modalGid);
+  if(!g)return;
+  if(modalIid!==null){
+    var idx=g.items.findIndex(i=>i.id===modalIid);
+    if(idx>=0){
+      var prev=g.items[idx];
+      // if the user changed the name away from its auto default, stop auto-translating it
+      if(prev._auto&&prev._autoNum&&v.name!==defaultItemName(prev._autoNum))v._auto=false;
+      g.items[idx]={...prev,...v};
+    }
+  } else {
+    g.items.push({id:Date.now()+Math.random(),...v});
+  }
+  closeModal(); renderGroups();
+}
+
+// ── CALCULATION ───────────────────────────────────────────────────────────────
+function buildResult(c,allItems){
+  if(!c)return null;
+  var itemCalcs=allItems.map(function(it){return calcFit(it,c);});
+  var result={c:c, items:itemCalcs};
+  // packLayout is the SINGLE source of truth: it returns how many cartons of each SKU are
+  // actually placed in THIS container (capped by the real combined 3D layout, not the
+  // per-item estimate). All totals + the fit/partial status are derived from those counts.
+  var layout=packLayout(result);
+  var totVol=0, totWt=0, totPkg=0, units=1, allFit=true;
+  itemCalcs.forEach(function(ir,idx){
+    var st=layout.stats[idx];
+    var placed=st?st.placed:0;
+    ir.packed=placed;                       // actual cartons placed (was min(fits,needed))
+    ir.vol=placed*itemVol(ir.item);
+    ir.wt=placed*(ir.item.weight||0);
+    totVol+=ir.vol; totWt+=ir.wt; totPkg+=placed;
+    if(placed<ir.needed)allFit=false;                              // partial if not all fit
+    if(placed>0)units=Math.max(units,Math.ceil(ir.needed/placed)); // est. containers for this SKU
+  });
+  var cVol=c.L*c.W*c.H/1e9;
+  result.totVol=totVol; result.totWt=totWt; result.totPkg=totPkg;
+  result.volPct=totVol/cVol*100; result.wtPct=totWt/c.maxW*100;
+  result.allFit=allFit; result.unitsNeeded=units;
+  return result;
+}
+
+function utilFill(pct,kind){
+  if(pct>100)return 'fill-red';
+  if(kind==='weight')return pct>85?'fill-orange':'fill-green';
+  return pct>85?'fill-green':pct>55?'fill-orange':'fill-blue';
+}
+
+// Split cargo across as many container units as needed: unit #1 packs what fits,
+// the remainder rolls into unit #2, and so on. `specs` is the ordered list of
+// container specs to use — when the cargo outlasts the list, the LAST spec repeats.
+// Each unit becomes its own full result block (3D + table + pallet manifest).
+function chainResults(specs,allItems){
+  var out=[], rem=allItems, guard=0, i=0;
+  while(rem.length&&guard++<50){
+    var c=specs[Math.min(i++,specs.length-1)];
+    var r=buildResult(c,rem);
+    if(!r)break;
+    out.push(r);
+    if(r.allFit)break;
+    var next=[], progress=false;
+    r.items.forEach(function(ir,k){
+      var left=(ir.needed||0)-(ir.packed||0);
+      if(ir.packed>0)progress=true;
+      if(left>0)next.push({...rem[k],qty:left});
+    });
+    if(!next.length||!progress)break;      // done, or nothing fits at all (avoid infinite loop)
+    rem=next;
+  }
+  return out;
+}
+
+function calculate(){
+  var allItems=[];
+  groups.forEach(g=>g.items.forEach(it=>allItems.push({...it,gName:g.name,gColor:g.color,usePallet:!!g.usePallet,pallet:g.usePallet?(g.pallet||{...PALLET_PRESET}):null})));
+  if(!allItems.length){alert(t('alert_no_items'));return}
+
+  var results=[];
+  if(autoSelect){
+    // Evaluate all sea containers, recommend the most efficient one that fits everything
+    var seaResults=CONTAINERS.filter(c=>c.cat==='sea').map(c=>buildResult(c,allItems)).filter(Boolean);
+    seaResults.sort((a,b)=>{
+      if(a.allFit!==b.allFit)return a.allFit?-1:1;
+      return b.volPct-a.volPct;
+    });
+    if(seaResults.length){
+      results=chainResults([seaResults[0].c],allItems);
+      if(results.length)results[0].recommended=true;
+    }
+  }else{
+    if(!selUnits.length){alert(t('alert_no_cont'));switchTab('containers');return}
+    results=chainResults(selUnits.map(unitSpec),allItems);
+  }
+  // every block is ONE physical unit; unitsNeeded = total units in the plan
+  results.forEach(function(r){r.unitsNeeded=results.length;});
+
+  renderResults(results);
+  switchTab('results');
+}
+
+function calcFit(it,c){
+  var fits=0, orient=null;
+  if(it.type==='drum'){fits=calcDrum(it,c);}
+  else if(it.type==='roll'||it.type==='pipe'){fits=calcCyl(it,c);}
+  else{var r=calcBox(it,c);fits=r.n;orient=r.o;}
+  return{item:it,fits,needed:it.qty,orient};
+}
+
+// NOTE: per-item grid stats (across/along/layers) now come from packLayout(result).stats,
+// so the results table and the 3D view are always derived from the same packing pass.
+
+// NOTE: item dims are stored in CM; container dims (c.L/W/H) are in MM
+// Helper to get item dims in MM for comparison with container
+function mm(v){return v*10}
+
+function calcBox(it,c){
+  var dims=[mm(it.L),mm(it.W),mm(it.H)];
+  // Rotation flags govern which permutations are allowed.
+  //   rotL = tip around L-axis (swap original W↔H positions)
+  //   rotW = tip around W-axis (swap original L↔H positions)
+  //   rotH = rotate around H-axis (swap original L↔W on the floor)
+  // Each permutation [a,b,c] places original dim index a along container L, b along W, c along H.
+  var rotL=it.rotL!==false, rotW=it.rotW!==false, rotH=it.rotH!==false;
+  var allPerms=[
+    {p:[0,1,2], req:[]},                  // identity (as entered) — always allowed
+    {p:[1,0,2], req:['rotH']},            // L↔W floor swap
+    {p:[0,2,1], req:['rotL']},            // tip around L (W↔H)
+    {p:[2,1,0], req:['rotW']},            // tip around W (L↔H)
+    {p:[1,2,0], req:['rotH','rotL']},     // composite L→W, W→H, H→L
+    {p:[2,0,1], req:['rotW','rotH']}      // composite L→H, W→L, H→W
+  ];
+  var flags={rotL:rotL,rotW:rotW,rotH:rotH};
+  // Subtract pallet deck height so orientation search uses the real available height
+  var palD=(it.usePallet&&it.pallet)?(it.pallet.D||150):0;
+  var qty=it.qty||0;
+
+  // maxN/maxO  = TRUE maximum capacity over every allowed orientation (used for the
+  //              "fits"/capacity report and the Predict popup — always the absolute best).
+  // dispO      = orientation chosen for the ACTUAL loading plan / 3D visual.
+  //              When the cargo all fits, we keep the orientation AS ENTERED (identity)
+  //              if it can hold the whole qty — this matches the operator's real loading
+  //              intent. Otherwise we fall back to the most compact, then to max capacity.
+  var maxN=0, maxO=[dims[0],dims[1],dims[2]];
+  var dispO=null, dispLen=Infinity, identityFits=false;
+
+  allPerms.forEach(function(entry,idx){
+    var p=entry.p, req=entry.req;
+    if(req.length && !req.every(function(r){return flags[r]})) return;
+    var bL=dims[p[0]],bW=dims[p[1]],bH=dims[p[2]];
+    if(!bL||!bW||!bH)return;
+    var effH=c.H-palD;
+    // Cap by pallet max stack height (pallet.H = total height incl. deck)
+    if(it.usePallet&&it.pallet&&(it.pallet.H||0)>palD) effH=Math.min(effH,(it.pallet.H||0)-palD);
+    if(it.maxH2>0)effH=Math.min(effH,mm(it.maxH2));
+    var nx=Math.floor(c.L/bL), ny=Math.floor(c.W/bW);
+    var nz=Math.floor(effH/bH);
+    if(it.maxLayers>0)nz=Math.min(nz,it.maxLayers);
+    var n;
+    if(it.usePallet&&it.pallet){
+      // Capacity = pallet positions in container × boxes per pallet.
+      // Try both pallet orientations; PAL_TOL allows the real-world width squeeze.
+      var pL=it.pallet.L||1200, pW=it.pallet.W||1000, bestP=0;
+      [[pL,pW],[pW,pL]].forEach(function(d){
+        var perRow=Math.floor(c.L/d[0]), pRows=Math.floor((c.W+PAL_TOL)/d[1]);
+        if(perRow<1||pRows<1)return;
+        var bpp=Math.floor(d[0]/bL)*Math.floor(d[1]/bW)*nz;
+        if(perRow*pRows*bpp>bestP)bestP=perRow*pRows*bpp;
+      });
+      n=bestP;
+    }else{
+      n=nx*ny*nz;
+    }
+    if(n<=0)return;
+    // track absolute maximum capacity
+    if(n>maxN){maxN=n;maxO=[bL,bW,bH];}
+    // track display orientation among those that hold the full qty
+    if(qty>0 && n>=qty){
+      var lenUsed=(it.usePallet&&it.pallet)?c.L:Math.ceil(qty/(ny*nz))*bL;
+      if(idx===0){ dispO=[bL,bW,bH]; dispLen=-1; identityFits=true; }   // identity wins outright
+      else if(!identityFits && lenUsed<dispLen){ dispLen=lenUsed; dispO=[bL,bW,bH]; }
+    }
+  });
+
+  // If nothing holds the full qty, load the orientation that fits the most.
+  var o = dispO || maxO;
+  return{n:maxN, o:o};
+}
+
+function calcDrum(it,c){
+  var d=mm(it.D), h=mm(it.H);
+  if(!d||!h)return 0;
+  var palD=(it.usePallet&&it.pallet)?(it.pallet.D||150):0;
+  var effH=c.H-palD;
+  var nx=Math.floor(c.L/d), ny=Math.floor(c.W/d);
+  var nz=Math.floor(effH/h);
+  if(it.maxLayers>0)nz=Math.min(nz,it.maxLayers);
+  var sq=nx*ny*nz;
+  if(it.hexPack){
+    var rowH=d*Math.sin(Math.PI/3);
+    var totalRows=Math.floor((c.W-d/2)/rowH)+1;
+    var odd=Math.ceil(totalRows/2), even=Math.floor(totalRows/2);
+    var r1=Math.floor(c.L/d), r2=Math.floor((c.L-d/2)/d);
+    sq=Math.max(sq,(odd*r1+even*r2)*nz);
+  }
+  var nx2=Math.floor(c.L/h), ny2=Math.floor(c.W/d), nz2=Math.floor(effH/d);
+  return Math.max(sq,nx2*ny2*nz2);
+}
+
+function calcCyl(it,c){
+  var L=mm(it.L), d=mm(it.D);
+  if(!L||!d)return 0;
+  var palD=(it.usePallet&&it.pallet)?(it.pallet.D||150):0;
+  var effH=c.H-palD;
+  var n1=Math.floor(c.L/L)*Math.floor(c.W/d)*Math.floor(effH/d);
+  var n2=Math.floor(c.W/L)*Math.floor(c.L/d)*Math.floor(effH/d);
+  return Math.max(n1,n2);
+}
+
+function itemVol(it){
+  // dims in CM → volume in m³ (1 m = 100 cm → 1 m³ = 1e6 cm³)
+  if(it.type==='drum')return Math.PI*(it.D/200)**2*(it.H/100);
+  if(it.type==='roll'||it.type==='pipe')return Math.PI*(it.D/200)**2*(it.L/100);
+  return it.L*it.W*it.H/1e6;
+}
+
+// ── RESULTS ───────────────────────────────────────────────────────────────────
+function contName(c){return contFull(c);}
+function contSVGImg(c){return c.cat==='sea'?mkContainerSVG(c.L>8000,c.H>2600,getSVGStyle(c.id)):mkTruckSVG(getTruckKind(c.id));}
+
+// SVG donut from segments [{frac,color}]
+function donutSVG(segs,size){
+  var r=size/2-11, cx=size/2, cy=size/2, circ=2*Math.PI*r, off=0;
+  var arcs=segs.filter(s=>s.frac>0).map(function(s){
+    var len=s.frac*circ;
+    var seg='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+s.color+'" stroke-width="20" stroke-dasharray="'+len.toFixed(2)+' '+(circ-len).toFixed(2)+'" stroke-dashoffset="'+(-off).toFixed(2)+'"/>';
+    off+=len; return seg;
+  }).join('');
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'" style="transform:rotate(-90deg)">'+
+    '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="#eef0f3" stroke-width="20"/>'+arcs+'</svg>';
+}
+
+function renderResults(results){
+  var el=document.getElementById('results-area');
+  // totals / placed counts / status are already derived from packLayout in buildResult.
+
+  el.innerHTML=results.map((r,ri)=>{
+    var c=r.c;
+    var volSum=r.items.reduce((a,x)=>a+x.vol,0)||1;
+    var segs=r.items.map(ir=>({frac:ir.vol/volSum,color:ir.item.color}));
+    var totPkg=0,totPcs=0,totAcross=0,totAlong=0,totLayers=0,totVol=0,totWt=0;
+    var layout=packLayout(r);
+    var manifest=r._palletManifest||null;
+    var rows=r.items.map((ir,idx)=>{
+      var gr=layout.stats[idx]||{across:0,along:0,layers:0};
+      var pcsLoaded=ir.packed*(ir.item.pcsPerCtn||1);
+      totPkg+=ir.packed; totPcs+=pcsLoaded;
+      totAcross+=(gr.across||0); totAlong+=(gr.along||0); totLayers+=(gr.layers||0);
+      totVol+=ir.vol; totWt+=ir.wt;
+      // ir.packed = cartons actually placed in this container (from packLayout). If it is
+      // below the ordered qty, show "placed / needed" in orange (the rest needs another unit).
+      var short=ir.packed<ir.needed?' <span style="color:#e65100" title="'+t('warn_3d_partial')+'">/ '+ir.needed.toLocaleString()+'</span>':'';
+      return `<tr>
+        <td><span class="dot" style="background:${ir.item.color}"></span>${esc(ir.item.name)}</td>
+        <td>${getTypeInfo(ir.item.type).emoji} ${ir.packed.toLocaleString()}${short}</td>
+        <td class="r">${pcsLoaded.toLocaleString()}</td>
+        <td class="r">${gr.across||'–'}</td>
+        <td class="r">${gr.along||'–'}</td>
+        <td class="r">${gr.layers||'–'}</td>
+        <td class="r">${ir.vol.toFixed(3)}</td>
+        <td class="r">${ir.wt.toLocaleString(undefined,{maximumFractionDigits:1})}</td>
+      </tr>`;}).join('');
+    var totalRow=`<tr class="res-tot">
+      <td>${t('col_total')}</td>
+      <td>${totPkg.toLocaleString()}</td>
+      <td class="r">${totPcs.toLocaleString()}</td>
+      <td class="r">–</td><td class="r">–</td><td class="r">–</td>
+      <td class="r">${totVol.toFixed(3)}</td>
+      <td class="r">${totWt.toLocaleString(undefined,{maximumFractionDigits:1})}</td>
+    </tr>`;
+
+    return `<div class="res-block">
+      <div class="res-summary">
+        <div class="rs-img">${contSVGImg(c)}</div>
+        <div class="rs-info">
+          <div class="rs-name">${contName(c)}</div>
+          <div class="rs-units">${Number.isFinite(r.unitsNeeded)?r.unitsNeeded:'-'} ${t('unit')}</div>
+          <div class="rs-meta">${t('weight')}: ${r.totWt.toLocaleString(undefined,{maximumFractionDigits:1})} ${t('unit_kg')} &nbsp;•&nbsp; ${t('volume')}: ${r.totVol.toFixed(2)} ${t('unit_m3')}</div>
+        </div>
+        <div class="rs-badge">
+          ${r.recommended?'<span class="badge" style="background:#e8f0fe;color:#1a56db">'+t('recommended')+'</span> ':''}
+          <span class="badge ${r.allFit?'badge-ok':'badge-warn'}">${r.allFit?t('fit_all'):t('fit_partial')}</span>
+        </div>
+      </div>
+      <div class="res-detail">
+        <div class="rd-top">
+          <div class="rd-left">
+            <div class="rd-title">${contName(c)} #${ri+1}</div>
+            <canvas id="cv-${ri}" width="480" height="300"></canvas>
+            <div class="rd-units">${r.totPkg.toLocaleString()} ${t('unit')}</div>
+            <button class="btn btn-outline btn-sm" style="width:100%" onclick="open3DViewer(${ri})">${t('view3d')}</button>
+          </div>
+          <div class="rd-totals">
+            <div class="tot-row">${t('total_pkg_pre')} <b>${r.totPkg.toLocaleString()} ${t('total_pkg_post')}</b></div>
+            <div class="tot-row">${t('cargo_vol')}: <b>${r.totVol.toFixed(2)} ${t('unit_m3')}</b> <span class="tot-pct">(${r.volPct.toFixed(1)}% ${t('vol_of')})</span>
+              <div class="progress" style="margin-top:5px"><div class="progress-fill ${r.volPct>100?'fill-red':r.volPct>=70?'fill-green':'fill-blue'}" style="width:${Math.min(r.volPct,100)}%"></div></div>
+            </div>
+            <div class="tot-row">${t('cargo_wt')}: <b>${r.totWt.toLocaleString(undefined,{maximumFractionDigits:1})} ${t('unit_kg')}</b> <span class="tot-pct">(${r.wtPct.toFixed(1)}% ${t('wt_of')})</span>
+              <div class="progress" style="margin-top:5px"><div class="progress-fill ${r.wtPct>100?'fill-red':r.wtPct>85?'fill-orange':'fill-green'}" style="width:${Math.min(r.wtPct,100)}%"></div></div>
+            </div>
+            <div class="tot-row" style="color:#98a2b3;font-size:12px">${t('inside_dims')} ${c.L}×${c.W}×${c.H} ${t('unit_mm')} • ${t('cont_vol')} ${c.vol} ${t('unit_m3')} • ${t('cont_cap')} ${c.maxW.toLocaleString()} ${t('unit_kg')}</div>
+          </div>
+        </div>
+        <hr class="rd-divider">
+        <div class="rd-bottom">
+          <div class="donut-wrap">
+            ${donutSVG(segs,170)}
+            <div class="donut-center"><b>${r.volPct.toFixed(0)}%</b>${t('volume')}</div>
+          </div>
+          <table class="res-table">
+            <thead><tr><th>${t('col_name')}</th><th>${t('col_pkg')}</th><th class="r">${t('col_pcs')}</th><th class="r">${t('col_acrossW')}</th><th class="r">${t('col_alongL')}</th><th class="r">${t('col_layers')}</th><th class="r">${t('col_vol')}</th><th class="r">${t('col_wt')}</th></tr></thead>
+            <tbody>${rows}${totalRow}</tbody>
+          </table>
+        </div>
+        ${manifest?`<hr class="rd-divider">
+        <div class="pm-wrap">
+          <div class="pm-title">${t('pm_title')} (${manifest.length} ${LANG==='en'?'pallets':'พาเลท'})</div>
+          <div class="pm-grid">
+            ${manifest.map(pm=>`<div class="pm-card">
+              <div class="pm-card-hdr">
+                <span class="pm-card-num">${t('pm_pallet')} ${pm.palIdx}</span>
+                <span class="pm-card-gw">G.W. ${pm.gw.toFixed(2)} ${t('unit_kg')}</span>
+              </div>
+              <div class="pm-card-dims">${pm.L}×${pm.W}×${pm.H} ${t('unit_mm')} &nbsp;|&nbsp; ${t('pm_tare')}: ${pm.tare.toFixed(2)} ${t('unit_kg')}</div>
+              ${pm.products.map(p=>`<div class="pm-product-row">
+                <span class="dot" style="background:${p.color}"></span>
+                <span>${esc(p.name)}</span>
+                <span class="pm-product-qty">${p.placed} ${t('col_pkg')} &nbsp; ${(p.pcs||p.placed).toLocaleString()} ${t('pm_pcs')} &nbsp; ${p.wt.toFixed(1)} ${t('unit_kg')}</span>
+              </div>`).join('')}
+            </div>`).join('')}
+          </div>
+        </div>`:''}
+      </div>
+      <div class="res-footer">
+        <button class="btn btn-outline" onclick="switchTab('containers')">${t('back')}</button>
+        <button class="btn btn-outline" onclick="doExportPDF()">${t('export_pdf')}</button>
+        <button class="btn btn-outline" onclick="doCopyRequest()">${t('copy_req')}</button>
+        <button class="btn btn-outline" onclick="doExportCIPL(${ri})">${t('export_cipl')}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  window._lastResults=results;
+  setTimeout(()=>results.forEach((r,ri)=>{
+    var cv=document.getElementById('cv-'+ri);
+    if(cv)render3D(cv,r,VIEW_YAW,VIEW_PITCH,1);
+  }),80);
+}
+
+// Export the packing result as a JSON pre-filled skeleton matching the
+// ci-pl-generator skill's schema. The calculator knows product code/description,
+// carton quantities actually PLACED in this container, per-carton weight, and box
+// dimensions — but has no way to know trade-specific fields (consignee, price,
+// Incoterm, ports, MFG/EXP/LOT), so those are left blank for the user to fill in
+// (with Claude's help) before running generate_ci_pl.py.
+// ── CI/PL saved profiles (localStorage) ──────────────────────────────────────
+// Manager-facing "saved profiles" so consignee address + per-SKU price/net-weight
+// don't have to be re-typed (or re-asked from Claude) on every single shipment.
+var CIPL_LS_CONSIGNEES='kob_cipl_consignees_v1', CIPL_LS_TRADE='kob_cipl_sku_trade_v1', CIPL_LS_PAYMENT='kob_cipl_payment_v1';
+function ciplGetConsignees(){ try{return JSON.parse(localStorage.getItem(CIPL_LS_CONSIGNEES))||[];}catch(e){return [];} }
+function ciplSaveConsignees(list){ localStorage.setItem(CIPL_LS_CONSIGNEES, JSON.stringify(list)); }
+function ciplGetTrade(){ try{return JSON.parse(localStorage.getItem(CIPL_LS_TRADE))||{};}catch(e){return {};} }
+function ciplSaveTrade(map){ localStorage.setItem(CIPL_LS_TRADE, JSON.stringify(map)); }
+function ciplGetPayment(){ try{return JSON.parse(localStorage.getItem(CIPL_LS_PAYMENT))||null;}catch(e){return null;} }
+function ciplSavePayment(p){ localStorage.setItem(CIPL_LS_PAYMENT, JSON.stringify(p)); }
+
+function doExportCIPL(ri){
+  var r=(window._lastResults||[])[ri]; if(!r)return;
+  var manifest=r._palletManifest||null;   // one entry per PHYSICAL pallet, from packLayout
+  var trade=ciplGetTrade();
+  var items=[];
+  r.items.forEach(function(ir,idx){
+    if(ir.packed<=0)return;
+    var it=ir.item, sep=' — ';
+    var si=(it.name||'').indexOf(sep);
+    var code=si>=0?it.name.slice(0,si).trim():'';
+    var desc=si>=0?it.name.slice(si+sep.length).trim():(it.name||'');
+    var pcsPerCtn=it.pcsPerCtn||1;
+    var saved=trade[code]||{};
+    var entry={
+      product_code:code, description:desc,
+      qty_pcs:ir.packed*pcsPerCtn,
+      price_unit:(saved.price_unit!=null?saved.price_unit:null),
+      pcs_per_ctn:pcsPerCtn,
+      nw_per_ctn:(saved.nw_per_ctn!=null?saved.nw_per_ctn:null),
+      gw_per_ctn:it.weight||0,
+      box_dims_cm:[it.W,it.L,it.H]
+    };
+    // Pallet mode: reconstruct the REAL per-pallet split (one "lot" per physical
+    // pallet this SKU actually landed on, correctly splitting mixed pallets) instead
+    // of a single fabricated lot per SKU — otherwise the exported PL shows far fewer
+    // rows than the pallets actually computed in the 3D result.
+    if(manifest){
+      var lots=[];
+      manifest.forEach(function(pm){
+        pm.products.forEach(function(p){
+          if(p.idx===idx)lots.push({qty_pcs:p.pcs,mfg:'',exp:'',lot_no:'',pallet_no:pm.palIdx});
+        });
+      });
+      if(lots.length)entry.lots=lots;
+    }
+    items.push(entry);
+  });
+  var pay=ciplGetPayment()||{term:'',bank_name:'',account_name:'',account_no:'',swift:''};
+  var data={
+    container_ref:contName(r.c)+' #'+(ri+1),
+    ci_no:'', so_no:'', date:new Date().toISOString().slice(0,10),
+    consignee_short:'', consignee:{name:'',address:'',tel:'',email:''},
+    notify_party:'Same as Consignee', ref_po:'',
+    port_loading:'Port of Bangkok, Thailand', port_destination:'', vessel:'-',
+    origin:'Thailand', incoterm:'FOB', currency:'USD',
+    to_city:'', to_country:'', from_city:'Bangkok', from_country:'Thailand',
+    pl_style:manifest?'pallet':'container', units_count:manifest?manifest.length:1,
+    items:items, remarks:[], payment:pay, shipping_marks:[]
+  };
+  window._ciplDraft={ri:ri, r:r, data:data};
+  openCIPLModal();
+}
+
+function ciplUtilHTML(r){
+  return '<div style="display:flex;gap:18px;font-size:12.5px;color:#667085;margin-bottom:12px">'+
+    '<span>'+t('cipl_util_vol')+': <b style="color:#1a56db">'+r.volPct.toFixed(1)+'%</b></span>'+
+    '<span>'+t('cipl_util_wt')+': <b style="color:#1a56db">'+r.wtPct.toFixed(1)+'%</b></span>'+
+    '<span>'+t('total_pkg_pre')+' <b>'+r.totPkg.toLocaleString()+'</b> '+t('total_pkg_post')+'</span>'+
+  '</div>';
+}
+
+function openCIPLModal(){
+  var d=window._ciplDraft.data, r=window._ciplDraft.r;
+  var profiles=ciplGetConsignees();
+  var profOpts='<option value="">— '+t('cipl_new_profile')+' —</option>'+profiles.map(function(p,i){
+    return '<option value="'+i+'">'+esc(p.name)+'</option>';
+  }).join('');
+  var itemRows=d.items.map(function(it,idx){
+    var badPrice=it.price_unit==null, badNw=it.nw_per_ctn==null;
+    return '<tr>'+
+      '<td>'+esc(it.product_code)+'</td>'+
+      '<td style="max-width:220px;white-space:normal">'+esc(it.description)+'</td>'+
+      '<td class="r">'+it.qty_pcs.toLocaleString()+'</td>'+
+      '<td><input type="number" step="0.001" id="cipl-price-'+idx+'" class="'+(badPrice?'bad':'')+'" value="'+(it.price_unit!=null?it.price_unit:'')+'"></td>'+
+      '<td><input type="number" step="0.01" id="cipl-nw-'+idx+'" class="'+(badNw?'bad':'')+'" value="'+(it.nw_per_ctn!=null?it.nw_per_ctn:'')+'"></td>'+
+      '<td><input type="number" step="0.01" id="cipl-gw-'+idx+'" value="'+it.gw_per_ctn+'"></td>'+
+    '</tr>';
+  }).join('');
+  var pay=d.payment;
+  var html=''+
+    ciplUtilHTML(r)+
+    '<div id="cipl-warnings"></div>'+
+    '<div class="fs"><div class="fs-title">'+t('cipl_sec_consignee')+'</div>'+
+      '<div class="cipl-profile-row"><select id="cipl-profile-select" onchange="ciplPickProfile(this.value)">'+profOpts+'</select>'+
+        '<button class="btn btn-outline btn-sm" onclick="ciplSaveProfile()">'+t('cipl_save_profile_btn')+'</button></div>'+
+      '<div class="form-grid-2">'+
+        '<div class="fg"><span class="fl">'+(LANG==='en'?'Consignee Name':'ชื่อผู้ซื้อ')+'</span><input class="fi" id="cipl-name" value="'+esc(d.consignee.name)+'"></div>'+
+        '<div class="fg"><span class="fl">Tel / Email</span><input class="fi" id="cipl-tel" placeholder="Tel" value="'+esc(d.consignee.tel)+'" style="margin-bottom:4px"><input class="fi" id="cipl-email" placeholder="Email" value="'+esc(d.consignee.email)+'"></div>'+
+      '</div>'+
+      '<div class="fg" style="margin-top:8px"><span class="fl">Address</span><input class="fi" id="cipl-address" value="'+esc(d.consignee.address)+'"></div>'+
+    '</div>'+
+    '<div class="fs"><div class="fs-title">'+t('cipl_sec_shipment')+'</div>'+
+      '<div class="form-grid">'+
+        '<div class="fg"><span class="fl">CI No.</span><input class="fi" id="cipl-ci-no" value="'+esc(d.ci_no)+'"></div>'+
+        '<div class="fg"><span class="fl">SO No.</span><input class="fi" id="cipl-so-no" value="'+esc(d.so_no)+'"></div>'+
+        '<div class="fg"><span class="fl">Ref. PO</span><input class="fi" id="cipl-ref-po" value="'+esc(d.ref_po)+'"></div>'+
+        '<div class="fg"><span class="fl">Date</span><input class="fi" type="date" id="cipl-date" value="'+esc(d.date)+'"></div>'+
+        '<div class="fg"><span class="fl">Port of Loading</span><input class="fi" id="cipl-port-loading" value="'+esc(d.port_loading)+'"></div>'+
+        '<div class="fg"><span class="fl">Port of Destination</span><input class="fi" id="cipl-port-dest" value="'+esc(d.port_destination)+'"></div>'+
+        '<div class="fg"><span class="fl">To City</span><input class="fi" id="cipl-to-city" value="'+esc(d.to_city)+'"></div>'+
+        '<div class="fg"><span class="fl">To Country</span><input class="fi" id="cipl-to-country" value="'+esc(d.to_country)+'"></div>'+
+        '<div class="fg"><span class="fl">Incoterm</span><input class="fi" id="cipl-incoterm" value="'+esc(d.incoterm)+'"></div>'+
+        '<div class="fg"><span class="fl">Currency</span><input class="fi" id="cipl-currency" value="'+esc(d.currency)+'"></div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="fs"><div class="fs-title">'+t('cipl_sec_items')+'</div>'+
+      '<div style="overflow-x:auto"><table class="cipl-table"><thead><tr>'+
+        '<th>Code</th><th>Description</th><th class="r">Qty (pcs)</th><th>'+t('cipl_col_price')+'</th><th>'+t('cipl_col_nw')+'</th><th>'+t('cipl_col_gw')+'</th>'+
+      '</tr></thead><tbody>'+itemRows+'</tbody></table></div>'+
+    '</div>'+
+    '<div class="fs"><div class="fs-title">'+t('cipl_sec_payment')+'</div>'+
+      '<div class="form-grid">'+
+        '<div class="fg" style="grid-column:span 3"><span class="fl">Payment Term</span><input class="fi" id="cipl-pay-term" value="'+esc(pay.term)+'"></div>'+
+        '<div class="fg"><span class="fl">Bank Name</span><input class="fi" id="cipl-pay-bank" value="'+esc(pay.bank_name)+'"></div>'+
+        '<div class="fg"><span class="fl">Account Name</span><input class="fi" id="cipl-pay-acct-name" value="'+esc(pay.account_name)+'"></div>'+
+        '<div class="fg"><span class="fl">Account No.</span><input class="fi" id="cipl-pay-acct-no" value="'+esc(pay.account_no)+'"></div>'+
+        '<div class="fg"><span class="fl">Swift Code</span><input class="fi" id="cipl-pay-swift" value="'+esc(pay.swift)+'"></div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="fs"><div class="fs-title">'+t('cipl_sec_notes')+'</div>'+
+      '<div class="two-col">'+
+        '<div class="fg"><span class="fl">Remarks (1 บรรทัด/ข้อ)</span><textarea class="fi" id="cipl-remarks" rows="3"></textarea></div>'+
+        '<div class="fg"><span class="fl">Shipping Marks (1 บรรทัด/ข้อ)</span><textarea class="fi" id="cipl-marks" rows="3"></textarea></div>'+
+      '</div>'+
+    '</div>';
+  document.getElementById('cipl-modal-body').innerHTML=html;
+  document.getElementById('cipl-modal').classList.add('open');
+  ciplRenderWarnings();
+}
+function closeCIPLModal(){ document.getElementById('cipl-modal').classList.remove('open'); }
+
+function ciplPickProfile(idx){
+  var d=window._ciplDraft.data;
+  if(idx===''){ return; }
+  var p=ciplGetConsignees()[+idx]; if(!p)return;
+  document.getElementById('cipl-name').value=p.name||'';
+  document.getElementById('cipl-address').value=p.address||'';
+  document.getElementById('cipl-tel').value=p.tel||'';
+  document.getElementById('cipl-email').value=p.email||'';
+  if(p.port_destination)document.getElementById('cipl-port-dest').value=p.port_destination;
+  if(p.to_city)document.getElementById('cipl-to-city').value=p.to_city;
+  if(p.to_country)document.getElementById('cipl-to-country').value=p.to_country;
+  if(p.incoterm)document.getElementById('cipl-incoterm').value=p.incoterm;
+  if(p.currency)document.getElementById('cipl-currency').value=p.currency;
+}
+
+function ciplSaveProfile(){
+  var name=document.getElementById('cipl-name').value.trim();
+  if(!name){ alert(LANG==='en'?'Enter consignee name first':'กรอกชื่อผู้ซื้อก่อน'); return; }
+  var profile={
+    name:name, address:document.getElementById('cipl-address').value.trim(),
+    tel:document.getElementById('cipl-tel').value.trim(), email:document.getElementById('cipl-email').value.trim(),
+    port_destination:document.getElementById('cipl-port-dest').value.trim(),
+    to_city:document.getElementById('cipl-to-city').value.trim(), to_country:document.getElementById('cipl-to-country').value.trim(),
+    incoterm:document.getElementById('cipl-incoterm').value.trim(), currency:document.getElementById('cipl-currency').value.trim()
+  };
+  var list=ciplGetConsignees();
+  var existing=list.findIndex(function(p){return p.name===name;});
+  if(existing>=0)list[existing]=profile; else list.push(profile);
+  ciplSaveConsignees(list);
+  var sel=document.getElementById('cipl-profile-select');
+  sel.innerHTML='<option value="">— '+t('cipl_new_profile')+' —</option>'+list.map(function(p,i){
+    return '<option value="'+i+'"'+(p.name===name?' selected':'')+'>'+esc(p.name)+'</option>';
+  }).join('');
+  alert(LANG==='en'?'Profile saved.':'บันทึกโปรไฟล์แล้ว');
+}
+
+// Read the modal's current field values into window._ciplDraft.data, returning it.
+function ciplCollect(){
+  var d=window._ciplDraft.data;
+  d.consignee={name:document.getElementById('cipl-name').value.trim(),address:document.getElementById('cipl-address').value.trim(),
+    tel:document.getElementById('cipl-tel').value.trim(),email:document.getElementById('cipl-email').value.trim()};
+  d.consignee_short=d.consignee.name.split(' ')[0]||d.consignee.name;
+  d.ci_no=document.getElementById('cipl-ci-no').value.trim();
+  d.so_no=document.getElementById('cipl-so-no').value.trim();
+  d.ref_po=document.getElementById('cipl-ref-po').value.trim();
+  d.date=document.getElementById('cipl-date').value||d.date;
+  d.port_loading=document.getElementById('cipl-port-loading').value.trim();
+  d.port_destination=document.getElementById('cipl-port-dest').value.trim();
+  d.to_city=document.getElementById('cipl-to-city').value.trim();
+  d.to_country=document.getElementById('cipl-to-country').value.trim();
+  d.incoterm=document.getElementById('cipl-incoterm').value.trim();
+  d.currency=document.getElementById('cipl-currency').value.trim();
+  d.payment={
+    term:document.getElementById('cipl-pay-term').value.trim(), bank_name:document.getElementById('cipl-pay-bank').value.trim(),
+    account_name:document.getElementById('cipl-pay-acct-name').value.trim(), account_no:document.getElementById('cipl-pay-acct-no').value.trim(),
+    swift:document.getElementById('cipl-pay-swift').value.trim()
+  };
+  d.remarks=document.getElementById('cipl-remarks').value.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  d.shipping_marks=document.getElementById('cipl-marks').value.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  d.items.forEach(function(it,idx){
+    var pv=parseFloat(document.getElementById('cipl-price-'+idx).value);
+    var nv=parseFloat(document.getElementById('cipl-nw-'+idx).value);
+    var gv=parseFloat(document.getElementById('cipl-gw-'+idx).value);
+    it.price_unit=isNaN(pv)?null:pv;
+    it.nw_per_ctn=isNaN(nv)?null:nv;
+    it.gw_per_ctn=isNaN(gv)?it.gw_per_ctn:gv;
+  });
+  return d;
+}
+
+function ciplValidate(d){
+  var problems=[];
+  if(!d.ci_no)problems.push('CI No. '+(LANG==='en'?'is required':'ต้องกรอก'));
+  if(!d.consignee.name)problems.push((LANG==='en'?'Consignee name is required':'ต้องกรอกชื่อผู้ซื้อ'));
+  if(!d.port_destination)problems.push('Port of Destination '+(LANG==='en'?'is required':'ต้องกรอก'));
+  d.items.forEach(function(it){
+    if(it.price_unit==null)problems.push(it.product_code+': '+(LANG==='en'?'price/unit missing':'ยังไม่มีราคา/หน่วย'));
+    if(it.nw_per_ctn==null)problems.push(it.product_code+': '+(LANG==='en'?'net weight/carton missing':'ยังไม่มี Net Weight/กล่อง'));
+  });
+  return problems;
+}
+
+function ciplRenderWarnings(){
+  var d=window._ciplDraft.data;
+  var problems=ciplValidate(d);
+  var box=document.getElementById('cipl-warnings');
+  if(problems.length){
+    box.innerHTML='<div class="cipl-warn"><b>'+t('cipl_warn_title')+'</b><ul>'+problems.map(function(p){return '<li>'+esc(p)+'</li>';}).join('')+'</ul></div>';
+  }else{
+    box.innerHTML='<div class="cipl-ok">✅ '+t('cipl_ok_title')+'</div>';
+  }
+  return problems;
+}
+
+function ciplConfirmExport(){
+  var d=ciplCollect();
+  var problems=ciplValidate(d);
+  ciplRenderWarnings();
+  if(problems.length){
+    // Highlight the offending item inputs; let the manager fix and press Confirm again.
+    d.items.forEach(function(it,idx){
+      document.getElementById('cipl-price-'+idx).classList.toggle('bad', it.price_unit==null);
+      document.getElementById('cipl-nw-'+idx).classList.toggle('bad', it.nw_per_ctn==null);
+    });
+    return;
+  }
+  // Save reusable profiles so next shipment auto-fills.
+  var trade=ciplGetTrade();
+  d.items.forEach(function(it){ trade[it.product_code]={price_unit:it.price_unit,nw_per_ctn:it.nw_per_ctn}; });
+  ciplSaveTrade(trade);
+  ciplSavePayment(d.payment);
+
+  var blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='cipl_data_'+d.container_ref.replace(/[^a-z0-9]+/gi,'_')+'.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+  closeCIPLModal();
+  alert(t('cipl_saved_toast'));
+}
+function doExportPDF(){window.print();}
+function doCopyRequest(){
+  var lines=[];
+  (window._lastResults||[]).forEach(function(r){
+    lines.push(contName(r.c)+' × '+(r.unitsNeeded||1)+' '+t('unit'));
+    r.items.forEach(function(ir){
+      lines.push('  - '+ir.item.name+': '+ir.packed.toLocaleString()+'/'+ir.needed.toLocaleString()+' ('+ir.vol.toFixed(3)+' '+t('unit_m3')+')');
+    });
+    lines.push('  '+t('total_pkg_pre')+' '+r.totPkg.toLocaleString()+' '+t('total_pkg_post')+' | '+r.totVol.toFixed(2)+' '+t('unit_m3')+' | '+r.totWt.toLocaleString(undefined,{maximumFractionDigits:1})+' '+t('unit_kg'));
+    lines.push('');
+  });
+  var txt=lines.join('\n').trim();
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(()=>alert(t('copied')),()=>alert(t('copy_fail')));
+  }else{alert(txt);}
+}
+
+// ── 3D PERSPECTIVE PACKING RENDER ───────────────────────────────────────────────
+// Default view: low camera looking down the container's length. The near/inner end
+// (x=0, where the top layer is stacked) sits at the LEFT and large; the body recedes
+// to the RIGHT and shrinks with PERSPECTIVE convergence. pitch is shallow so the long
+// side face dominates with just a sliver of the top — matching a real "look inside".
+var VIEW_YAW=0.62, VIEW_PITCH=0.12;
+// PERSP_K controls perspective strength: focal = PERSP_K × depth-extent.
+// Smaller = stronger convergence. far/near size ratio = K/(K+1).
+var PERSP_K=1.2;
+
+// Rotate a world point (mm) into view space: hx=horizontal, vy=vertical, dep=depth(+far).
+function rot3D(x,y,z,st){
+  var X=x-st.cx3, Y=y-st.cy3, Z=z-st.cz3;
+  var cyaw=Math.cos(st.yaw), syaw=Math.sin(st.yaw);
+  var x1=X*cyaw - Y*syaw;
+  var y1=X*syaw + Y*cyaw;
+  var cp=Math.cos(st.pitch), sp=Math.sin(st.pitch);
+  var y2=y1*cp - Z*sp;
+  var z2=y1*sp + Z*cp;
+  return {hx:x1, vy:z2, dep:y2};
+}
+// Project to screen with a perspective divide (nearer = larger). depth kept for sorting.
+function project3D(x,y,z,st){
+  var r=rot3D(x,y,z,st);
+  var pf=1;
+  if(st.focal>0) pf=st.focal/(st.focal + (r.dep - st.depMin));
+  return {sx:st.px + r.hx*st.scale*pf, sy:st.py - r.vy*st.scale*pf, depth:r.dep};
+}
+function makeState(canvas,c,yaw,pitch,zoom){
+  var st={yaw:yaw,pitch:pitch,scale:1,px:0,py:0,cx3:c.L/2,cy3:c.W/2,cz3:c.H/2,focal:0,depMin:0};
+  var pts=[[0,0,0],[c.L,0,0],[0,c.W,0],[c.L,c.W,0],[0,0,c.H],[c.L,0,c.H],[0,c.W,c.H],[c.L,c.W,c.H]];
+  // pass 1 — raw depths to size the perspective frustum
+  var raw=pts.map(function(p){return rot3D(p[0],p[1],p[2],st)});
+  var deps=raw.map(function(r){return r.dep});
+  var dmin=Math.min.apply(null,deps), dmax=Math.max.apply(null,deps);
+  st.depMin=dmin;
+  st.focal=(dmax>dmin)?PERSP_K*(dmax-dmin):0;
+  // pass 2 — project corners (scale=1) WITH perspective, then fit to canvas
+  var pc=pts.map(function(p){return project3D(p[0],p[1],p[2],st)});
+  var xs=pc.map(function(p){return p.sx}), ys=pc.map(function(p){return p.sy});
+  var minx=Math.min.apply(null,xs),maxx=Math.max.apply(null,xs);
+  var miny=Math.min.apply(null,ys),maxy=Math.max.apply(null,ys);
+  var pad=26;
+  var sc=Math.min((canvas.width-pad*2)/(maxx-minx||1),(canvas.height-pad*2)/(maxy-miny||1))*(zoom||1);
+  st.scale=sc;
+  st.px=canvas.width/2 - ((minx+maxx)/2)*sc;
+  st.py=canvas.height/2 - ((miny+maxy)/2)*sc;
+  return st;
+}
+function shade(hex,f){
+  hex=(hex||'#4CAF50').replace('#','');
+  if(hex.length===3)hex=hex.split('').map(function(x){return x+x}).join('');
+  var r=parseInt(hex.substr(0,2),16),g=parseInt(hex.substr(2,2),16),b=parseInt(hex.substr(4,2),16);
+  r=Math.min(255,Math.round(r*f));g=Math.min(255,Math.round(g*f));b=Math.min(255,Math.round(b*f));
+  return 'rgb('+r+','+g+','+b+')';
+}
+function itemBoxMM(it,orient){
+  if(it.type==='drum')return[mm(it.D),mm(it.D),mm(it.H)];
+  if(it.type==='roll'||it.type==='pipe')return[mm(it.L),mm(it.D),mm(it.D)];
+  return Array.isArray(orient)?orient:[mm(it.L),mm(it.W),mm(it.H)];
+}
+// ── Packer (visualization layout) ────────────────────────────────────────────
+// Source of truth for the 3D blocks AND the table's across/along/layers columns ONLY.
+// (Capacity ir.fits / ir.packed comes from packLayout's `placed`; see buildResult.)
+//
+// Non-pallet items: global LAYER filling — layer 1 fills the entire floor inner→door,
+// then layer 2 the same way, bottom-up. SKUs are processed bulkiest-first and each SKU
+// continues exactly where the previous one ended (same layer when box heights match).
+// Pallet items: multiple SKUs share pallets, stacked vertically up to pallet.H, pallets
+// tiled along the container length; also produces result._palletManifest for the report.
+// Returns {blocks, stats} where stats[itemIndex] = {across, along, layers, placed}.
+function packLayout(result){
+  if(result._layout)return result._layout;
+  var c=result.c, blocks=[], stats={}, offsetX=0;
+
+  var items=[];
+  result.items.forEach(function(ir,idx){
+    stats[idx]={across:0,along:0,layers:0,placed:0};   // default (skipped/zero)
+    if(!ir.fits)return;
+    var it=ir.item;
+    var d=itemBoxMM(it,ir.orient), bL=d[0],bW=d[1],bH=d[2];
+    if(bL<=0||bW<=0||bH<=0)return;
+    var placed=Math.min(ir.fits||0, it.qty||0);
+    if(placed<=0)return;
+    var palD=0, palColor='#8d6e63';
+    if(it.usePallet && it.pallet){ palD=it.pallet.D||150; palColor=it.pallet.color||'#8d6e63'; }
+    var effH=c.H-palD;
+    // Cap by pallet max stack height (pallet.H = boxes + deck combined, default 2000mm = 200cm)
+    if(it.usePallet&&it.pallet&&(it.pallet.H||0)>palD) effH=Math.min(effH,(it.pallet.H||0)-palD);
+    if(it.maxH2>0)effH=Math.min(effH,mm(it.maxH2));
+    // Pallet mode: the per-pallet grid is decided in the pallet section below
+    // (orientation-aware) — keep a permissive placeholder so the item isn't rejected early
+    var nW;
+    if(it.usePallet&&it.pallet){
+      nW=Math.max(1,Math.floor(Math.max(it.pallet.L||1200,it.pallet.W||1000)/bW));
+    }else{
+      nW=Math.floor(c.W/bW);
+    }
+    var nH=Math.floor(effH/bH);
+    if(it.maxLayers>0)nH=Math.min(nH,it.maxLayers);
+    if(nW<1||nH<1)return;
+    items.push({idx:idx,it:it,bL:bL,bW:bW,bH:bH,nW:nW,nH:nH,placed:placed,effH:effH,
+      palD:palD,palColor:palColor,colDemand:Math.ceil(placed/nW),perBoxWt:it.weight||0});
+  });
+  if(!items.length){ result._layout={blocks:blocks,stats:stats}; return result._layout; }
+
+  // Bulkiest SKU first → largest base, laid at the inner wall.
+  items.sort(function(a,b){ return (b.placed*b.bL*b.bW*b.bH)-(a.placed*a.bL*a.bW*a.bH); });
+
+  // Shared layer count so the zones tile the full container length (fill toward the door).
+  // Raise gLayers until every zone fits side-by-side within the length — this stops the last
+  // (smallest) SKU from being squeezed into a single column and stacked into a thin tower.
+  var stdItems=items.filter(function(P){ return !(P.it.usePallet&&P.it.pallet); });
+  var palItems=items.filter(function(P){ return !!(P.it.usePallet&&P.it.pallet); });
+
+  // ─── Pallet items: pack multiple SKUs onto shared pallets, stacked vertically ───
+  // Same no-gap principle as the container layer packer, scoped to each pallet:
+  // per-pallet 3-axis cursor (pz height, px column mm, py boxes across). The open
+  // partial column/layer left by one SKU is COMPLETED by the next SKU before it
+  // moves on — no voids between SKUs on the same pallet.
+  if(palItems.length>0){
+    var pal0=palItems[0].it.pallet;
+    var pL0=pal0.L||1200, pW0=pal0.W||1000, palD0=pal0.D||150;
+    var palMaxH=pal0.H||2000, palTare=pal0.tare||5.2;
+    var availH=palMaxH-palD0;
+
+    // Pick the pallet orientation that fits the most positions in the container
+    // (with PAL_TOL width squeeze). 20'GP + 1200×1000 → 1000-side along the length:
+    // 2 rows × 5 per row = 10 positions. Placement is capped at this count — anything
+    // beyond it is reported as NOT loaded (partial), never drawn outside the container.
+    var cfg=null;
+    [[pL0,pW0],[pW0,pL0]].forEach(function(d){
+      var perRow=Math.floor(c.L/d[0]), pRows=Math.floor((c.W+PAL_TOL)/d[1]);
+      if(perRow<1||pRows<1)return;
+      if(!cfg||perRow*pRows>cfg.n)cfg={along:d[0],across:d[1],perRow:perRow,rows:pRows,n:perRow*pRows};
+    });
+    if(cfg){
+      var along=cfg.along, across=cfg.across, pRows=cfg.rows, maxPallets=cfg.n;
+      // row Y positions: first row hugs y=0, last row hugs the far wall (absorbs PAL_TOL)
+      var rowY=function(row){ return pRows>1 ? Math.round(row*(c.W-across)/(pRows-1)) : 0; };
+
+      function makePal(){ return {sky:[{x0:0,x1:along,z:0}],places:[],counts:{}}; }
+      function palTop(pal){ var t=0; pal.places.forEach(function(q){ if(q.z0+q.H>t)t=q.z0+q.H; }); return t; }
+      function palAddCount(pal,P,n){
+        if(!pal.counts[P.idx])pal.counts[P.idx]={P:P,placed:0};
+        pal.counts[P.idx].placed+=n;
+      }
+      function skyRaisePal(pal,x0,x1,newZ){
+        var out=[];
+        pal.sky.forEach(function(s){
+          if(s.x1<=x0||s.x0>=x1){ out.push(s); return; }
+          if(s.x0<x0)out.push({x0:s.x0,x1:x0,z:s.z});
+          if(s.x1>x1)out.push({x0:x1,x1:s.x1,z:s.z});
+        });
+        out.push({x0:x0,x1:x1,z:newZ});
+        out.sort(function(a,b){return a.x0-b.x0;});
+        var merged=[];
+        out.forEach(function(s){
+          var last=merged[merged.length-1];
+          if(last&&last.z===s.z&&last.x1===s.x0)last.x1=s.x1;
+          else merged.push({x0:s.x0,x1:s.x1,z:s.z});
+        });
+        pal.sky=merged;
+      }
+      // GLOBAL GREEDY fill across multiple SKUs sharing a rolling sequence of pallets —
+      // same architecture as the container's skyline packer (see Lesson 18/19 in the
+      // ci-pl-generator skill). Filling one SKU completely before starting the next
+      // (the old per-SKU-sequential approach) left deep frozen gaps: once a segment
+      // became too narrow for the SKU currently being placed, it sat untouched at a low
+      // height for the rest of that SKU's run, producing exactly the floating-gap look
+      // seen on mixed pallets. Here every step re-scans for the lowest surface in the
+      // CURRENT pallet and lets the first-fitting active SKU (priority = array order)
+      // claim it immediately — a segment only gets skipped when NOTHING fits it right
+      // now, and a new pallet only opens when NOTHING fits ANYWHERE in the current one.
+      function fillPalletsGreedy(pallets,actives,maxCount,capOf){
+        if(!pallets.length)pallets.push(makePal());
+        var guard=0;
+        while(actives.some(function(a){return a.remaining>0;})&&guard++<200000){
+          var cur=pallets[pallets.length-1];
+          var i;
+          // 1) always resolve any pending partial-width column first, using its own
+          // stored pallet+coordinates directly (never by re-matching against a skyline).
+          var openA=null;
+          for(i=0;i<actives.length;i++){ if(actives[i].remaining>0&&actives[i].openCol){ openA=actives[i]; break; } }
+          if(openA){
+            var oc=openA.openCol, bW=openA.P.bW, nWp=Math.max(1,Math.floor(across/bW));
+            var fill=Math.min(openA.remaining,nWp-oc.cy);
+            oc.pal.places.push({color:openA.P.it.color,x0:oc.x,y0:oc.cy*bW,z0:oc.z,L:openA.P.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
+            oc.cy+=fill; openA.remaining-=fill; openA.placedHere+=fill; palAddCount(oc.pal,openA.P,fill);
+            openA.zSeen[(pallets.indexOf(oc.pal))+':'+oc.z]=1;
+            if(oc.cy>=nWp)openA.openCol=null;
+            continue;
+          }
+          // 2) lowest surface in the CURRENT pallet
+          var seg=null;
+          cur.sky.forEach(function(s){ if(!seg||s.z<seg.z||(s.z===seg.z&&s.x0<seg.x0))seg=s; });
+          var a=null;
+          if(seg){
+            for(i=0;i<actives.length;i++){
+              var c2=actives[i];
+              if(c2.remaining<=0)continue;
+              if(seg.x1-seg.x0<c2.P.bL)continue;
+              if(seg.z+c2.P.bH>capOf(pallets.length-1))continue;
+              a=c2; break;
+            }
+          }
+          if(!a){
+            // nothing fits the lowest segment -- check whether ANY active fits
+            // ANYWHERE ELSE in this pallet before giving up on the whole pallet.
+            var fitsSomewhere=false;
+            if(seg){
+              for(var si=0;si<cur.sky.length&&!fitsSomewhere;si++){
+                var s=cur.sky[si];
+                for(var j=0;j<actives.length;j++){
+                  var cj=actives[j];
+                  if(cj.remaining<=0)continue;
+                  if(s.x1-s.x0>=cj.P.bL&&s.z+cj.P.bH<=capOf(pallets.length-1)){ fitsSomewhere=true; break; }
+                }
+              }
+            }
+            if(fitsSomewhere){ seg.z=1e15; continue; }   // dead segment only -- try the next lowest
+            if(pallets.length>=maxCount)break;             // no room anywhere, no pallets left to open
+            pallets.push(makePal());
+            continue;
+          }
+          var bL=a.P.bL,bW=a.P.bW,bH=a.P.bH,nWp=Math.max(1,Math.floor(across/bW));
+          var colsFit=Math.floor((seg.x1-seg.x0)/bL);
+          var take=Math.min(a.remaining,colsFit*nWp);
+          var fullCols=Math.floor(take/nWp), lastCol=take-fullCols*nWp;
+          if(fullCols>0)cur.places.push({color:a.P.it.color,x0:seg.x0,y0:0,z0:seg.z,L:fullCols*bL,W:nWp*bW,H:bH,nL:fullCols,nW:nWp});
+          var xEnd=seg.x0+fullCols*bL;
+          if(lastCol>0){
+            cur.places.push({color:a.P.it.color,x0:xEnd,y0:0,z0:seg.z,L:bL,W:lastCol*bW,H:bH,nL:1,nW:lastCol});
+            a.openCol={pal:cur,x:xEnd,z:seg.z,cy:lastCol};
+            xEnd+=bL;
+          }
+          if(xEnd>seg.x0)skyRaisePal(cur,seg.x0,xEnd,seg.z+bH);
+          a.remaining-=take; a.placedHere+=take; palAddCount(cur,a.P,take);
+          a.zSeen[(pallets.length-1)+':'+seg.z]=1;
+        }
+      }
+
+      var pallets=[];
+      var actives=palItems.map(function(P){ return {P:P,remaining:P.placed,placedHere:0,openCol:null,zSeen:{}}; });
+      fillPalletsGreedy(pallets,actives,maxPallets,function(){ return availH; });
+      actives.forEach(function(a){
+        stats[a.P.idx]={across:Math.max(1,Math.floor(across/a.P.bW)),along:Math.max(1,Math.floor(along/a.P.bL)),
+          layers:Object.keys(a.zSeen).length,placed:a.placedHere};
+      });
+      pallets=pallets.filter(function(pal){ return pal.places.length>0; });
+
+      // ── Rebalance the tail: if the LAST pallet is much shorter than the one before
+      // it, re-split their combined load so both stand at a similar height (a lone
+      // 1-layer pallet is unstable and wastes wrapping/handling).
+      if(pallets.length>=2){
+        var hPrev=palTop(pallets[pallets.length-2]), hLast=palTop(pallets[pallets.length-1]);
+        if(hLast<hPrev*0.7){
+          var B=pallets.pop(), A=pallets.pop();
+          var combo=[];
+          palItems.forEach(function(P){
+            var n=0;
+            [A,B].forEach(function(pal){ var e=pal.counts[P.idx]; if(e)n+=e.placed; });
+            if(n>0)combo.push({P:P,count:n});
+          });
+          var totH=0;
+          combo.forEach(function(e){
+            var cap=Math.floor(along/e.P.bL)*Math.floor(across/e.P.bW);
+            if(cap>0)totH+=Math.ceil(e.count/cap)*e.P.bH;
+          });
+          var targetH=Math.min(availH,Math.ceil(totH/2));
+          var two=[];
+          var actives2=combo.map(function(e){ return {P:e.P,remaining:e.count,placedHere:0,openCol:null,zSeen:{}}; });
+          fillPalletsGreedy(two,actives2,2,function(i){ return i===0?targetH:availH; });
+          var ok=actives2.every(function(a,idx){ return a.placedHere>=combo[idx].count; });
+          two=two.filter(function(pal){ return pal.places.length>0; });
+          if(ok&&two.length<=2){ pallets=pallets.concat(two); }
+          else { pallets.push(A,B); }   // safety: keep the original split if rebalance failed
+        }
+      }
+
+      // ── Stack order inside a MIXED pallet: the SKU with MORE boxes on that pallet
+      // goes at the BOTTOM (larger, more stable base) and the smaller lot stacks on
+      // top — re-pack any multi-SKU pallet in descending box-count order.
+      pallets=pallets.map(function(pal){
+        var keys=Object.keys(pal.counts);
+        if(keys.length<2)return pal;
+        var entries=keys.map(function(k){ return pal.counts[k]; });
+        entries.sort(function(a,b){ return b.placed-a.placed; });
+        var re=[];
+        var actives3=entries.map(function(e){ return {P:e.P,remaining:e.placed,placedHere:0,openCol:null,zSeen:{}}; });
+        fillPalletsGreedy(re,actives3,1,function(){ return availH; });
+        var ok2=actives3.every(function(a,idx){ return a.placedHere>=entries[idx].placed; });
+        return (ok2&&re.length===1)?re[0]:pal;   // keep original order if re-pack doesn't fit
+      });
+
+      // Generate 3D blocks + a wireframe outline per pallet. Position pi fills
+      // across the width first (row), then advances along the length (col).
+      var palFrames=[];
+      pallets.forEach(function(pal,pi){
+        var col=Math.floor(pi/pRows), row=pi%pRows;
+        var palX=offsetX+col*along, palY=rowY(row), topZ=0;
+        pal.places.forEach(function(q){ if(q.z0+q.H>topZ)topZ=q.z0+q.H; });
+        pal.topZ=topZ;
+        blocks.push({x0:palX,y0:palY,z0:0,L:along,W:across,H:palD0,
+          nL:1,nW:1,nH:1,color:palItems[0].palColor,isPallet:true});
+        pal.places.forEach(function(q){
+          blocks.push({x0:palX+q.x0,y0:palY+q.y0,z0:palD0+q.z0,L:q.L,W:q.W,H:q.H,
+            nL:q.nL,nW:q.nW,nH:1,color:q.color});
+        });
+        palFrames.push({x0:palX,y0:palY,L:along,W:across,H:palD0+topZ,num:pi+1});
+      });
+      result._palletFrames=palFrames;
+
+      offsetX+=Math.ceil(pallets.length/pRows)*along;
+
+      // Build pallet manifest for display in results (one entry per physical pallet)
+      result._palletManifest=pallets.map(function(pal,pi){
+        var gw=palTare, products=[];
+        Object.keys(pal.counts).forEach(function(k){
+          var e=pal.counts[k], wt=e.placed*e.P.perBoxWt; gw+=wt;
+          products.push({idx:e.P.idx,name:e.P.it.name,color:e.P.it.color,placed:e.placed,
+            pcs:e.placed*(e.P.it.pcsPerCtn||1),wt:wt});
+        });
+        return{palIdx:pi+1,L:along,W:across,H:palD0+pal.topZ,tare:palTare,gw:gw,products:products};
+      });
+    }
+  }
+
+  // ─── Standard (non-pallet) items: global LAYER filling ───
+  // Layer 1 fills the whole floor inner→door, then layer 2 the same way, and so on.
+  // The next SKU continues exactly where the previous one ended — in the SAME layer when
+  // the box heights match, otherwise it starts on a fresh layer above.
+  if(stdItems.length>0){
+    // SKYLINE packer, GLOBAL greedy fill: the floor is tracked as segments [{x0,x1,z}]
+    // holding the current top surface height along the container length. At EVERY step
+    // we scan for the lowest surface across the WHOLE container (not just "the current
+    // SKU's turn") and let the first SKU (in bulkiest-first priority) that still fits
+    // claim it. This is what prevents deep frozen pits: the instant a strip becomes too
+    // narrow for the bulky SKU's box length, the next-in-line SKU with a shorter box
+    // claims it on the very next step — instead of that strip sitting untouched at a low
+    // height for the rest of the bulky SKU's run while unrelated stacks grow tall next to
+    // it (the old per-SKU-sequential skyline produced exactly that visible gap/pit).
+    var sky=[{x0:offsetX,x1:c.L,z:0}];
+    function skyRaise(x0,x1,newZ){
+      var out=[];
+      sky.forEach(function(s){
+        if(s.x1<=x0||s.x0>=x1){ out.push(s); return; }
+        if(s.x0<x0)out.push({x0:s.x0,x1:x0,z:s.z});
+        if(s.x1>x1)out.push({x0:x1,x1:s.x1,z:s.z});
+      });
+      out.push({x0:x0,x1:x1,z:newZ});
+      out.sort(function(a,b){return a.x0-b.x0;});
+      var merged=[];
+      out.forEach(function(s){
+        var last=merged[merged.length-1];
+        if(last&&last.z===s.z&&last.x1===s.x0)last.x1=s.x1;
+        else merged.push({x0:s.x0,x1:s.x1,z:s.z});
+      });
+      sky=merged;
+    }
+    var actives=stdItems.map(function(P){
+      return {P:P,bL:P.bL,bW:P.bW,bH:P.bH,nW:P.nW,nH:P.nH,
+        remaining:P.placed,placedHere:0,zSeen:{},openCol:null};
+    });
+    var guard=0;
+    while(actives.some(function(a){return a.remaining>0;}) && guard++<100000){
+      // 1) ALWAYS resolve any pending partial-width column FIRST, using its own stored
+      // (x,z) directly — never by re-matching it against the skyline. Once a column is
+      // raised (below) the skyline no longer remembers its old z at that x, so waiting
+      // for it to "reappear as the lowest segment" can never happen — that mismatch is
+      // what let a SKU get permanently stuck with unplaced cartons and a real hole in
+      // the stack (openCol referenced a z the skyline had already moved past).
+      var openA=null,i;
+      for(i=0;i<actives.length;i++){ if(actives[i].remaining>0&&actives[i].openCol){ openA=actives[i]; break; } }
+      if(openA){
+        var oc=openA.openCol, obW=openA.bW, onW=openA.nW;
+        var fill=Math.min(openA.remaining,onW-oc.cy);
+        blocks.push({x0:oc.x,y0:oc.cy*obW,z0:oc.z,L:openA.bL,W:fill*obW,H:openA.bH,
+          nL:1,nW:fill,nH:1,color:openA.P.it.color});
+        oc.cy+=fill; openA.remaining-=fill; openA.placedHere+=fill; openA.zSeen[oc.z]=1;
+        if(oc.cy>=onW)openA.openCol=null;
+        continue;
+      }
+      // 2) otherwise pick the globally lowest surface and let the first SKU (bulkiest-
+      // first priority, and with no column of its own left open) that fits claim it.
+      var seg=null;
+      sky.forEach(function(s){ if(!seg||s.z<seg.z||(s.z===seg.z&&s.x0<seg.x0))seg=s; });
+      if(!seg)break;
+      var a=null;
+      for(i=0;i<actives.length;i++){
+        var cand2=actives[i];
+        if(cand2.remaining<=0)continue;
+        if(seg.x1-seg.x0<cand2.bL)continue;                  // too short for this SKU's box
+        if(seg.z+cand2.bH>cand2.P.effH)continue;             // ceiling reached here
+        if(!cand2.zSeen[seg.z]&&Object.keys(cand2.zSeen).length>=cand2.nH)continue; // layer cap
+        a=cand2; break;
+      }
+      if(!a){ seg.z=1e15; continue; }   // nothing fits this lowest strip → exclude it (unavoidable dead space)
+      var bL=a.bL,bW=a.bW,bH=a.bH,nW=a.nW;
+      var colsFit=Math.floor((seg.x1-seg.x0)/bL);
+      var take=Math.min(a.remaining,colsFit*nW);
+      var fullCols=Math.floor(take/nW), lastCol=take-fullCols*nW;
+      if(fullCols>0)blocks.push({x0:seg.x0,y0:0,z0:seg.z,L:fullCols*bL,W:nW*bW,H:bH,
+        nL:fullCols,nW:nW,nH:1,color:a.P.it.color});
+      var xEnd=seg.x0+fullCols*bL;
+      if(lastCol>0){
+        blocks.push({x0:xEnd,y0:0,z0:seg.z,L:bL,W:lastCol*bW,H:bH,
+          nL:1,nW:lastCol,nH:1,color:a.P.it.color});
+        a.openCol={x:xEnd,z:seg.z,cy:lastCol};
+        xEnd+=bL;
+      }
+      if(xEnd>seg.x0)skyRaise(seg.x0,xEnd,seg.z+bH);
+      a.remaining-=take; a.placedHere+=take; a.zSeen[seg.z]=1;
+    }
+    actives.forEach(function(a){
+      var nLfull=Math.floor((c.L-offsetX)/a.bL);
+      stats[a.P.idx]={across:a.nW,along:nLfull,layers:Object.keys(a.zSeen).length,placed:a.placedHere};
+    });
+  }
+  result._layout={blocks:blocks, stats:stats};
+  return result._layout;
+}
+
+function computeBlocks(result){ return packLayout(result).blocks; }
+function drawQuad(ctx,a,b,cc,d,nU,nV,fill,stroke){
+  ctx.beginPath();ctx.moveTo(a.sx,a.sy);ctx.lineTo(b.sx,b.sy);ctx.lineTo(cc.sx,cc.sy);ctx.lineTo(d.sx,d.sy);ctx.closePath();
+  ctx.fillStyle=fill;ctx.fill();
+  ctx.strokeStyle=stroke;ctx.lineWidth=0.5;
+  nU=Math.min(nU,60);nV=Math.min(nV,60);
+  var i,t,p1,p2;
+  for(i=1;i<nU;i++){t=i/nU;
+    p1={x:a.sx+(b.sx-a.sx)*t,y:a.sy+(b.sy-a.sy)*t};
+    p2={x:d.sx+(cc.sx-d.sx)*t,y:d.sy+(cc.sy-d.sy)*t};
+    ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+  }
+  for(i=1;i<nV;i++){t=i/nV;
+    p1={x:a.sx+(d.sx-a.sx)*t,y:a.sy+(d.sy-a.sy)*t};
+    p2={x:b.sx+(cc.sx-b.sx)*t,y:b.sy+(cc.sy-b.sy)*t};
+    ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+  }
+  ctx.strokeStyle=stroke;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(a.sx,a.sy);ctx.lineTo(b.sx,b.sy);ctx.lineTo(cc.sx,cc.sy);ctx.lineTo(d.sx,d.sy);ctx.closePath();ctx.stroke();
+}
+function blockFaces(b,st){
+  var x0=b.x0,y0=b.y0,z0=b.z0,x1=b.x0+b.L,y1=b.y0+b.W,z1=b.z0+b.H;
+  var P=function(x,y,z){return project3D(x,y,z,st)};
+  var a=P(x0,y0,z0),bb=P(x1,y0,z0),cc=P(x1,y1,z0),d=P(x0,y1,z0);
+  var e=P(x0,y0,z1),f=P(x1,y0,z1),g=P(x1,y1,z1),h=P(x0,y1,z1);
+  var col=b.color;
+  var faces=[
+    {pts:[e,f,g,h],nU:b.nL,nV:b.nW,fill:shade(col,1.15),stroke:shade(col,0.55)}, // top
+    {pts:[a,bb,f,e],nU:b.nL,nV:b.nH,fill:shade(col,0.95),stroke:shade(col,0.55)}, // front
+    {pts:[d,cc,g,h],nU:b.nL,nV:b.nH,fill:shade(col,0.78),stroke:shade(col,0.5)},  // back
+    {pts:[a,d,h,e],nU:b.nW,nV:b.nH,fill:shade(col,0.86),stroke:shade(col,0.5)},   // left
+    {pts:[bb,cc,g,f],nU:b.nW,nV:b.nH,fill:shade(col,0.7),stroke:shade(col,0.45)}, // right
+    {pts:[a,bb,cc,d],nU:b.nL,nV:b.nW,fill:shade(col,0.6),stroke:shade(col,0.45)}  // bottom
+  ];
+  faces.forEach(function(fc){fc.depth=(fc.pts[0].depth+fc.pts[1].depth+fc.pts[2].depth+fc.pts[3].depth)/4;});
+  return faces;
+}
+function drawContainerWire(ctx,c,st){
+  var P=function(x,y,z){return project3D(x,y,z,st)};
+  var v=[P(0,0,0),P(c.L,0,0),P(c.L,c.W,0),P(0,c.W,0),P(0,0,c.H),P(c.L,0,c.H),P(c.L,c.W,c.H),P(0,c.W,c.H)];
+  // orange floor outline
+  ctx.strokeStyle='#E8A33D';ctx.lineWidth=2.5;
+  ctx.beginPath();ctx.moveTo(v[0].sx,v[0].sy);ctx.lineTo(v[1].sx,v[1].sy);ctx.lineTo(v[2].sx,v[2].sy);ctx.lineTo(v[3].sx,v[3].sy);ctx.closePath();ctx.stroke();
+  // transparent wireframe
+  var edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  ctx.strokeStyle='rgba(150,162,180,0.75)';ctx.lineWidth=1.1;
+  edges.forEach(function(e){ctx.beginPath();ctx.moveTo(v[e[0]].sx,v[e[0]].sy);ctx.lineTo(v[e[1]].sx,v[e[1]].sy);ctx.stroke();});
+}
+function drawPalletFrames(ctx,result,st){
+  var frames=result._palletFrames||[];
+  if(!frames.length)return;
+  var P=function(x,y,z){return project3D(x,y,z,st)};
+  frames.forEach(function(fr){
+    var x1=fr.x0+fr.L, y1=fr.y0+fr.W, z1=fr.H;
+    var v=[P(fr.x0,fr.y0,0),P(x1,fr.y0,0),P(x1,y1,0),P(fr.x0,y1,0),
+           P(fr.x0,fr.y0,z1),P(x1,fr.y0,z1),P(x1,y1,z1),P(fr.x0,y1,z1)];
+    var edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+    ctx.strokeStyle='rgba(93,58,35,0.85)';ctx.lineWidth=2;ctx.setLineDash([7,5]);
+    edges.forEach(function(e){ctx.beginPath();ctx.moveTo(v[e[0]].sx,v[e[0]].sy);ctx.lineTo(v[e[1]].sx,v[e[1]].sy);ctx.stroke();});
+    ctx.setLineDash([]);
+    // pallet number badge above the front-top edge
+    var lp=P(fr.x0+fr.L/2, fr.y0, z1);
+    ctx.font='bold 13px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    var tw=ctx.measureText('P'+fr.num).width;
+    ctx.fillStyle='#5d3a23';
+    ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(lp.sx-tw/2-6,lp.sy-22,tw+12,17,4);
+    else ctx.rect(lp.sx-tw/2-6,lp.sy-22,tw+12,17);
+    ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.fillText('P'+fr.num, lp.sx, lp.sy-13);
+  });
+  ctx.textAlign='start';ctx.textBaseline='alphabetic';
+}
+function render3D(canvas,result,yaw,pitch,zoom){
+  if(!canvas)return;
+  var ctx=canvas.getContext('2d');
+  var c=result.c;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);
+  var st=makeState(canvas,c,yaw,pitch,zoom);
+  var faces=[];
+  computeBlocks(result).forEach(function(b){blockFaces(b,st).forEach(function(f){faces.push(f)})});
+  faces.sort(function(a,b){return b.depth-a.depth});
+  faces.forEach(function(f){drawQuad(ctx,f.pts[0],f.pts[1],f.pts[2],f.pts[3],f.nU,f.nV,f.fill,f.stroke)});
+  drawContainerWire(ctx,c,st);
+  drawPalletFrames(ctx,result,st);
+}
+
+// ── 3D VIEWER (drag to rotate 360°) ─────────────────────────────────────────────
+var V3D={yaw:VIEW_YAW,pitch:VIEW_PITCH,zoom:1,result:null,timer:null,drag:false,lx:0,ly:0};
+function open3DViewer(ri){
+  var r=(window._lastResults||[])[ri]; if(!r)return;
+  V3D.result=r;V3D.yaw=VIEW_YAW;V3D.pitch=VIEW_PITCH;V3D.zoom=1;
+  document.getElementById('v3d-title').textContent='🧊 '+r.c.full;
+  document.getElementById('viewer3d').classList.add('open');
+  setTimeout(function(){sizeV3DCanvas();renderV3D();},40);
+}
+function close3DViewer(){stopRotate3D();document.getElementById('viewer3d').classList.remove('open');}
+function sizeV3DCanvas(){
+  var cv=document.getElementById('v3d-canvas'), box=cv.parentElement;
+  cv.width=box.clientWidth; cv.height=box.clientHeight;
+}
+function renderV3D(){var cv=document.getElementById('v3d-canvas');if(V3D.result)render3D(cv,V3D.result,V3D.yaw,V3D.pitch,V3D.zoom);}
+function reset3D(){V3D.yaw=VIEW_YAW;V3D.pitch=VIEW_PITCH;V3D.zoom=1;renderV3D();}
+function autoRotate3D(){stopRotate3D();V3D.timer=setInterval(function(){V3D.yaw+=0.02;renderV3D();},40);}
+function stopRotate3D(){if(V3D.timer){clearInterval(V3D.timer);V3D.timer=null;}}
+function bindViewer3D(){
+  var cv=document.getElementById('v3d-canvas'); if(!cv)return;
+  cv.addEventListener('mousedown',function(e){V3D.drag=true;V3D.lx=e.clientX;V3D.ly=e.clientY;});
+  window.addEventListener('mouseup',function(){V3D.drag=false;});
+  window.addEventListener('mousemove',function(e){
+    if(!V3D.drag)return;
+    V3D.yaw+=(e.clientX-V3D.lx)*0.01;
+    V3D.pitch+=(e.clientY-V3D.ly)*0.01;
+    V3D.pitch=Math.max(-1.45,Math.min(1.45,V3D.pitch));
+    V3D.lx=e.clientX;V3D.ly=e.clientY;renderV3D();
+  });
+  cv.addEventListener('wheel',function(e){e.preventDefault();V3D.zoom*=(e.deltaY<0?1.1:0.9);V3D.zoom=Math.max(0.3,Math.min(5,V3D.zoom));renderV3D();},{passive:false});
+  // touch
+  cv.addEventListener('touchstart',function(e){if(e.touches[0]){V3D.drag=true;V3D.lx=e.touches[0].clientX;V3D.ly=e.touches[0].clientY;}});
+  cv.addEventListener('touchmove',function(e){
+    if(!V3D.drag||!e.touches[0])return;e.preventDefault();
+    V3D.yaw+=(e.touches[0].clientX-V3D.lx)*0.01;
+    V3D.pitch+=(e.touches[0].clientY-V3D.ly)*0.01;
+    V3D.pitch=Math.max(-1.45,Math.min(1.45,V3D.pitch));
+    V3D.lx=e.touches[0].clientX;V3D.ly=e.touches[0].clientY;renderV3D();
+  },{passive:false});
+  cv.addEventListener('touchend',function(){V3D.drag=false;});
+  window.addEventListener('resize',function(){if(document.getElementById('viewer3d').classList.contains('open')){sizeV3DCanvas();renderV3D();}});
+  document.getElementById('viewer3d').addEventListener('click',function(e){if(e.target===this)close3DViewer();});
+}
+
+// ── IMPORT / EXPORT ───────────────────────────────────────────────────────────
+function doExport(){
+  var rows=[['Group','Type','Name','L','W','H','D','Weight','Pieces','PcsPerCtn','Cartons','Color']];
+  groups.forEach(g=>g.items.forEach(it=>
+    rows.push([g.name,it.type,it.name,it.L,it.W,it.H,it.D,it.weight,(it.pieces!=null?it.pieces:it.qty),(it.pcsPerCtn||1),cartonsOf(it),it.color])));
+  var csv=rows.map(r=>r.join(',')).join('\n');
+  var a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,﻿'+encodeURIComponent(csv);
+  a.download='container_loading.csv'; a.click();
+}
+
+function doImport(){
+  var inp=document.createElement('input');
+  inp.type='file'; inp.accept='.csv';
+  inp.onchange=e=>{
+    var f=e.target.files[0]; if(!f)return;
+    var r=new FileReader();
+    r.onload=ev=>{
+      try{
+        var lines=ev.target.result.split('\n').filter(l=>l.trim());
+        lines.shift();
+        var gmap={};
+        lines.forEach(line=>{
+          var p=line.split(',');
+          var gn=p[0],tp=p[1],nm=p[2],L=+p[3]||400,W=+p[4]||300,H=+p[5]||250,D=+p[6]||200,wt=+p[7]||1;
+          // new format: ...,Pieces,PcsPerCtn,Cartons,Color  |  old format: ...,Qty,Color
+          var pieces,pcsPerCtn,col;
+          if(p.length>=12){ pieces=+p[8]||1; pcsPerCtn=+p[9]||1; col=(p[11]||'').trim(); }
+          else{ pieces=+p[8]||1; pcsPerCtn=1; col=(p[9]||'').trim(); }
+          pcsPerCtn=Math.max(1,pcsPerCtn); pieces=Math.max(1,pieces);
+          var qty=Math.max(1,Math.ceil(pieces/pcsPerCtn));
+          if(!gn)return;
+          if(!gmap[gn]){gmap[gn]={id:Date.now()+Math.random(),name:gn,color:COLORS[colorIdx++%COLORS.length],items:[]};groups.push(gmap[gn]);}
+          gmap[gn].items.push({id:Date.now()+Math.random(),type:tp||'box',name:nm||'',L,W,H,D,weight:wt,pieces:pieces,pcsPerCtn:pcsPerCtn,qty:qty,color:col||COLORS[colorIdx++%COLORS.length],rotL:true,rotW:true,rotH:true,maxLayers:0,maxH2:0,maxWt:0,hexPack:false});
+        });
+        renderGroups();
+        alert('นำเข้าสำเร็จ '+Object.keys(gmap).length+' กลุ่ม');
+      }catch(ex){alert('ไม่สามารถนำเข้า: '+ex.message);}
+    };
+    r.readAsText(f,'UTF-8');
+  };
+  inp.click();
+}
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+// ── 3D BOX VISUALIZATION ──────────────────────────────────────────────────────
+function update3DBox(){
+  var cv=document.getElementById('box3d-cv');
+  if(!cv)return;
+  var t=_mitem?_mitem.type:'box';
+  var L=parseFloat(document.getElementById('mi-L')?.value)||40;
+  var W=parseFloat(document.getElementById('mi-W')?.value)||30;
+  var H=parseFloat(document.getElementById('mi-H')?.value)||25;
+  var D=parseFloat(document.getElementById('mi-D')?.value)||20;
+  draw3DShape(cv,t,L,W,H,D);
+}
+
+function draw3DShape(cv,type,L,W,H,D){
+  var ctx=cv.getContext('2d');
+  var cw=cv.width, ch=cv.height;
+  ctx.clearRect(0,0,cw,ch);
+  if(type==='drum')              drawDrum(ctx,cw,ch,D,H);          // upright cylinder
+  else if(type==='roll'||type==='pipe') drawRoll(ctx,cw,ch,L,D);  // horizontal tube
+  else                           drawIsoBox(ctx,cw,ch,L,W,H,type); // box / big bag (+loops)
+}
+// Light-blue palette shared by the shape previews
+var SH_FILL='#e7f0fb', SH_FILL2='#d7e6f8', SH_TOP='#eef4fc', SH_HOLE='#bcd3ee', SH_EDGE='#86a6d3';
+function ell(ctx,cx,cy,rx,ry,a0,a1){ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,a0,a1);}
+
+function drawIsoBox(ctx,cw,ch,bL,bW,bH,type){
+  var c30=Math.cos(Math.PI/6), s30=Math.sin(Math.PI/6);
+  var mx=Math.max(bL,bW,bH)||1;
+
+  // Reserved margins for dim lines + labels
+  var ml=46, mr=18, mt=12, mb=38;
+  var availW=cw-ml-mr, availH=ch-mt-mb;
+
+  // Fit box within available space
+  var scX=availW/((bL+bW)*c30);
+  var scY=availH/(bH+(bL+bW)*s30);
+  var sc=Math.min(scX,scY)*0.95;
+  var pL=bL*sc, pW=bW*sc, pH=bH*sc;
+
+  // Center box in available area
+  var boxW=(pL+pW)*c30, boxH=pH+(pL+pW)*s30;
+  var ox=ml+(availW-boxW)/2 + pW*c30;  // FL-bottom corner x
+  var oy=mt+(availH-boxH)/2 + pH;       // FL-bottom corner y
+
+  function P(x,y,z){return{x:ox+(x-y)*c30, y:oy+(x+y)*s30-z};}
+
+  var v=[
+    P(0,0,0),  P(pL,0,0),  P(0,pW,0),  P(pL,pW,0),  // bottom: 0=FL,1=FR,2=BL,3=BR
+    P(0,0,pH), P(pL,0,pH), P(0,pW,pH), P(pL,pW,pH)  // top: 4=FL,5=FR,6=BL,7=BR
+  ];
+
+  function face(pts,fill,stroke){
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x,pts[0].y);
+    for(var i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);
+    ctx.closePath();
+    ctx.fillStyle=fill; ctx.fill();
+    ctx.strokeStyle=stroke; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.stroke();
+  }
+
+  // 3 visible faces — flat pale-blue, uniform (matches reference diagram)
+  var EDGE='#88A8D4';
+  // Top — slightly lighter
+  face([v[6],v[4],v[5],v[7]], '#E8F1FC', EDGE);
+  // Left-front
+  face([v[6],v[2],v[3],v[7]], '#DDE8FA', EDGE);
+  // Right-front
+  face([v[7],v[5],v[1],v[3]], '#DDE8FA', EDGE);
+
+  // Big bag (FIBC): lifting loops at the 4 top corners + a center loop
+  if(type==='bigbag'){
+    var loopH=Math.max(13,pH*0.28);
+    bagLoop(ctx, v[4].x, v[4].y, -0.45, loopH, EDGE);  // front-left
+    bagLoop(ctx, v[5].x, v[5].y,  0.45, loopH, EDGE);  // front-right
+    bagLoop(ctx, v[6].x, v[6].y, -0.30, loopH, EDGE);  // back-left
+    bagLoop(ctx, v[7].x, v[7].y,  0.30, loopH, EDGE);  // back-right
+    var topC={x:(v[4].x+v[7].x)/2, y:(v[4].y+v[7].y)/2}; // top-face centre
+    bagLoop(ctx, topC.x, topC.y, 0, loopH*0.92, EDGE);
+  }
+
+  drawDimLines(ctx, v, type);
+}
+// One fabric lifting loop (thin teardrop) rising from (x,y); lean tilts it L/R.
+function bagLoop(ctx,x,y,lean,h,stroke){
+  var w=h*0.42;
+  ctx.beginPath();
+  ctx.moveTo(x,y);
+  ctx.bezierCurveTo(x-w+lean*w, y-h*0.55, x-w*0.5+lean*w, y-h, x+lean*w*1.4, y-h);
+  ctx.bezierCurveTo(x+w*0.5+lean*w, y-h, x+w+lean*w, y-h*0.55, x, y);
+  ctx.closePath();
+  ctx.fillStyle='#eef4fc'; ctx.fill();
+  ctx.strokeStyle=stroke; ctx.lineWidth=1.6; ctx.lineJoin='round'; ctx.stroke();
+}
+
+// ── DRUM (upright cylinder) ──────────────────────────────────────────────────
+function drawDrum(ctx,cw,ch,D,H){
+  var ml=16,mr=56,mt=14,mb=34;
+  var availW=cw-ml-mr, availH=ch-mt-mb;
+  var ar=0.30;
+  var sc=Math.min(availW/D, availH/(H+ar*D))*0.96;
+  var rx=sc*D/2, ry=rx*ar;
+  var bodyH=sc*H;
+  var cx=ml+availW/2;
+  var topY=mt+ry+ (availH-(bodyH+2*ry))/2 + ry; // centre of top ellipse
+  topY=mt+ry+Math.max(0,(availH-(bodyH+2*ry))/2);
+  var botY=topY+bodyH;
+  // body fill + bottom
+  ctx.fillStyle=SH_FILL2;
+  ctx.beginPath();
+  ctx.moveTo(cx-rx,topY); ctx.lineTo(cx-rx,botY);
+  ctx.ellipse(cx,botY,rx,ry,0,Math.PI,0,true); // front bottom arc
+  ctx.lineTo(cx+rx,topY); ctx.closePath(); ctx.fill();
+  // side edges + bottom arc stroke
+  ctx.strokeStyle=SH_EDGE; ctx.lineWidth=2; ctx.lineJoin='round';
+  line(ctx,cx-rx,topY,cx-rx,botY); line(ctx,cx+rx,topY,cx+rx,botY);
+  ell(ctx,cx,botY,rx,ry,0,Math.PI); ctx.stroke();
+  // top ellipse
+  ell(ctx,cx,topY,rx,ry,0,Math.PI*2); ctx.fillStyle=SH_TOP; ctx.fill(); ctx.stroke();
+  // inner rim
+  ctx.lineWidth=1.3; ell(ctx,cx,topY,rx*0.80,ry*0.80,0,Math.PI*2); ctx.stroke();
+  // 2 banding rings (front arcs)
+  ctx.lineWidth=1.3;
+  [0.40,0.72].forEach(function(f){ ell(ctx,cx,topY+bodyH*f,rx,ry,0,Math.PI); ctx.stroke(); });
+  // dims
+  dimH(ctx, cx+rx+30, topY, botY, 'Height');
+  dimW(ctx, cx-rx, cx+rx, botY+ry+16, 'Diameter');
+}
+
+// ── ROLL / PIPE (horizontal tube) ─────────────────────────────────────────────
+function drawRoll(ctx,cw,ch,W,D){
+  var ml=56,mr=18,mt=16,mb=34;
+  var availW=cw-ml-mr, availH=ch-mt-mb;
+  var exr=0.32;
+  var sc=Math.min(availW/(W+exr*D), availH/D)*0.96;
+  var R=sc*D/2, ex=R*exr, bodyW=sc*W;
+  var cy=mt+availH/2;
+  var leftX=ml+ex+Math.max(0,(availW-(bodyW+2*ex))/2);
+  var rightX=leftX+bodyW;
+  // body fill
+  ctx.fillStyle=SH_FILL2;
+  ctx.fillRect(leftX,cy-R,bodyW,2*R);
+  // far (right) end cap — back half
+  ell(ctx,rightX,cy,ex,R,-Math.PI/2,Math.PI/2); ctx.fillStyle=SH_FILL2; ctx.fill();
+  ctx.strokeStyle=SH_EDGE; ctx.lineWidth=2; ctx.lineJoin='round';
+  ell(ctx,rightX,cy,ex,R,-Math.PI/2,Math.PI/2); ctx.stroke();
+  // top & bottom edges
+  line(ctx,leftX,cy-R,rightX,cy-R); line(ctx,leftX,cy+R,rightX,cy+R);
+  // seam
+  ctx.lineWidth=1.2; ell(ctx,leftX+bodyW*0.5,cy,ex,R,-Math.PI/2,Math.PI/2); ctx.stroke();
+  // near (left) face
+  ctx.lineWidth=2; ell(ctx,leftX,cy,ex,R,0,Math.PI*2); ctx.fillStyle=SH_TOP; ctx.fill(); ctx.stroke();
+  // hole (tube)
+  ctx.lineWidth=1.4; ell(ctx,leftX,cy,ex*0.46,R*0.46,0,Math.PI*2); ctx.fillStyle=SH_HOLE; ctx.fill(); ctx.stroke();
+  // dims
+  dimH(ctx, leftX-ex-18, cy-R, cy+R, 'Diameter');
+  dimW(ctx, leftX-ex, rightX+ex, cy+R+16, 'Width');
+}
+
+// vertical dim bracket at x spanning y0..y1 with a label to the right
+function dimH(ctx,x,y0,y1,label){
+  var c='#b8b8b8';
+  ctx.strokeStyle=c; ctx.lineWidth=0.9; ctx.fillStyle=c;
+  dimLine(ctx,x,y0,x,y1,c);
+  line(ctx,x-3,y0,x+3,y0); line(ctx,x-3,y1,x+3,y1);
+  ctx.fillStyle='#9CA3AF'; ctx.font='500 11px Arial'; ctx.textBaseline='middle'; ctx.textAlign='left';
+  ctx.fillText(label, x+6, (y0+y1)/2);
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+}
+// horizontal dim bracket at y spanning x0..x1 with a label centered below
+function dimW(ctx,x0,x1,y,label){
+  var c='#b8b8b8';
+  ctx.strokeStyle=c; ctx.lineWidth=0.9; ctx.fillStyle=c;
+  dimLine(ctx,x0,y,x1,y,c);
+  line(ctx,x0,y-3,x0,y+3); line(ctx,x1,y-3,x1,y+3);
+  ctx.fillStyle='#9CA3AF'; ctx.font='500 11px Arial'; ctx.textBaseline='top'; ctx.textAlign='center';
+  ctx.fillText(label, (x0+x1)/2, y+5);
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+}
+
+function drawDimLines(ctx, v, type){
+  var dimColor='#B8B8B8', labelColor='#9CA3AF';
+  ctx.strokeStyle=dimColor; ctx.lineWidth=0.8; ctx.fillStyle=dimColor;
+
+  // ─── HEIGHT — vertical dim on the back-left vertical edge (v[2]→v[6]) ───
+  var hOff=12;
+  var hx=v[2].x-hOff;
+  // Extension lines (small ticks from box corners outward)
+  line(ctx, v[2].x-1, v[2].y, hx-3, v[2].y);
+  line(ctx, v[6].x-1, v[6].y, hx-3, v[6].y);
+  // Dim line with arrowheads
+  dimLine(ctx, hx, v[6].y+1, hx, v[2].y-1, dimColor);
+
+  // ─── WIDTH — below front edge v[3]→v[2] (front-bottom to back-left-bottom) ───
+  var wOff=11;
+  var w3={x:v[3].x-3, y:v[3].y+wOff};
+  var w2={x:v[2].x-3, y:v[2].y+wOff};
+  line(ctx, v[3].x-1, v[3].y+2, w3.x, w3.y+2);
+  line(ctx, v[2].x-1, v[2].y+2, w2.x, w2.y+2);
+  dimLine(ctx, w3.x+1, w3.y-1, w2.x-1, w2.y+1, dimColor);
+
+  // ─── LENGTH — below front edge v[3]→v[1] (front-bottom to back-right-bottom) ───
+  var lOff=11;
+  var l3={x:v[3].x+3, y:v[3].y+lOff};
+  var l1={x:v[1].x+3, y:v[1].y+lOff};
+  line(ctx, v[3].x+1, v[3].y+2, l3.x, l3.y+2);
+  line(ctx, v[1].x+1, v[1].y+2, l1.x, l1.y+2);
+  dimLine(ctx, l3.x-1, l3.y-1, l1.x+1, l1.y+1, dimColor);
+
+  // ─── LABELS ───
+  ctx.fillStyle=labelColor;
+  ctx.font='500 11px Arial';
+  ctx.textBaseline='middle';
+
+  ctx.textAlign='right';
+  ctx.fillText('Height', hx-6, (v[2].y+v[6].y)/2);
+
+  ctx.textAlign='right';
+  var wm={x:(w3.x+w2.x)/2, y:(w3.y+w2.y)/2};
+  ctx.fillText('Width', wm.x-2, wm.y+12);
+
+  ctx.textAlign='left';
+  var lm={x:(l3.x+l1.x)/2, y:(l3.y+l1.y)/2};
+  var lLbl = type==='drum' ? '⌀ Diam' : 'Length';
+  ctx.fillText(lLbl, lm.x+2, lm.y+12);
+
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+}
+
+function line(ctx,x1,y1,x2,y2){
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+}
+
+function dimLine(ctx, x1, y1, x2, y2, color){
+  ctx.strokeStyle=color; ctx.lineWidth=0.8;
+  line(ctx, x1, y1, x2, y2);
+  arrowHead(ctx, x1, y1, x2-x1, y2-y1, color);
+  arrowHead(ctx, x2, y2, x1-x2, y1-y2, color);
+}
+
+function arrowHead(ctx, tx, ty, dx, dy, color){
+  var L=Math.sqrt(dx*dx+dy*dy); if(L<0.1)return;
+  var ux=dx/L, uy=dy/L;
+  var sz=4.5, w=2.2;
+  var px=-uy, py=ux;
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  ctx.moveTo(tx, ty);
+  ctx.lineTo(tx+ux*sz+px*w, ty+uy*sz+py*w);
+  ctx.lineTo(tx+ux*sz-px*w, ty+uy*sz-py*w);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function midpt(a,b){return{x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
+
+// ── START ─────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
