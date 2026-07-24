@@ -340,7 +340,7 @@ class App extends Component {
       const saved=localStorage.getItem('kobTheme');
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this._plan=null; this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
@@ -872,12 +872,13 @@ class App extends Component {
     this.setState(s=>({verifyFiles:s.verifyFiles.filter((_,i)=>i!==idx)}));
   }
   async submitVerify(){
-    const {verifyFiles,verifyPo,verifyMode}=this.state;
+    const {verifyFiles,verifyPo,verifyMode,verifyNote}=this.state;
     if(!verifyFiles.length){this.showToast('กรุณาเลือกไฟล์ก่อน','info');return;}
     this.setState({verifyLoading:true,verifyResult:null,verifyError:null});
     const fd=new FormData();
     fd.append('mode',verifyMode);
     if((verifyPo||'').trim())fd.append('po',verifyPo.trim());
+    if((verifyNote||'').trim())fd.append('note',verifyNote.trim());
     verifyFiles.forEach(f=>fd.append('files',f,f.name));
     try{
       const r=await fetchTimeout('/api/verify-shipment',{method:'POST',body:fd},240000);
@@ -2287,7 +2288,7 @@ class App extends Component {
 
   // ── AI ตรวจเอกสาร: หน้าอัปโหลด + ผลลัพธ์ ──
   renderVerify(){
-    const {verifyFiles,verifyPo,verifyMode,verifyLoading,verifyResult,verifyError}=this.state;
+    const {verifyFiles,verifyPo,verifyMode,verifyNote,verifyLoading,verifyResult,verifyError}=this.state;
     const box={border:'1px solid var(--color-border)',borderRadius:'12px',background:'var(--color-surface)',padding:'20px'};
     const modeBtn=(k,label)=><button onClick={()=>this.setState({verifyMode:k,verifyResult:null,verifyError:null})} disabled={verifyLoading}
       style={{padding:'7px 16px',borderRadius:'99px',border:verifyMode===k?'1.5px solid var(--color-brand)':'1.5px solid var(--color-border)',background:verifyMode===k?'var(--color-brand)':'var(--color-surface)',color:verifyMode===k?'var(--color-surface)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:verifyMode===k?600:500,cursor:verifyLoading?'default':'pointer'}}>{label}</button>;
@@ -2303,6 +2304,10 @@ class App extends Component {
         <div style={{height:'12px'}}/>
         <Field label="เลข PO/SO (ถ้าใส่ไว้ — ระบบจะบันทึก ETD ที่ดึงได้จาก B/L ให้เลขนี้อัตโนมัติ ไม่บังคับ)">
           <input style={INP} value={verifyPo} placeholder="เช่น KOBPO2607-00485" onChange={e=>this.setState({verifyPo:e.target.value})}/>
+        </Field>
+        <div style={{height:'12px'}}/>
+        <Field label="หมายเหตุ/เงื่อนไขเพิ่มเติม (ไม่บังคับ — พิมพ์ FTA ที่ใช้ เช่น ACFTA/ATIGA, ประเทศปลายทาง, หรือ HS code ที่อยากเน้นตรวจ ระบบจะใช้เป็น hint ให้กฎในเครื่องเท่านั้น ไม่ใช่ AI แปลภาษาธรรมชาติ)">
+          <textarea style={{...INP,height:'64px',padding:'9px 11px',resize:'vertical',fontFamily:'inherit'}} value={verifyNote} placeholder="เช่น ใช้สิทธิ ACFTA ส่งไปเวียดนาม HS 3304.99.30" onChange={e=>this.setState({verifyNote:e.target.value})}/>
         </Field>
         <div style={{height:'12px'}}/>
         <div onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();this.onVerifyFilesAdd(e.dataTransfer.files);}}
