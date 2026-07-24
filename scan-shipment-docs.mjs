@@ -255,15 +255,61 @@ async function extractFields(anthropic, documentBlocks, excelText) {
 }
 
 // ─── Free fallback (regex-based, ไม่เรียก AI เลย) ──────────────────────────────────────
-// ใช้ตอนไม่มี ANTHROPIC_API_KEY จริง — ดึงเฉพาะฟิลด์ที่มี "รูปแบบมาตรฐานสากล" ที่ทายได้แม่นโดย
-// ไม่ต้องมี label กำกับ (เอกสารจริงที่ตรวจแล้วพบว่า label เป็นภาพ/template คงที่ ไม่ใช่ text จึง
-// แยกไม่ออกว่าค่าไหนคือ B/L no. / vessel / voyage / forwarder โดยไม่เดา — ปล่อยเป็น null ตามที่ user
-// รับทราบแล้วว่ายอมรับได้ ดีกว่าเขียนข้อมูลผิดเข้า production tracking)
+// ใช้ตอนไม่มี ANTHROPIC_API_KEY จริง — ตรวจเอกสารจริงหลายฉบับ (24 ก.ค. 2569: HBL ของ Freight Links
+// Express, Marine Cargo Policy ฯลฯ) พบว่า vessel/voyage/B/L no./forwarder ส่วนใหญ่เป็นค่าลอยไม่มี
+// label กำกับ (label เป็นภาพ/template คงที่ ไม่ใช่ text) และตำแหน่งต่างกันไปตาม forwarder แต่ละเจ้า
+// จึงใช้ pattern เชิงโครงสร้างที่พบซ้ำในเอกสารจริงแทน label ตรงๆ:
+//   - B/L no.: โค้ด alnum เปล่าๆ (มีทั้งตัวอักษร+ตัวเลข) ที่ซ้ำกัน 2 ครั้งใกล้ต้นเอกสาร
+//   - Vessel+Voyage: บรรทัดที่เป็นคำตัวพิมพ์ใหญ่ 1-4 คำ ตามด้วยโค้ด voyage สั้นๆ ท้ายบรรทัด
+//   - Forwarder: บรรทัดชื่อบริษัท (ลงท้าย CO.,LTD/LIMITED) ที่มีคำใบ้ธุรกิจขนส่งเท่านั้น
 //
-// **ETD เป็นข้อยกเว้น** — ตรวจสอบเอกสารจริงหลายฉบับ (24 ก.ค. 2569: HBL ของ Freight Links Express,
-// Marine Cargo Policy ฯลฯ) พบว่า label "SHIPPED ON BOARD" / "ON BOARD DATE" เป็น term มาตรฐานของ
-// วงการที่พิมพ์เป็น text จริง (ไม่ใช่ภาพ) สม่ำเสมอข้าม forwarder หลายเจ้า ต่างจาก vessel/voyage/
-// forwarder ที่เป็นค่าลอยไม่มี label กำกับเลยในเอกสารเดียวกัน — จึงดึงด้วย regex ได้อย่างปลอดภัย
+// **เจอ false positive จริงในการทดสอบรอบแรก (24 ก.ค. 2569)** — รันจริงแล้วพบ 2 เคส:
+//   1. โฟลเดอร์ที่มีแค่ PO (ไม่มี B/L จริง) — "Purchase Order #KOBPO2605-09165" ถูกตัดเหลือ
+//      "KOBPO2605" (ก่อนขีด) แล้วเข้าใจผิดว่าเป็นเลข B/L → แก้ด้วย PO_PREFIX_RE กรองทิ้ง
+//   2. โฟลเดอร์ที่มีแค่ CI (ไม่มี B/L จริง) — ที่อยู่ผู้ซื้อ "...Bangkok 10110" ถูกจับเป็น
+//      vessel="BANGKOK" voyage="10110" (จริงๆ คือชื่อเมือง+รหัสไปรษณีย์) และชื่อบริษัทตัวเอง
+//      "KISS OF BEAUTY COMPANY LIMITED" ถูกจับเป็น forwarder (เพราะไม่มีบรรทัดไหนมี keyword
+//      ขนส่งเลย โค้ดเดิม fallback ไปเอา "บรรทัดสุดท้าย" ซึ่งดันเป็นชื่อตัวเอง) — ทั้งสองเคส
+//      upsert เข้า production จริงก่อนจะจับได้และ revert คืน — แก้โดย (ก) เพิ่ม city/country
+//      exclude list + ปฏิเสธ voyage ที่เป็นเลขล้วน 5 หลัก (รูปแบบรหัสไปรษณีย์) (ข) เอาชื่อบริษัท
+//      ตัวเอง (KOB) ออกจาก candidate เสมอ (ค) **เอา fallback ไปเอา "บรรทัดสุดท้าย" ออกทั้งหมด** —
+//      ถ้าไม่เจอ keyword ขนส่งชัดเจน ให้ปล่อย forwarder เป็น null ดีกว่าเดาผิด (ตรงตามหลักการเดิม
+//      ของไฟล์นี้ทั้งหมด: ไม่มีข้อมูล ดีกว่าข้อมูลผิดที่เข้า production เงียบๆ)
+// ทั้งหมดนี้ยังเป็น best-effort ไม่ใช่ label-anchored แบบ ETD — ผิดได้บ้างในเอกสารที่โครงสร้างต่างไปมาก
+const BL_HEAD_RE = /\b(?=[A-Z0-9]{8,18}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{8,18}\b/g;
+const PO_PREFIX_RE = /^(?:KOB|BTV)(?:PO|SO)/i; // กัน "Purchase Order #KOBPO2605-09165" โดนตัดเหลือ "KOBPO2605" แล้วเข้าใจผิดเป็นเลข B/L
+const VESSEL_LINE_RE = /^([A-Z][A-Z]+(?:\s[A-Z]+){0,3})\s+(\d{2,6}[A-Z]{0,3})\s*$/;
+const VESSEL_EXCLUDE_RE = /^(SAID TO CONTAIN|SHIPPING TERMS|FREIGHT COLLECT|FREIGHT PREPAID|SAME AS ABOVE|SHIPPER LOAD|PORT OF|PLACE OF|BILL OF LADING|NUMBER OF|TOTAL NUMBER|CY CY|CFS CFS)/;
+// ชื่อเมือง/ประเทศที่ปรากฏบ่อยในที่อยู่ผู้ซื้อ/ผู้ขาย — กันจับที่อยู่ผิดเป็นชื่อเรือ (เจอเคสจริง: "BANGKOK 10110")
+const CITY_EXCLUDE_RE = /^(BANGKOK|LAEM CHABANG|LAT KRABANG|SHANGHAI|NINGBO|SHENZHEN|GUANGZHOU|QINGDAO|XIAMEN|PUSAN|BUSAN|INCHEON|HONG KONG|SINGAPORE|THAILAND|CHINA|KOREA|VIETNAM|TOTAL|AMOUNT)$/;
+const COMPANY_LINE_RE = /(?:CO\.,?\s*LTD\.?|LIMITED|LLC|INC\.?)\.?\s*$/i;
+const FORWARDER_KEYWORD_RE = /LOGISTICS|EXPRESS|LINKS|CARGO|FORWARDING|SHIPPING|TRANS|FREIGHT/;
+const OWN_COMPANY_RE = /KISS\s*OF\s*BEAUTY|\bKOB\b|BEAUTIVILLE/i; // กันจับชื่อบริษัทตัวเองเป็น forwarder (เจอเคสจริง)
+
+function findBlNumberFree(upperText) {
+  const head = upperText.slice(0, 600);
+  const candidates = [...head.matchAll(BL_HEAD_RE)].map((m) => m[0]).filter((c) => !PO_PREFIX_RE.test(c));
+  const counts = {};
+  candidates.forEach((c) => { counts[c] = (counts[c] || 0) + 1; });
+  const repeated = Object.keys(counts).find((c) => counts[c] >= 2);
+  return repeated || candidates[0] || null;
+}
+function findVesselVoyageFree(upperText) {
+  for (const line of upperText.split(/\r?\n/)) {
+    const m = VESSEL_LINE_RE.exec(line.trim());
+    if (!m || VESSEL_EXCLUDE_RE.test(m[1]) || CITY_EXCLUDE_RE.test(m[1]) || m[1].split(' ').length > 4) continue;
+    if (/^\d{5}$/.test(m[2])) continue; // เลขล้วน 5 หลัก น่าจะเป็นรหัสไปรษณีย์ ไม่ใช่ voyage
+    return { vessel: m[1].trim(), voyage: m[2].trim() };
+  }
+  return { vessel: null, voyage: null };
+}
+function findForwarderFree(text) {
+  const companyLines = text.split(/\r?\n/).map((l) => l.trim())
+    .filter((l) => l && l.length < 70 && COMPANY_LINE_RE.test(l) && !OWN_COMPANY_RE.test(l));
+  const withKeyword = companyLines.filter((l) => FORWARDER_KEYWORD_RE.test(l.toUpperCase()));
+  // ไม่ fallback ไปเอา "บรรทัดสุดท้าย" อีกต่อไป — ถ้าไม่เจอ keyword ขนส่งชัดเจน ปล่อย null ดีกว่าเดาผิด
+  return withKeyword.length ? withKeyword[withKeyword.length - 1] : null;
+}
 const CONTAINER_RE = /\b([A-Z]{3}[UJZR]\d{7})\b/g; // ISO 6346: owner code 3 ตัว + category 1 ตัว + serial 6 หลัก + check digit 1 หลัก
 const AWB_RE = /\b(\d{3})[\s-]?(\d{8})\b/g;
 const THAI_PORTS = ['LAEM CHABANG', 'BANGKOK', 'LAT KRABANG', 'MAP TA PHUT', 'SURAT THANI', 'SONGKHLA'];
@@ -323,9 +369,14 @@ function extractFieldsFree(text) {
   const cityCountryMatch = new RegExp(`([A-Z][A-Z '.\\-]{2,30}),\\s*(${countryAlt})\\b`).exec(upper);
   if (cityCountryMatch) portOfLoading = `${cityCountryMatch[1].trim()}, ${cityCountryMatch[2]}`;
 
+  const vesselVoyage = findVesselVoyageFree(upper);
+
   return {
-    etd: findEtdFree(text), // "SHIPPED ON BOARD"/"ON BOARD DATE" เป็น label มาตรฐานจริง — ดึงได้ปลอดภัย (ดู comment ด้านบน)
-    vessel: null, voyage: null, forwarder: null, blNumber: null, // ไม่มี label กำกับ — ทายไม่ได้แม่นพอ ปล่อย null
+    etd: findEtdFree(text), // "SHIPPED ON BOARD"/"ON BOARD DATE" เป็น label มาตรฐานจริง — ดึงได้ปลอดภัย
+    vessel: vesselVoyage.vessel,
+    voyage: vesselVoyage.voyage,
+    forwarder: findForwarderFree(text), // best-effort — เอาบริษัทท้ายเอกสารที่มีคำใบ้ธุรกิจขนส่ง
+    blNumber: awbNumber ? null : findBlNumberFree(upper), // ใช้เฉพาะ sea (air มี awbNumber อยู่แล้ว)
     awbNumber,
     containerNumbers,
     portOfLoading,
@@ -370,7 +421,7 @@ async function main() {
     anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     log('ใช้โหมด AI (ANTHROPIC_API_KEY ตั้งค่าแล้ว) — ดึงได้ครบทุกฟิลด์');
   } else {
-    log('[NOTE] ไม่มี ANTHROPIC_API_KEY จริง — ใช้โหมดฟรี (regex เท่านั้น) ดึงได้แค่ container/AWB/port ที่มีรูปแบบมาตรฐาน ฟิลด์อื่น (vessel/voyage/ETD/BL/forwarder) จะเป็น null เสมอ');
+    log('[NOTE] ไม่มี ANTHROPIC_API_KEY จริง — ใช้โหมดฟรี (regex+heuristic เท่านั้น) container/AWB/port/ETD แม่นยำสูง ส่วน vessel/voyage/B-L/forwarder เป็น best-effort (จับ pattern โครงสร้างเอกสาร ไม่ใช่ label) อาจผิดได้ในบางเอกสารที่โครงสร้างต่างไปมาก');
   }
 
   let etsSession = null;
@@ -406,7 +457,7 @@ async function main() {
         const result = anthropic
           ? await extractFields(anthropic, documentBlocks, excelText)
           : extractFieldsFree(pdfText + '\n' + excelText);
-        log(`  ดึงได้: etd=${result.etd} vessel=${result.vessel} voyage=${result.voyage} mode=${result.mode} pol=${result.portOfLoading} pod=${result.portOfDischarge} container=${(result.containerNumbers||[]).join('/')} awb=${result.awbNumber}`);
+        log(`  ดึงได้: etd=${result.etd} vessel=${result.vessel} voyage=${result.voyage} bl=${result.blNumber} forwarder=${result.forwarder} mode=${result.mode} pol=${result.portOfLoading} pod=${result.portOfDischarge} container=${(result.containerNumbers||[]).join('/')} awb=${result.awbNumber}`);
 
         const fields = {};
         if (result.etd) fields.etd = result.etd;
