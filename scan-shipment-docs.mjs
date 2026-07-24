@@ -257,12 +257,37 @@ async function extractFields(anthropic, documentBlocks, excelText) {
 // ─── Free fallback (regex-based, ไม่เรียก AI เลย) ──────────────────────────────────────
 // ใช้ตอนไม่มี ANTHROPIC_API_KEY จริง — ดึงเฉพาะฟิลด์ที่มี "รูปแบบมาตรฐานสากล" ที่ทายได้แม่นโดย
 // ไม่ต้องมี label กำกับ (เอกสารจริงที่ตรวจแล้วพบว่า label เป็นภาพ/template คงที่ ไม่ใช่ text จึง
-// แยกไม่ออกว่าค่าไหนคือ B/L no. / vessel / voyage / ETD โดยไม่เดา — ปล่อยเป็น null ตามที่ user
+// แยกไม่ออกว่าค่าไหนคือ B/L no. / vessel / voyage / forwarder โดยไม่เดา — ปล่อยเป็น null ตามที่ user
 // รับทราบแล้วว่ายอมรับได้ ดีกว่าเขียนข้อมูลผิดเข้า production tracking)
+//
+// **ETD เป็นข้อยกเว้น** — ตรวจสอบเอกสารจริงหลายฉบับ (24 ก.ค. 2569: HBL ของ Freight Links Express,
+// Marine Cargo Policy ฯลฯ) พบว่า label "SHIPPED ON BOARD" / "ON BOARD DATE" เป็น term มาตรฐานของ
+// วงการที่พิมพ์เป็น text จริง (ไม่ใช่ภาพ) สม่ำเสมอข้าม forwarder หลายเจ้า ต่างจาก vessel/voyage/
+// forwarder ที่เป็นค่าลอยไม่มี label กำกับเลยในเอกสารเดียวกัน — จึงดึงด้วย regex ได้อย่างปลอดภัย
 const CONTAINER_RE = /\b([A-Z]{3}[UJZR]\d{7})\b/g; // ISO 6346: owner code 3 ตัว + category 1 ตัว + serial 6 หลัก + check digit 1 หลัก
 const AWB_RE = /\b(\d{3})[\s-]?(\d{8})\b/g;
 const THAI_PORTS = ['LAEM CHABANG', 'BANGKOK', 'LAT KRABANG', 'MAP TA PHUT', 'SURAT THANI', 'SONGKHLA'];
 const ORIGIN_COUNTRIES = ['CHINA', 'KOREA', 'SOUTH KOREA', 'VIETNAM', 'TAIWAN', 'HONG KONG', 'JAPAN', 'MALAYSIA', 'INDONESIA', 'SINGAPORE'];
+
+const MONTHS_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+// ปีไทยมักเป็น พ.ศ. (ค.ศ. + 543) — ปี >= 2400 ให้ถือว่าเป็น พ.ศ. แล้วแปลงเป็น ค.ศ. เสมอก่อนบันทึก
+function beToCe(year) { return year >= 2400 ? year - 543 : year; }
+function pad2(n) { return String(n).padStart(2, '0'); }
+// วันที่ในเอกสารจริงเจอหลายรูปแบบ: "02/07/2026", "18-JUL-2026", "JUL.02,2026" — ลองทั้ง 3 แบบ
+function parseFlexibleDate(s) {
+  if (!s) return null;
+  let m = /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/.exec(s);
+  if (m) return `${beToCe(+m[3])}-${pad2(m[2])}-${pad2(m[1])}`;
+  m = /([A-Za-z]{3})[.,\s\-]+(\d{1,2})\s*,?\s*(\d{4})/.exec(s); // MMM.DD,YYYY
+  if (m && MONTHS_ABBR[m[1].toUpperCase()]) return `${beToCe(+m[3])}-${pad2(MONTHS_ABBR[m[1].toUpperCase()])}-${pad2(m[2])}`;
+  m = /(\d{1,2})[\s\-]([A-Za-z]{3})[\s\-.]+(\d{4})/.exec(s); // DD-MMM-YYYY
+  if (m && MONTHS_ABBR[m[2].toUpperCase()]) return `${beToCe(+m[3])}-${pad2(MONTHS_ABBR[m[2].toUpperCase()])}-${pad2(m[1])}`;
+  return null;
+}
+function findEtdFree(text) {
+  const m = /(?:SHIPPED\s*ON\s*BOARD|ON\s*BOARD\s*DATE|LADEN\s*ON\s*BOARD|FLIGHT\s*DATE)\s*[:\-]?\s*\n?\s*([A-Za-z0-9.,\/\- ]{6,20})/i.exec(text);
+  return m ? parseFlexibleDate(m[1]) : null;
+}
 
 // ISO 6346 check digit — กัน false positive จากสตริง 4 ตัวอักษร+7 หลักที่บังเอิญหน้าตาคล้าย
 // เลขตู้แต่ไม่ใช่ (เช่น เลข invoice/reference อื่นในเอกสาร)
@@ -299,7 +324,8 @@ function extractFieldsFree(text) {
   if (cityCountryMatch) portOfLoading = `${cityCountryMatch[1].trim()}, ${cityCountryMatch[2]}`;
 
   return {
-    etd: null, vessel: null, voyage: null, forwarder: null, blNumber: null, // ไม่มี label กำกับ — ทายไม่ได้แม่นพอ ปล่อย null
+    etd: findEtdFree(text), // "SHIPPED ON BOARD"/"ON BOARD DATE" เป็น label มาตรฐานจริง — ดึงได้ปลอดภัย (ดู comment ด้านบน)
+    vessel: null, voyage: null, forwarder: null, blNumber: null, // ไม่มี label กำกับ — ทายไม่ได้แม่นพอ ปล่อย null
     awbNumber,
     containerNumbers,
     portOfLoading,
