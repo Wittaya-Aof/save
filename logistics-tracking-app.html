@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Logistics Tracking — KOB &amp; BTV</title>
+<title>Import-Export OS — KOB &amp; BTV</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
 <!-- ไลบรารีเก็บ local (vendor/) — เปิดแอปได้แม้อินเทอร์เน็ตล่ม -->
@@ -997,23 +997,45 @@ class App extends Component {
 
   renderSidebar(){
     const {tab}=this.state;
-    const impAll=this.imports(),expAll=this.exports();
+    const inLogisticsGroup=tab==='import'||tab==='export'||tab==='dashboard';
     return <aside style={{width:'232px',flexShrink:0,height:'100vh',background:'#14181f',display:'flex',flexDirection:'column',borderRight:'1px solid #232936'}}>
       <div style={{display:'flex',alignItems:'center',gap:'11px',padding:'18px 20px',height:'60px',flexShrink:0,borderBottom:'1px solid #232936'}}>
         <div style={{width:'36px',height:'36px',borderRadius:'9px',background:'linear-gradient(135deg,var(--color-brand),#e8408e)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Ico name="boxes" size={19} sw={1.7}/></div>
-        <div><div style={{fontWeight:700,fontSize:'14.5px',color:'#fff',letterSpacing:'.2px'}}>Logistics Tracking</div><div style={{fontSize:'11px',color:'#8b94a3'}}>KOB &amp; BTV · Import / Export</div></div>
+        <div><div style={{fontWeight:700,fontSize:'14.5px',color:'#fff',letterSpacing:'.2px'}}>Import-Export OS</div><div style={{fontSize:'11px',color:'#8b94a3'}}>KOB &amp; BTV · Import / Export</div></div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'14px 10px',display:'flex',flexDirection:'column',gap:'2px'}}>
-        {[{key:'import',label:'Import Board',icon:'down',count:impAll.length},{key:'export',label:'Export Board',icon:'up',count:expAll.length},{key:'dashboard',label:'Dashboard',icon:'chart',count:false},{key:'verify',label:'ตรวจเอกสาร',icon:'check',count:false},{key:'container',label:'บรรจุตู้คอนเทนเนอร์',icon:'boxes',count:false}].map(t=>{
-          const active=tab===t.key;
-          return <button key={t.key} onClick={()=>this.setState({tab:t.key,detailId:null})} style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 12px',border:0,borderRadius:'9px',background:active?'var(--color-brand)':'transparent',color:active?'#fff':'#aab2c0',fontFamily:'inherit',fontSize:'13.5px',fontWeight:active?600:500,cursor:'pointer',textAlign:'left',width:'100%'}}>
+        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'verify',label:'Verification Shipping Document',icon:'check',active:tab==='verify'}].map(t=>{
+          const active=t.active;
+          return <button key={t.key} onClick={()=>{
+            if(t.key==='logistics'){if(!inLogisticsGroup)this.setState({tab:'import',detailId:null});}
+            else this.setState({tab:t.key,detailId:null});
+          }} style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 12px',border:0,borderRadius:'9px',background:active?'var(--color-brand)':'transparent',color:active?'#fff':'#aab2c0',fontFamily:'inherit',fontSize:'13.5px',fontWeight:active?600:500,cursor:'pointer',textAlign:'left',width:'100%'}}>
             <Ico name={t.icon} size={17} sw={1.8}/>
             <span style={{flex:1}}>{t.label}</span>
-            {t.count!==false&&<span style={{fontSize:'10.5px',fontWeight:700,padding:'1px 7px',borderRadius:'99px',background:active?'rgba(255,255,255,.25)':'#232936',color:active?'#fff':'#8b94a3'}}>{t.count}</span>}
           </button>;
         })}
       </div>
     </aside>;
+  }
+
+  renderLogisticsSubnav(){
+    const {tab}=this.state;
+    const impAll=this.imports(),expAll=this.exports();
+    return <div style={{flexShrink:0,background:'var(--color-surface)',borderBottom:'1px solid var(--color-border)'}}>
+      <div style={{padding:'18px 22px 2px'}}>
+        <div style={{fontSize:'19px',fontWeight:700,color:'var(--color-text)'}}>Logistics Tracking</div>
+        <div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',marginTop:'2px'}}>ติดตาม Import PO / Export SO จาก Odoo แบบ read-only พร้อมบันทึก forwarder/BL-AWB/container และต้นทุนโลจิสติกส์เอง</div>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:'2px',padding:'10px 22px 0',overflowX:'auto'}}>
+        {[{key:'import',label:'Import Board',count:impAll.length},{key:'export',label:'Export Board',count:expAll.length},{key:'dashboard',label:'Dashboard',count:false}].map(s=>{
+          const active=tab===s.key;
+          return <button key={s.key} onClick={()=>this.setState({tab:s.key,detailId:null})} style={{display:'flex',alignItems:'center',gap:'7px',padding:'10px 14px 11px',border:0,borderBottom:active?'2px solid var(--color-brand)':'2px solid transparent',background:'transparent',color:active?'var(--color-brand)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:active?600:500,cursor:'pointer',whiteSpace:'nowrap',marginBottom:'-1px'}}>
+            <span>{s.label}</span>
+            {s.count!==false&&<span style={{fontSize:'10.5px',fontWeight:700,padding:'1px 7px',borderRadius:'99px',background:active?'var(--color-brand)':'var(--color-surface-muted)',color:active?'var(--color-surface)':'var(--color-text-muted)'}}>{s.count}</span>}
+          </button>;
+        })}
+      </div>
+    </div>;
   }
 
   renderToolbar(tab){
@@ -2345,6 +2367,7 @@ class App extends Component {
       <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',overflow:'hidden'}}>
         {this.renderTopbar()}
         <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
+          {(isBoard||tab==='dashboard')&&this.renderLogisticsSubnav()}
           {isBoard&&<>
             {this.renderToolbar(tab)}
             <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
@@ -2353,7 +2376,7 @@ class App extends Component {
           </>}
           {tab==='dashboard'&&this.renderDashboard()}
           {tab==='verify'&&this.renderVerify()}
-          {tab==='container'&&<iframe src="/container-loading-calculator.html" title="บรรจุตู้คอนเทนเนอร์" style={{flex:1,width:'100%',border:0,background:'#fff'}}/>}
+          {tab==='container'&&<iframe src="/container-loading-calculator.html" title="Container Calculator" style={{flex:1,width:'100%',border:0,background:'#fff'}}/>}
         </div>
       </div>
       {this.renderDetail()}
