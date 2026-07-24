@@ -286,8 +286,19 @@ const COMPANY_LINE_RE = /(?:CO\.,?\s*LTD\.?|LIMITED|LLC|INC\.?)\.?\s*$/i;
 const FORWARDER_KEYWORD_RE = /LOGISTICS|EXPRESS|LINKS|CARGO|FORWARDING|SHIPPING|TRANS|FREIGHT/;
 const OWN_COMPANY_RE = /KISS\s*OF\s*BEAUTY|\bKOB\b|BEAUTIVILLE/i; // กันจับชื่อบริษัทตัวเองเป็น forwarder (เจอเคสจริง)
 
+// หา B/L no. ต้อง "ต้นเอกสาร" ของ "แต่ละไฟล์" ไม่ใช่ต้นของข้อความรวมทั้งโฟลเดอร์ — เจอจริงว่าถ้ามีหลาย
+// ไฟล์ใน pdfText ที่ต่อกันด้วย marker "=== FILE: x ===" (ดู convertFiles) ไฟล์ HBL จริงมักไม่ใช่ไฟล์
+// แรกตามลำดับตัวอักษร ทำให้เนื้อหาของมันหลุดจาก 600 ตัวอักษรแรกของข้อความรวมไปเลย ต้องตัดเป็นท่อนต่อไฟล์ก่อน
 function findBlNumberFree(upperText) {
-  const head = upperText.slice(0, 600);
+  const sections = upperText.split(/=== FILE: [^=]*? ===/).filter(Boolean);
+  for (const section of (sections.length ? sections : [upperText])) {
+    const found = findBlNumberInSection(section);
+    if (found) return found;
+  }
+  return null;
+}
+function findBlNumberInSection(sectionUpperText) {
+  const head = sectionUpperText.slice(0, 600);
   const candidates = [...head.matchAll(BL_HEAD_RE)].map((m) => m[0]).filter((c) => !PO_PREFIX_RE.test(c));
   const counts = {};
   candidates.forEach((c) => { counts[c] = (counts[c] || 0) + 1; });
