@@ -164,8 +164,13 @@ function upsertTracking(payload) {
     if (process.env.APP_PASSWORD) headers['Authorization'] = 'Basic ' + Buffer.from('scan:' + process.env.APP_PASSWORD).toString('base64');
     const req = http.request({ hostname: '127.0.0.1', port: 3000, path: '/api/tracking/upsert', method: 'POST', headers }, res => {
       let data = ''; res.on('data', c => data += c);
-      res.on('end', () => res.statusCode >= 200 && res.statusCode < 300 ? resolve(JSON.parse(data)) : reject(new Error(`HTTP ${res.statusCode} ${data}`)));
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(data)); } catch (e) { reject(new Error('server ตอบไม่ใช่ JSON — ' + e.message)); }
+        } else reject(new Error(`HTTP ${res.statusCode} ${data}`));
+      });
     });
+    req.setTimeout(15000, () => req.destroy(new Error('upsert timeout (15s)')));
     req.on('error', reject); req.write(body); req.end();
   });
 }

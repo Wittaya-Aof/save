@@ -10,16 +10,24 @@ import { IMPORT_INNER, EXPORT_INNER, ORDER_COLS } from './odoo-queries.js';
 // อ่าน .env
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const env = {};
-fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/).forEach(l => {
-  const m = l.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-  if (m && !m[1].startsWith('#')) env[m[1]] = m[2];
-});
+try {
+  const envPath = path.join(ROOT, '.env');
+  if (!fs.existsSync(envPath)) { console.error('ไม่พบไฟล์ .env'); process.exit(1); }
+  fs.readFileSync(envPath, 'utf8').split(/\r?\n/).forEach(l => {
+    const m = l.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (m && !m[1].startsWith('#')) env[m[1]] = m[2];
+  });
+} catch (e) { console.error('อ่าน .env ไม่สำเร็จ:', e.message); process.exit(1); }
 const MCP_URL = env.MCP_URL, TOKEN = env.MCP_TOKEN;
 if (!MCP_URL || !TOKEN) { console.error('ไม่พบ MCP_URL / MCP_TOKEN ใน .env'); process.exit(1); }
 
-const NCOLS = 16;          // จำนวนคอลัมน์ base64 ต่อแถว (16*50 = 800 b64 = 600 bytes JSON)
-const CHUNK = 50;          // ความยาว base64 ต่อคอลัมน์
+// NCOLS*CHUNK = เพดาน base64/แถว → 40*50 = 2000 b64 = ~1500 bytes JSON/แถว (เดิม 16 = 600 bytes ทำให้
+// แถวที่มีชื่อคู่ค้าจีน/ไทย UTF-8 ยาว ถูกตัดกลาง JSON แล้ว drop เงียบๆ = ข้อมูลหายจาก snapshot ถาวร)
+const NCOLS = 40;          // จำนวนคอลัมน์ base64 ต่อแถว
+const CHUNK = 50;          // ความยาว base64 ต่อคอลัมน์ (< ~58 ที่ MCP ตัดต่อช่อง)
+const MAXB64 = NCOLS * CHUNK;
 const PAGE  = 120;         // แถวต่อการเรียก 1 ครั้ง
+const FETCH_TIMEOUT_MS = 30000;
 
 function headers(sid) {
   return { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream',
@@ -33,10 +41,20 @@ function parseBody(txt) {
   return JSON.parse(data);
 }
 async function rpc(sid, method, params, id) {
-  const r = await fetch(MCP_URL, { method: 'POST', headers: headers(sid),
-    body: JSON.stringify({ jsonrpc: '2.0', ...(id != null ? { id } : {}), method, ...(params ? { params } : {}) }) });
-  const txt = await r.text();
-  return { status: r.status, sid: r.headers.get('mcp-session-id') || sid, body: txt ? parseBody(txt) : null };
+  // timeout + retry สำหรับ transient error — เดิมไม่มี timeout ถ้า proxy ค้างจะแขวนไม่จำกัด และ error
+  // ระหว่าง pagination = ล้มทั้ง snapshot โดยไม่ลองใหม่
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, 1000 * attempt));
+    try {
+      const r = await fetch(MCP_URL, { method: 'POST', headers: headers(sid),
+        body: JSON.stringify({ jsonrpc: '2.0', ...(id != null ? { id } : {}), method, ...(params ? { params } : {}) }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      const txt = await r.text();
+      return { status: r.status, sid: r.headers.get('mcp-session-id') || sid, body: txt ? parseBody(txt) : null };
+    } catch (e) { lastErr = e; console.error(`  rpc ${method} ล้มเหลว (ครั้งที่ ${attempt + 1}/3): ${e.message}`); }
+  }
+  throw lastErr;
 }
 
 let SID = null;
@@ -87,6 +105,9 @@ async function pull(label, innerSelect, orderCols) {
     const b64rows = parseTable(text);
     if (!b64rows.length) break;
     for (const b of b64rows) {
+      // ถ้า base64 ยาวเต็มเพดาน (MAXB64) พอดี = แถวนี้อาจถูกตัดกลาง JSON แล้ว parse พังหรือได้ข้อมูลไม่ครบ
+      // เตือนให้เห็นแทนการ drop เงียบ (ถ้าเจอบ่อยให้เพิ่ม NCOLS)
+      if (b.length >= MAXB64) console.error(`  ⚠️  แถว (off=${off}) ยาวเต็มเพดาน ${MAXB64} b64 — อาจถูกตัด ข้อมูลไม่ครบ ควรเพิ่ม NCOLS`);
       try { out.push(JSON.parse(Buffer.from(b, 'base64').toString('utf8'))); }
       catch (e) { console.error(`  แถวเสีย (off=${off}) ข้าม: ${e.message}`); }
     }
@@ -107,7 +128,11 @@ async function pull(label, innerSelect, orderCols) {
   const exp = await pull('export', EXPORT_INNER, ORDER_COLS);
   const now = new Date().toISOString();
   const snapshot = { _ts: { import: now, export: now }, import: imp, export: exp };
-  fs.writeFileSync(path.join(ROOT, 'odoo_snapshot.json'), JSON.stringify(snapshot), 'utf8');
+  // atomic write: เขียน .tmp แล้ว rename — กัน server โหลด snapshot ที่ถูกตัดครึ่งถ้าตายกลางเขียน
+  const snapPath = path.join(ROOT, 'odoo_snapshot.json');
+  const tmpPath = snapPath + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(snapshot), 'utf8');
+  fs.renameSync(tmpPath, snapPath);
   console.log(`\n✓ เขียน odoo_snapshot.json แล้ว — import ${imp.length} / export ${exp.length} แถว`);
   console.log('  รีสตาร์ท server เพื่อให้โหลด snapshot แล้วรีเฟรชหน้าเว็บ');
 })().catch(e => { console.error('ERROR:', e.message); process.exit(1); });

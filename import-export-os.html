@@ -799,7 +799,7 @@ class App extends Component {
   }
   // กด Sync = ล้าง cache ฝั่ง server ก่อน เพื่อให้ได้ข้อมูลสดจริง (ไม่ติด cache 5 นาที)
   // กด Sync = บังคับ probe Odoo จริง (ข้าม circuit breaker + ล้าง cache ทั้งฝั่ง server)
-  sync(){if(this.state.syncing)return;this.setState({syncing:true});this._forceSync=true;fetch('/api/cache/clear').catch(()=>{}).then(()=>this.loadData()).then(()=>{this._forceSync=false;this.setState({syncing:false});}).catch(()=>{this._forceSync=false;this.setState({syncing:false});});}
+  sync(){if(this.state.syncing)return;this.setState({syncing:true});this._forceSync=true;fetch('/api/cache/clear',{method:'POST'}).catch(()=>{}).then(()=>this.loadData()).then(()=>{this._forceSync=false;this.setState({syncing:false});}).catch(()=>{this._forceSync=false;this.setState({syncing:false});});}
   // อัตราแลกเปลี่ยน: ใช้ค่าจริงจาก Odoo ก่อน ถ้าไม่มีจึงใช้ค่า default
   fxRate(cur){const v=this._fx&&this._fx[cur];return (v&&v>0)?v:rateGuess(cur);}
 

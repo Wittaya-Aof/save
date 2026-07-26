@@ -18,3 +18,5 @@ doc_scan.log
 scan.lock
 ets_debug/
 scan_run*.log
+*.tmp
+*.log.1

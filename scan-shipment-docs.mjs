@@ -37,15 +37,26 @@ const LOG_FILE = path.join(ROOT, 'doc_scan.log');
 const LOCK_FILE = path.join(ROOT, 'scan.lock');
 const ALLOWED_EXT = new Set(['.pdf', '.xlsx', '.xls', '.png', '.jpg', '.jpeg']);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
+// เพดานรวม raw ของไฟล์ที่ส่งให้ Claude — base64 บวม ~1.33x จึงตั้ง 24MB ให้อยู่ใต้เพดาน 32MB base64 ของ Claude
+// (เดิมไม่มี cap รวม โฟลเดอร์ PDF หลายไฟล์รวมเกิน → API call ล้มทุกรอบ → retry ไม่รู้จบ + เปลือง cost/memory)
+const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
 const MAX_FOLDERS_PER_RUN = 20; // กันรันแรกที่มี backlog เยอะกินเวลา/ค่าใช้จ่าย AI ทีเดียวมากเกินไป
 const MODEL = process.env.VERIFY_MODEL || 'claude-sonnet-5';
 const IMAGE_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
 const PO_MATCH_RE = /(?:KOB|BTV)PO\d{4}-\d{5}/gi;
 
+const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate เมื่อเกิน 5MB (เดิม doc_scan.log โตไม่จำกัด)
+function rotateLogIfNeeded() {
+  try {
+    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > LOG_MAX_BYTES) {
+      fs.renameSync(LOG_FILE, LOG_FILE + '.1'); // เก็บรอบก่อนหน้าไว้ 1 ไฟล์ (.1 ถูกทับรอบถัดไป)
+    }
+  } catch (e) {}
+}
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
-  try { fs.appendFileSync(LOG_FILE, line + '\n', 'utf8'); } catch (e) {}
+  try { rotateLogIfNeeded(); fs.appendFileSync(LOG_FILE, line + '\n', 'utf8'); } catch (e) {}
 }
 
 // ─── Lock ───────────────────────────────────────────────────────────────────────────────
@@ -55,17 +66,31 @@ function log(msg) {
 // ของ Task Scheduler เองป้องกันได้แค่ instance ที่ Task Scheduler ยิงเอง ไม่ครอบคลุมเวลารันมือ
 // จึงต้อง lock ในระดับสคริปต์เองด้วย
 let lockHeldByMe = false;
+// process.kill(pid,0) บน Windows: ESRCH = ไม่มี process นี้ (ตายจริง) แต่ EPERM = process ยังอยู่แต่ไม่มีสิทธิ์
+// ส่ง signal (ยังทำงานอยู่!) — เดิม catch รวมเป็น "ตาย" แล้วเขียนทับ lock ของ process ที่ยังรันจริง จึงต้องแยก
+function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e.code === 'EPERM'; } // EPERM = ยังอยู่; ESRCH/อื่นๆ = ถือว่าตาย
+}
 function acquireLock() {
-  if (fs.existsSync(LOCK_FILE)) {
-    const pid = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim(), 10);
-    let alive = false;
-    try { process.kill(pid, 0); alive = true; } catch (e) { alive = false; }
-    if (alive) return false;
-    log(`[Lock] เจอ lock ค้างจาก PID ${pid} ที่ไม่ทำงานแล้ว (crash รอบก่อน?) — เขียนทับแล้วรันต่อ`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      // flag 'wx' = สร้างแบบ exclusive (atomic) — ถ้าไฟล์มีอยู่แล้วจะ throw EEXIST กัน TOCTOU race
+      // (สอง process เริ่มพร้อมกันแล้วผ่าน existsSync ทั้งคู่แบบเดิม)
+      fs.writeFileSync(LOCK_FILE, String(process.pid), { encoding: 'utf8', flag: 'wx' });
+      lockHeldByMe = true;
+      return true;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      const pid = parseInt((() => { try { return fs.readFileSync(LOCK_FILE, 'utf8').trim(); } catch { return ''; } })(), 10);
+      if (isPidAlive(pid)) return false; // มี process อื่นถืออยู่จริง
+      log(`[Lock] เจอ lock ค้างจาก PID ${pid} ที่ไม่ทำงานแล้ว (crash รอบก่อน?) — ลบแล้วลองจับใหม่`);
+      try { fs.unlinkSync(LOCK_FILE); } catch (e2) {}
+      // วนลูปลองจับใหม่ด้วย wx (ถ้ามี process อื่นชิงจับไปก่อน จะได้ EEXIST อีกแล้วคืน false)
+    }
   }
-  fs.writeFileSync(LOCK_FILE, String(process.pid), 'utf8');
-  lockHeldByMe = true;
-  return true;
+  return false;
 }
 // release เฉพาะตอนที่ process นี้เป็นคนถือ lock จริง — กัน process ที่แค่มาเช็คแล้วเจอว่ามีคนถืออยู่
 // (acquireLock คืน false) ไปลบ lock ของอีก process ที่กำลังทำงานจริงอยู่โดยไม่ได้ตั้งใจ
@@ -75,10 +100,21 @@ function releaseLock() {
 }
 
 function loadSeen() {
-  try { return JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8')); } catch (e) { return {}; }
+  try { return JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8')); }
+  catch (e) {
+    // ไม่มีไฟล์ครั้งแรก = ปกติ; แต่ถ้ามีไฟล์แล้ว parse ไม่ได้ (corrupt) ต้องเตือน ไม่งั้นทุกไฟล์กลายเป็น
+    // "ใหม่" แล้วเรียก AI ซ้ำทั้ง backlog (มีค่าใช้จ่ายจริง) โดยไม่มีใครรู้
+    if (fs.existsSync(SEEN_FILE)) log('[Seen] ⚠️  อ่าน doc_scan_seen.json ไม่ได้ (corrupt?) — เริ่มจากว่าง อาจ re-scan ทั้ง backlog: ' + e.message);
+    return {};
+  }
 }
 function saveSeen(seen) {
-  try { fs.writeFileSync(SEEN_FILE, JSON.stringify(seen), 'utf8'); } catch (e) { log('[Seen] save error: ' + e.message); }
+  // atomic write: กันไฟล์ถูกตัดครึ่งถ้า process ตายกลางเขียน (จะทำให้รอบหน้า loadSeen พังแล้ว re-scan หมด)
+  try {
+    const tmp = SEEN_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(seen), 'utf8');
+    fs.renameSync(tmp, SEEN_FILE);
+  } catch (e) { log('[Seen] save error: ' + e.message); }
 }
 
 function extractPoNumbers(name) {
@@ -183,6 +219,7 @@ async function convertFiles(filePaths, needDocumentBlocks) {
   const excelTextParts = [];
   const pdfTextParts = [];
   const usedNames = [];
+  let totalDocBytes = 0; // นับ raw ของไฟล์ที่ใส่ documentBlocks (ส่งให้ Claude) — กันรวมเกินเพดาน
   for (const fp of filePaths) {
     const ext = path.extname(fp).toLowerCase();
     let stat;
@@ -193,7 +230,12 @@ async function convertFiles(filePaths, needDocumentBlocks) {
       if (ext === '.pdf') {
         if (!buffer.slice(0, 5).toString('latin1').startsWith('%PDF-')) continue;
         if (needDocumentBlocks) {
-          documentBlocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } });
+          if (totalDocBytes + buffer.length > MAX_TOTAL_BYTES) {
+            log(`  [skip-ai] ${path.basename(fp)} — รวมไฟล์ส่ง AI เกิน ${MAX_TOTAL_BYTES / 1024 / 1024}MB ข้ามไฟล์นี้ (ยังดึงข้อความ PDF ต่อได้)`);
+          } else {
+            documentBlocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } });
+            totalDocBytes += buffer.length;
+          }
         }
         const pdfResult = extractPdfTextIsolated(fp);
         if (pdfResult.ok && pdfResult.text) pdfTextParts.push(`=== FILE: ${path.basename(fp)} ===\n${pdfResult.text}`);
@@ -201,7 +243,12 @@ async function convertFiles(filePaths, needDocumentBlocks) {
         usedNames.push(path.basename(fp));
       } else if (IMAGE_MIME[ext]) {
         if (needDocumentBlocks) {
-          documentBlocks.push({ type: 'image', source: { type: 'base64', media_type: IMAGE_MIME[ext], data: buffer.toString('base64') } });
+          if (totalDocBytes + buffer.length > MAX_TOTAL_BYTES) {
+            log(`  [skip-ai] ${path.basename(fp)} — รวมไฟล์ส่ง AI เกิน ${MAX_TOTAL_BYTES / 1024 / 1024}MB ข้ามรูปนี้`);
+          } else {
+            documentBlocks.push({ type: 'image', source: { type: 'base64', media_type: IMAGE_MIME[ext], data: buffer.toString('base64') } });
+            totalDocBytes += buffer.length;
+          }
         }
         usedNames.push(path.basename(fp));
       } else if (ext === '.xlsx' || ext === '.xls') {
@@ -323,6 +370,14 @@ function findForwarderFree(text) {
 }
 const CONTAINER_RE = /\b([A-Z]{3}[UJZR]\d{7})\b/g; // ISO 6346: owner code 3 ตัว + category 1 ตัว + serial 6 หลัก + check digit 1 หลัก
 const AWB_RE = /\b(\d{3})[\s-]?(\d{8})\b/g;
+// AWB มี check digit: หลักสุดท้ายของ serial 8 หลัก = (serial 7 หลักแรก) mod 7 — ตรวจกัน false positive
+// (เดิม regex 3+8 หลักใดๆ จับเบอร์โทร/เลข ref มั่ว → ตีเป็น air → บล็อก B/L + ข้าม ETA ผิดๆ)
+function isValidAwb(serial8) {
+  if (!/^\d{8}$/.test(serial8)) return false;
+  const first7 = parseInt(serial8.slice(0, 7), 10);
+  const check = parseInt(serial8[7], 10);
+  return first7 % 7 === check;
+}
 const THAI_PORTS = ['LAEM CHABANG', 'BANGKOK', 'LAT KRABANG', 'MAP TA PHUT', 'SURAT THANI', 'SONGKHLA'];
 const ORIGIN_COUNTRIES = ['CHINA', 'KOREA', 'SOUTH KOREA', 'VIETNAM', 'TAIWAN', 'HONG KONG', 'JAPAN', 'MALAYSIA', 'INDONESIA', 'SINGAPORE'];
 
@@ -330,15 +385,21 @@ const MONTHS_ABBR = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AU
 // ปีไทยมักเป็น พ.ศ. (ค.ศ. + 543) — ปี >= 2400 ให้ถือว่าเป็น พ.ศ. แล้วแปลงเป็น ค.ศ. เสมอก่อนบันทึก
 function beToCe(year) { return year >= 2400 ? year - 543 : year; }
 function pad2(n) { return String(n).padStart(2, '0'); }
+// ประกอบ ISO เฉพาะเมื่อ เดือน 1-12 / วัน 1-31 สมเหตุสมผล — กันได้ค่าเพี้ยน เช่น "2026-13-45" upsert เข้า production
+function isoIfValid(year, month, day) {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return `${beToCe(year)}-${pad2(month)}-${pad2(day)}`;
+}
 // วันที่ในเอกสารจริงเจอหลายรูปแบบ: "02/07/2026", "18-JUL-2026", "JUL.02,2026" — ลองทั้ง 3 แบบ
+// สมมติ DD/MM (ไม่ใช่ US MM/DD) ตามรูปแบบเอกสารที่ใช้จริง — เป็น best-effort ตาม documented
 function parseFlexibleDate(s) {
   if (!s) return null;
   let m = /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/.exec(s);
-  if (m) return `${beToCe(+m[3])}-${pad2(m[2])}-${pad2(m[1])}`;
+  if (m) return isoIfValid(+m[3], +m[2], +m[1]);
   m = /([A-Za-z]{3})[.,\s\-]+(\d{1,2})\s*,?\s*(\d{4})/.exec(s); // MMM.DD,YYYY
-  if (m && MONTHS_ABBR[m[1].toUpperCase()]) return `${beToCe(+m[3])}-${pad2(MONTHS_ABBR[m[1].toUpperCase()])}-${pad2(m[2])}`;
+  if (m && MONTHS_ABBR[m[1].toUpperCase()]) return isoIfValid(+m[3], MONTHS_ABBR[m[1].toUpperCase()], +m[2]);
   m = /(\d{1,2})[\s\-]([A-Za-z]{3})[\s\-.]+(\d{4})/.exec(s); // DD-MMM-YYYY
-  if (m && MONTHS_ABBR[m[2].toUpperCase()]) return `${beToCe(+m[3])}-${pad2(MONTHS_ABBR[m[2].toUpperCase()])}-${pad2(m[1])}`;
+  if (m && MONTHS_ABBR[m[2].toUpperCase()]) return isoIfValid(+m[3], MONTHS_ABBR[m[2].toUpperCase()], +m[1]);
   return null;
 }
 function findEtdFree(text) {
@@ -367,7 +428,8 @@ function extractFieldsFree(text) {
   const containerCandidates = [...new Set([...upper.matchAll(CONTAINER_RE)].map(m => m[1]))];
   const containerNumbers = containerCandidates.filter(c => { try { return iso6346CheckDigit(c); } catch (e) { return false; } });
 
-  const awbMatches = [...upper.matchAll(AWB_RE)].map(m => `${m[1]}-${m[2]}`);
+  // กรองด้วย check digit — เอาเฉพาะที่เป็น AWB จริง ไม่ใช่เลข 3+8 หลักที่บังเอิญหน้าตาคล้าย
+  const awbMatches = [...upper.matchAll(AWB_RE)].filter(m => isValidAwb(m[2])).map(m => `${m[1]}-${m[2]}`);
   const awbNumber = awbMatches[0] || null;
 
   let portOfDischarge = null;
@@ -407,10 +469,14 @@ function upsertTracking(payload) {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) resolve(JSON.parse(data));
-        else reject(new Error(`upsert ${payload.po_so} ล้มเหลว: HTTP ${res.statusCode} ${data}`));
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(data)); }
+          catch (e) { reject(new Error(`upsert ${payload.po_so}: server ตอบไม่ใช่ JSON — ${e.message}`)); }
+        } else reject(new Error(`upsert ${payload.po_so} ล้มเหลว: HTTP ${res.statusCode} ${data}`));
       });
     });
+    // กัน hang ค้างไม่จำกัดถ้า server รับ connection แต่ไม่ตอบ (เช่นกำลังยุ่งกับ MCP proxy)
+    req.setTimeout(15000, () => req.destroy(new Error(`upsert ${payload.po_so} timeout (15s)`)));
     req.on('error', reject);
     req.write(body);
     req.end();
@@ -429,7 +495,7 @@ async function main() {
 
   let anthropic = null;
   if (process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY.includes('...')) {
-    anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 120000, maxRetries: 2 });
     log('ใช้โหมด AI (ANTHROPIC_API_KEY ตั้งค่าแล้ว) — ดึงได้ครบทุกฟิลด์');
   } else {
     log('[NOTE] ไม่มี ANTHROPIC_API_KEY จริง — ใช้โหมดฟรี (regex+heuristic เท่านั้น) container/AWB/port/ETD แม่นยำสูง ส่วน vessel/voyage/B-L/forwarder เป็น best-effort (จับ pattern โครงสร้างเอกสาร ไม่ใช่ label) อาจผิดได้ในบางเอกสารที่โครงสร้างต่างไปมาก');
@@ -439,8 +505,11 @@ async function main() {
   let processed = 0;
   let skippedBacklog = 0;
 
+  try {
   for (const yearFolder of yearFolders) {
-    const shipmentFolders = discoverShipmentFolders(yearFolder);
+    let shipmentFolders;
+    try { shipmentFolders = discoverShipmentFolders(yearFolder); }
+    catch (e) { log(`[WARN] อ่านโฟลเดอร์ปี ${yearFolder} ไม่ได้ (${e.message}) — ข้ามปีนี้`); continue; }
     for (const folderName of shipmentFolders) {
       const poNumbers = extractPoNumbers(folderName);
       const fullDir = path.join(IMPORT_ROOT, yearFolder, folderName);
@@ -516,8 +585,10 @@ async function main() {
       }
     }
   }
-
-  if (etsSession) await closeEtsSession(etsSession);
+  } finally {
+    // ปิด ETS session เสมอแม้ error โผล่นอก per-folder try (เช่น readdir ล้ม) — กัน chromium ค้าง zombie
+    if (etsSession) await closeEtsSession(etsSession);
+  }
   if (skippedBacklog) log(`[NOTE] เหลือ ${skippedBacklog} โฟลเดอร์ที่ยังไม่ได้สแกน (เกิน ${MAX_FOLDERS_PER_RUN} โฟลเดอร์/รอบ) จะสแกนต่อรอบหน้า`);
   log(`=== จบการสแกน — ประมวลผล ${processed} โฟลเดอร์ ===`);
 }

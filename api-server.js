@@ -8,6 +8,7 @@ const http  = require('http');
 const { Pool } = require('pg');
 const fs    = require('fs');
 const path  = require('path');
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { verifyShipmentLocal } = require('./lib/verify-shipment-local');
 
@@ -33,6 +34,29 @@ const INTEGRITY_DIGEST_FILE = path.join(ROOT, 'integrity_digest.json');
   } catch (e) { console.error('[Config] .env load error:', e.message); }
 })();
 
+// ─── Helpers ที่ใช้ร่วมกันทั้งไฟล์ ────────────────────────────────
+// เขียนไฟล์แบบ atomic: เขียนลง .tmp ก่อนแล้ว rename ทับ — rename บน filesystem เดียวกันเป็น
+// atomic operation ระดับ OS ทำให้ไฟล์ปลายทางไม่มีทางเป็น JSON ที่ถูกตัดครึ่งแม้ process ตาย/ไฟดับ
+// ระหว่างเขียน (กันไฟล์ข้อมูลหลัก เช่น tracking_data.json corrupt แล้วแอปมองเป็น [] ข้อมูลหายหมด)
+function writeFileAtomic(file, contents) {
+  const tmp = file + '.' + process.pid + '.tmp';
+  fs.writeFileSync(tmp, contents, 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+// เปรียบเทียบรหัสผ่านแบบ constant-time — กัน timing attack (สำคัญเมื่อ server วิ่งบน HTTP/เปิดสู่เครือข่าย)
+// เทียบความยาวก่อนด้วย timingSafeEqual บน buffer ที่ pad ให้เท่ากัน เพื่อไม่ให้ความยาวรั่วผ่านเวลา
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a ?? ''), 'utf8');
+  const bufB = Buffer.from(String(b ?? ''), 'utf8');
+  if (bufA.length !== bufB.length) {
+    // เทียบ dummy ความยาวเท่ากันเพื่อคงเวลาให้ใกล้เคียง แล้วคืน false เสมอ
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASS) {
   console.error('[Config] ไม่พบค่าเชื่อมต่อฐานข้อมูล — สร้างไฟล์ .env จาก .env.example ก่อน');
   process.exit(1);
@@ -48,7 +72,7 @@ function loadTracking() {
 }
 function saveTracking(data) {
   try {
-    fs.writeFileSync(TRACKING_FILE, JSON.stringify(data), 'utf8');
+    writeFileAtomic(TRACKING_FILE, JSON.stringify(data));
     return true;
   } catch(e) { console.error('[Tracking] save error:', e.message); return false; }
 }
@@ -70,6 +94,11 @@ function backupTracking() {
     const stamp = new Date().toISOString().slice(0, 10);
     const dest  = path.join(BACKUP_DIR, `tracking-${stamp}.json`);
     if (!fs.existsSync(dest)) {
+      // กัน backup ไฟล์ที่ corrupt/ว่างทับสำเนาดี — ตรวจว่า parse เป็น array ได้ก่อนค่อย copy
+      const raw = fs.readFileSync(TRACKING_FILE, 'utf8');
+      let valid = false;
+      try { valid = Array.isArray(JSON.parse(raw)); } catch (e) {}
+      if (!valid) { console.error('[Backup] ข้าม — tracking_data.json อ่านเป็น array ไม่ได้ (อาจ corrupt) ไม่ทับ backup'); return; }
       fs.copyFileSync(TRACKING_FILE, dest);
       console.log('[Backup] saved', path.basename(dest));
     }
@@ -94,7 +123,7 @@ let _snapSaveTimer = null;
 function saveSnapshot() {
   clearTimeout(_snapSaveTimer);
   _snapSaveTimer = setTimeout(() => {
-    try { fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snapshot), 'utf8'); }
+    try { writeFileAtomic(SNAPSHOT_FILE, JSON.stringify(snapshot)); }
     catch (e) { console.error('[Snapshot] save error:', e.message); }
   }, 500);
 }
@@ -277,13 +306,27 @@ async function liveOrSnapshot(key, sql, force) {
 }
 
 // ─── Postgres connection (read-only user, ค่าจาก .env) ───────────
+// TLS: ถ้าตั้ง DB_SSL_CA (path ไปยัง AWS RDS CA bundle) จะ verify cert เต็มรูปแบบ (rejectUnauthorized:true)
+// กัน MITM ต่อการเชื่อม RDS — แนะนำให้ตั้งใน production ดาวน์โหลด CA ได้จาก
+// https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+// ถ้าไม่ได้ตั้ง จะ fallback เป็นเข้ารหัสแต่ไม่ verify (เดิม) เพื่อไม่ให้ deploy ที่ยังไม่มี CA พังทันที
+function buildDbSsl() {
+  const caPath = process.env.DB_SSL_CA;
+  if (caPath) {
+    try { return { ca: fs.readFileSync(caPath, 'utf8'), rejectUnauthorized: true }; }
+    catch (e) { console.error('[DB] อ่าน DB_SSL_CA ไม่ได้ (' + e.message + ') — fallback ไม่ verify cert'); }
+  } else {
+    console.warn('[DB] ⚠️  ไม่ได้ตั้ง DB_SSL_CA — เชื่อม RDS แบบเข้ารหัสแต่ไม่ verify cert (เสี่ยง MITM); ตั้งค่าใน production');
+  }
+  return { rejectUnauthorized: false };
+}
 const db = new Pool({
   host:     process.env.DB_HOST,
   port:     parseInt(process.env.DB_PORT) || 5432,
   database: process.env.DB_NAME,
   user:     process.env.DB_USER,
   password: process.env.DB_PASS,
-  ssl:      { rejectUnauthorized: false },
+  ssl:      buildDbSsl(),
   max:      5,
   idleTimeoutMillis: 30000,
   // ไม่ตั้งไว้แต่เดิม ทำให้ query ค้างรอไม่จำกัดเวลาเมื่อเครือข่ายไป RDS มีปัญหา
@@ -347,7 +390,7 @@ try {
 } catch (e) { /* ไม่มีไฟล์ตอน deploy ครั้งแรก — เริ่มจากว่างเปล่า */ }
 
 function saveIntegritySeenKeys() {
-  try { fs.writeFileSync(INTEGRITY_SEEN_FILE, JSON.stringify([...integritySeenKeys])); }
+  try { writeFileAtomic(INTEGRITY_SEEN_FILE, JSON.stringify([...integritySeenKeys])); }
   catch (e) { console.error('[Integrity] เซฟ integrity_seen.json ไม่สำเร็จ:', e.message); }
 }
 
@@ -438,7 +481,7 @@ async function maybeSendWeeklyDigest() {
       text: `สรุปการตรวจสอบข้อมูลอัตโนมัติประจำสัปดาห์\n\n${statusLine}\nตรวจล่าสุด: ${ir.ranAt || '-'} · เช็ค ${(ir.importChecked||0)+(ir.exportChecked||0)} รายการ\n\n${detail || '(ไม่มีรายการที่ต้องรายงาน)'}\n\nอีเมลนี้ส่งทุก 7 วันเพื่อยืนยันว่าระบบแจ้งเตือนยังทำงานอยู่ — ถ้าไม่ได้รับตามรอบ แปลว่าระบบอาจมีปัญหา\nDashboard: http://localhost:3000/`,
     });
     lastDigestAt = now;
-    fs.writeFileSync(INTEGRITY_DIGEST_FILE, JSON.stringify({ lastDigestAt }));
+    writeFileAtomic(INTEGRITY_DIGEST_FILE, JSON.stringify({ lastDigestAt }));
     console.log('[Integrity] ส่งสรุปรายสัปดาห์ไปที่', to);
   } catch (e) {
     console.error('[Integrity] ส่งสรุปรายสัปดาห์ไม่สำเร็จ:', e.message);
@@ -900,6 +943,32 @@ const MIME = {
   '.svg' : 'image/svg+xml',
 };
 
+// ─── security headers พื้นฐาน (ใส่ทุก response) ───────────────────
+// กัน MIME sniffing, clickjacking และจำกัดการรั่วของ referrer — ราคาถูกและไม่กระทบ same-origin app
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Referrer-Policy': 'same-origin',
+};
+
+// ─── rate limiter แบบง่าย (in-memory, per-IP fixed window) ─────────
+// ใช้กับ endpoint ที่แพง (verify-shipment = spawn child process ต่อ PDF) กันคนยิงรัวจนทรัพยากรหมด
+// single-process นี้เสิร์ฟ production ทั้งระบบ ถ้าล้ม = ทุกคนใช้งานไม่ได้พร้อมกัน
+const _rateBuckets = new Map();
+function rateLimit(key, max, windowMs) {
+  const now = Date.now();
+  const b = _rateBuckets.get(key);
+  if (!b || now > b.reset) { _rateBuckets.set(key, { count: 1, reset: now + windowMs }); return true; }
+  if (b.count >= max) return false;
+  b.count++;
+  return true;
+}
+// เก็บกวาด bucket หมดอายุเป็นระยะ กัน Map โตไม่จำกัด
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, b] of _rateBuckets) if (now > b.reset) _rateBuckets.delete(k);
+}, 5 * 60 * 1000).unref();
+
 // ─── JSON response helper ─────────────────────────────────────────
 // same-origin เท่านั้น — ไม่เปิด CORS ให้ origin อื่น
 function jsonOk(res, data) {
@@ -907,6 +976,7 @@ function jsonOk(res, data) {
   res.writeHead(200, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-cache',
+    ...SECURITY_HEADERS,
   });
   res.end(body);
 }
@@ -972,7 +1042,7 @@ const server = http.createServer(async (req, res) => {
     if (hdr.startsWith('Basic ')) {
       try {
         const dec = Buffer.from(hdr.slice(6), 'base64').toString('utf8');
-        authed = dec.split(':').slice(1).join(':') === process.env.APP_PASSWORD;
+        authed = safeEqual(dec.split(':').slice(1).join(':'), process.env.APP_PASSWORD);
       } catch(e) {}
     }
     if (!authed) {
@@ -1411,7 +1481,10 @@ const server = http.createServer(async (req, res) => {
       const params = new URL('http://x' + req.url).searchParams;
       const co      = params.get('company') || '';
       const months  = Math.min(parseInt(params.get('months')) || 8, 24);
-      const q       = (params.get('q') || '').trim();
+      // จำกัดความยาว + charset ของ q ก่อนนำไปใช้ — ฝั่ง MCP ต้องฝัง q เป็น SQL literal (escape ' เอง)
+      // การ cap ความยาว + ตัดอักขระควบคุม/backslash เป็น defense-in-depth เพิ่มจาก escape (กันพึ่ง
+      // standard_conforming_strings อย่างเดียว) และกัน ReDoS/query ยาวผิดปกติ
+      const q       = (params.get('q') || '').trim().slice(0, 80).replace(/[\\\x00-\x1f]/g, '');
       const coFilter   = co === 'KOB' ? 'AND am.company_id = 1'
                        : co === 'BTV' ? 'AND am.company_id = 2' : '';
       const coFilterPo = co === 'KOB' ? 'AND po.company_id = 1'
@@ -1850,7 +1923,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (reqUrl === '/api/cache/clear' && method === 'GET') {
+    // POST (ไม่ใช่ GET) เพื่อกัน CSRF ผ่าน <img>/ลิงก์ — endpoint นี้เปลี่ยน state (ล้าง cache + reset breaker)
+    if (reqUrl === '/api/cache/clear' && method === 'POST') {
       cache.data = {}; cache.ts = {};
       markDbUp(); // กด Sync = อยากลอง Odoo จริง ปลด circuit breaker
       jsonOk(res, { ok: true, message: 'Cache cleared' });
@@ -1941,7 +2015,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const { po_so, password } = parsedBody;
-        if (password !== process.env.DELETE_PASSWORD) {
+        if (!safeEqual(password, process.env.DELETE_PASSWORD)) {
           auditLog('delete_denied', po_so || '?', ['wrong_password'], req.socket.remoteAddress);
           jsonErr(res, 401, 'รหัสผ่านไม่ถูกต้อง');
           return;
@@ -2079,7 +2153,7 @@ const server = http.createServer(async (req, res) => {
           jsonErr(res, 403, 'ฟีเจอร์ลบยังไม่เปิดใช้งาน — ต้องตั้งค่า DELETE_PASSWORD ใน .env ก่อน');
           return;
         }
-        if (parsedBody.password !== process.env.DELETE_PASSWORD) {
+        if (!safeEqual(parsedBody.password, process.env.DELETE_PASSWORD)) {
           auditLog('shipment_delete_denied', String(shipId), ['wrong_password'], req.socket.remoteAddress);
           jsonErr(res, 401, 'รหัสผ่านไม่ถูกต้อง');
           return;
@@ -2100,6 +2174,11 @@ const server = http.createServer(async (req, res) => {
     // ให้เปลี่ยนเป็นตรวจในเครื่องแทน หลัง API key ใช้งานไม่ได้ — ดู lib/verify-shipment.js
     // สำหรับเวอร์ชัน AI เดิมถ้าต้องการกลับไปใช้ในอนาคต)
     if (reqUrl === '/api/verify-shipment' && method === 'POST') {
+      // endpoint แพง (spawn child process ต่อ PDF) — จำกัด 10 ครั้ง/นาที ต่อ IP กันยิงรัวจนทรัพยากรหมด
+      if (!rateLimit('verify:' + (req.socket.remoteAddress || '?'), 10, 60 * 1000)) {
+        jsonErr(res, 429, 'เรียกตรวจเอกสารบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่');
+        return;
+      }
       try {
         const result = await verifyShipmentLocal(req);
         // ถ้าผู้ใช้ระบุเลข PO มาด้วย และดึงวันที่ ETD จาก B/L/AWB ได้จริง (ไม่ใช่ draft ที่ยังว่าง)
@@ -2157,7 +2236,7 @@ const server = http.createServer(async (req, res) => {
       res.end('404 Not Found: ' + reqUrl);
       return;
     }
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'text/plain' });
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'text/plain', ...SECURITY_HEADERS });
     res.end(data);
   });
 });
@@ -2184,6 +2263,24 @@ process.on('unhandledRejection', (reason) => {
 // HOST=127.0.0.1 (ค่าเริ่มต้น) = เข้าได้เฉพาะเครื่องนี้
 // ถ้าต้องการเปิดให้เครือข่าย ให้ตั้ง HOST=0.0.0.0 + APP_PASSWORD ใน .env
 const HOST = process.env.HOST || '127.0.0.1';
+// ถ้า bind สู่เครือข่าย (ไม่ใช่ loopback) แต่ไม่ตั้ง APP_PASSWORD = ใครก็ได้บนเครือข่ายเขียน/แก้/ลบ
+// ข้อมูล Odoo production ได้ ปฏิเสธการ start ทันทีเพื่อกันเปิดช่องโดยไม่ตั้งใจ
+const isLoopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
+if (!isLoopback && !process.env.APP_PASSWORD) {
+  console.error(`[Config] ❌ HOST=${HOST} เปิดสู่เครือข่าย แต่ไม่ได้ตั้ง APP_PASSWORD — อันตราย ปฏิเสธการเริ่มระบบ`);
+  console.error('         ตั้ง APP_PASSWORD ใน .env ก่อน หรือใช้ HOST=127.0.0.1 (เฉพาะเครื่องนี้)');
+  process.exit(1);
+}
+// ถ้า port 3000 ถูกใช้อยู่ (มี instance อื่น/supervisor ซ้อนกันรันทับ) แจ้งชัดเจนแล้ว exit แทนที่จะ
+// โยน uncaughtException ที่อ่านยาก — กัน crash loop เงียบตอนมี supervisor 2 ตัว (pm2 + start-server.vbs)
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[FATAL] port ${PORT} ถูกใช้งานอยู่แล้ว — มี api-server อีกตัวรันอยู่หรือ supervisor ซ้อนกัน? ปิดตัวที่รันอยู่ก่อน หรือใช้ supervisor เพียงตัวเดียว (pm2 หรือ start-server.vbs — ห้ามทั้งคู่พร้อมกัน)`);
+    process.exit(1);
+  }
+  console.error('[FATAL] server error:', err);
+  process.exit(1);
+});
 server.listen(PORT, HOST, () => {
   const odooStatus = ODOO.user ? `✓ ${ODOO.user}` : '✗ ไม่ได้ตั้งค่า (set ODOO_USER/ODOO_PASS)';
   const authStatus = process.env.APP_PASSWORD ? '✓ Basic Auth เปิดอยู่' : '✗ ปิด (ตั้ง APP_PASSWORD เพื่อเปิด)';
