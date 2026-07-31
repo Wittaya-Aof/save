@@ -99,13 +99,37 @@ server.log ว่า AutoProbe ล้มทุกรอบ แต่ MCP bridge 
   โอเวอร์เคานต์ 1 แถวผี + ไม่มี guard ว่าถังกว้างกว่าตู้ (ถัง Ø3000mm ในตู้กว้าง 2350mm ยังคืนค่าบวก)
   แก้เป็น `floor((W - d)/rowH)+1` + guard `d<=W && d<=L` (เทียบ brute force ตรงทุกเคส)
 
-**ยังไม่แก้ (ตั้งใจ) — ควรคุยก่อน**
-- `/api/debug/expense-structure` เป็น scaffolding สมัยสำรวจ schema ไม่มี UI ใช้ ยิง ILIKE ไม่มี index บน
-  account_move 4 ล้านแถว 5 query/ครั้ง — เสนอลบทั้ง endpoint
-- `/api/expense-pos` (LIMIT 8000), `/api/costs-for-po`, `/api/shipments` ยังไม่มี MCP fallback เพราะ**ไม่มี UI
-  เรียกใช้เลย** (expense-pos ถ้าจะทำต้อง paginate 67 รอบ — ควรลด LIMIT ก่อน)
-- Odoo JSON-RPC ยังต่อ port 80 (`ODOO.port: 80`) = ส่ง user/pass เป็น cleartext — ควรย้ายเป็น 443/https
-- ตรวจ algorithm จัดเรียงตู้ (packLayout/calcBox) แบบละเอียดยังไม่ได้ทำ — เป็นงานก้อนแยก
+## ลบ dead code ก้อนใหญ่ (2026-07-31 — AOF อนุมัติแล้ว)
+ตัดออก **570 บรรทัด** (api-server.js 2334 → 1764 บรรทัด, −24%) หลังยืนยันด้วยหลักฐานว่าไม่มีใครใช้:
+
+| ที่ลบ | หลักฐานว่าตายจริง |
+|---|---|
+| Odoo JSON-RPC layer ทั้งชุด (`ODOO`, `odooPost`, `odooLogin`, `odooKw`, `isOdooSessionExpired`) | `odooKw` ถูกเรียก 3 จุด เป็น `logistics.shipment` ทั้งหมด · `odoo.kissofbeauty.co.th` **ไม่ resolve ใน DNS** · `ODOO_USER`/`ODOO_PASS` ไม่ได้ตั้งใน .env ด้วยซ้ำ (odooLogin throw ก่อนยิง request) |
+| `SQL_SHIPMENTS` + `/api/shipments` GET/POST/PATCH/DELETE | ตาราง `logistics_shipment` **ไม่มีอยู่ใน Odoo** (เช็คแล้ว: `to_regclass` = false, ตาราง `logistics%` = 0 ตัว) · ไม่มี UI เรียก · AOF ยืนยันไม่มีแผนติดตั้ง module |
+| `/api/debug/expense-structure` | scaffolding สมัยสำรวจ schema · ไม่มี UI เรียก · ยิง ILIKE ไม่มี index บน account_move 4 ล้านแถว 5 query/ครั้ง |
+| `/api/expense-pos` (LIMIT 8000) + `/api/costs-for-po` | ถูกแทนที่ด้วย `/api/logistics-bills` + bill picker แล้ว · ไม่มี UI เรียก · ตัวเก่าตอบ 500 ตลอดเพราะไม่มี MCP fallback |
+
+**เหลือ 17 endpoint** = 16 ตัวที่ frontend เรียกจริง + `/api/alive` (watchdog) — ทดสอบแล้ว 200 ทุกตัว
+พร้อมข้อมูลจริง, ตัวที่ลบตอบ 404 ทุกตัว, Playwright ทั้ง light+dark = 0 pageerror ผลเหมือนก่อนลบเป๊ะ
+`.env.example` ถอด `ODOO_USER`/`ODOO_PASS` ออกแล้ว · banner ตอน start เปลี่ยนแถว "Odoo RPC" เป็น "MCP"
+
+> ผลข้างเคียงที่ดี: ตอนนี้ **ไม่มี code path ไหนเขียนกลับเข้า Odoo เลย** — แอปนี้อ่านอย่างเดียว
+> (Postgres direct → MCP bridge) ส่วนที่เขียนได้มีแค่ `tracking_data.json` ในเครื่อง ลด blast radius ลงมาก
+
+## ยังไม่แก้ (ตั้งใจ)
+- **ตรวจ algorithm จัดเรียงตู้ (`packLayout`/`calcBox`) — งานก้อนแยก** ไม่ใช่ dead code: มันคำนวณ
+  "ต้องใช้กี่ตู้" = เงินจริงตอนจอง รอบนี้แก้แค่จุดที่พิสูจน์ด้วยเลขได้ (สูตร hex-pack)
+  ค้างตาไว้แต่ยังไม่ยืนยัน: `calcBox` ตอนใช้พาเลทคิด `bpp` จากการวางกล่องแนวเดียว ไม่ลองหมุนกล่อง
+  ภายในพาเลทและไม่คิด overhang → น่าจะ**ประเมินต่ำกว่าจริง** (ปลอดภัยกว่าเกิน แต่อาจสั่งตู้เกินจำเป็น)
+  **ต้องมีผลจัดเรียงจริงจากงานที่โหลดแล้ว 2-3 เคสมาเทียบ** ตรวจจากโค้ดล้วนไม่คุ้ม
+
+## ถ้า deploy ขึ้น Hostinger (AOF บอกว่าอาจทำ)
+- `HOST=0.0.0.0` **บังคับต้องตั้ง `APP_PASSWORD`** ไม่งั้น server ปฏิเสธ start (guard มีอยู่แล้ว ตั้งใจ)
+- direct RDS (5432) **อาจใช้ได้จริงบน Hostinger** เพราะ IP นิ่งกว่า → เอาเข้า security-group allowlist ได้
+  ถ้าได้ MCP bridge จะกลายเป็น fallback จริงๆ ไม่ใช่ทางหลักแบบบนเครื่องนี้ (เช็คด้วย `/api/ping`)
+- ต้องขน `.env` + `rds-ca.pem` ไปด้วย (ไม่อยู่ใน git) และตั้ง `DB_SSL_CA` ให้ชี้ path ใหม่
+- `start-server.vbs` เป็นของ Windows — บน Linux ต้องใช้ pm2 (`ecosystem.config.js` มีอยู่แล้ว) หรือ systemd
+- `vendor/*.js` + in-browser Babel: โหลดช้ากว่าที่ควรบน production แต่ทำให้เปิดได้แม้เน็ตล่ม (ตั้งใจ)
 
 ## Notes
 - ✅ xlsx อัปเดตเป็น **0.20.3** (จาก cdn.sheetjs.com) แก้ Prototype Pollution/ReDoS แล้ว (0 vulnerabilities)
