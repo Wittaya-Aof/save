@@ -525,7 +525,7 @@ var I18N={
     inside_dims:'ขนาดภายใน', cont_vol:'ปริมาตรตู้', cont_cap:'รับน้ำหนัก', view3d:'มุมมอง 3D',
     col_name:'ชื่อ', col_pkg:'แพ็คเกจ', col_pcs:'จำนวนชิ้น', col_vol:'ปริมาตร (ม³)', col_wt:'น้ำหนัก (กก.)', col_total:'รวม',
     col_acrossW:'ตามกว้าง', col_alongL:'ตามยาว', col_layers:'ชั้นซ้อน',
-    pm_rot:'หันขวาง', pm_rot_hint:'พาเลทใบนี้ต้องหันขวาง 90° กับใบอื่น ถ้าวางทิศเดียวกันหมดจะใส่ไม่ครบตามแผน',
+    pm_rot:'หันขวาง', pm_rot_hint:'พาเลทใบนี้ต้องหันขวาง 90° สลับกับใบอื่น (วางแบบกังหัน/สอดขัดกัน) — ถ้าวางทิศเดียวกันหมดตามความเคยชิน จะใส่ได้น้อยกว่าแผนนี้ ดูตำแหน่งจริงในมุมมอง 3D',
     pm_title:'รายละเอียดพาเลท', pm_pallet:'พาเลทที่', pm_dims:'ขนาด (ยาว×กว้าง×สูง มม.)', pm_gw:'G.W. (กก.)', pm_tare:'น้ำหนักพาเลท', pm_products:'สินค้า', pm_pcs:'ชิ้น',
     export_pdf:'ส่งออกเป็น PDF', copy_req:'คัดลอกคำขอ', copied:'คัดลอกคำขอแล้ว', copy_fail:'คัดลอกไม่สำเร็จ',
     export_cipl:'Export ข้อมูลสำหรับ CI/PL', cipl_exported:'ดาวน์โหลดไฟล์ข้อมูล CI/PL แล้ว — นำไฟล์นี้ไปให้ Claude เพื่อกรอกข้อมูลการค้าที่เหลือและสร้างเอกสารจริง',
@@ -580,7 +580,7 @@ var I18N={
     inside_dims:'Internal size', cont_vol:'Container volume', cont_cap:'Capacity', view3d:'3D View',
     col_name:'Name', col_pkg:'Packages', col_pcs:'Qty (PCS)', col_vol:'Volume (m³)', col_wt:'Weight (kg)', col_total:'Total',
     col_acrossW:'Across W', col_alongL:'Along L', col_layers:'Layers',
-    pm_rot:'turn 90°', pm_rot_hint:'This pallet must be turned 90° relative to the others — loading them all the same way will not fit the planned quantity',
+    pm_rot:'turn 90°', pm_rot_hint:'This pallet must be turned 90° so it interlocks with the others (pinwheel pattern) — loading them all the same way fits fewer pallets than this plan. See the 3D view for exact positions',
     pm_title:'Pallet details', pm_pallet:'Pallet', pm_dims:'Dimensions (L×W×H mm)', pm_gw:'G.W. (kg)', pm_tare:'Pallet tare', pm_products:'Products', pm_pcs:'pcs',
     export_pdf:'Export PDF', copy_req:'Copy request', copied:'Request copied', copy_fail:'Copy failed',
     export_cipl:'Export CI/PL data', cipl_exported:'CI/PL data file downloaded — bring it to Claude to fill in remaining trade details and generate the actual documents',
@@ -1637,6 +1637,164 @@ function calcFit(it,c){
 // NOTE: per-item grid stats (across/along/layers) now come from packLayout(result).stats,
 // so the results table and the 3D view are always derived from the same packing pass.
 
+// ── PALLET FLOOR PLAN ─────────────────────────────────────────────────────────
+// คืน "รายการ slot" = ตำแหน่งพาเลททุกใบบนพื้นตู้ {x,y,along,across} โดยแต่ละใบมีเรขาคณิตของตัวเอง
+// (หันตามยาวตู้ หรือหันขวาง) การันตีว่าอยู่ในตู้ทั้งหมดและไม่ทับกัน
+//
+// ⭐ ทำไมต้องมี: grid ทิศเดียว (+ ใบท้ายตู้หันขวาง) ใส่พาเลทได้ **น้อยกว่าที่ใส่ได้จริง**
+// AOF ทักว่า "ตู้สั้นใส่ได้ 10 พาเลท ทำไมจัดแค่ 9" — ตรวจแล้วว่าถูก และไม่ใช่แค่ตู้เดียว
+// วิธีตรวจ (tests/lib/pallet-optimum.mjs — ไม่ได้ใช้โค้ดนี้ช่วยคิด จึงเป็น oracle อิสระจริง):
+//   • ขอบล่าง = DFS ค้นหาการวางทุกแบบบน normalized position (ดันชิดซ้าย-ล่าง) แบบ exhaustive
+//   • ขอบบน   = measure argument: n ≤ L × max{ i/wA + j/wB : i·hA + j·hB ≤ W }
+//     (ที่ x ใดๆ พาเลทซ้อนทับกันในแนวกว้างได้จำกัด → อินทิเกรตจำนวนใบตามความยาวได้เพดาน)
+//   ผลคือ **25 จาก 40 คู่ (ตู้ × พาเลท) เดิมรายงานต่ำกว่าความจริง** เช่น
+//     20'GP + 1200×1000 → เดิม 9 · จริง 10 (ขอบบน 10 ด้วย = optimal พิสูจน์แล้ว)
+//     20'GP + 1200×800  → เดิม 9 · จริง 11 |  40'HC + 1200×800 → เดิม 20 · จริง 25
+//
+// ท่าที่หายไป 2 อย่าง (ทั้งคู่เป็นการวางที่หน้างานใช้จริง ไม่ใช่เล่ห์คณิตศาสตร์):
+//  1) **กังหัน (pinwheel)** — จัตุรัส (ยาว+กว้าง)² ใส่ได้ 4 ใบโดยหมุนไล่กัน เหลือรูกลางเล็กๆ
+//     20'GP: กังหัน 2 ชุด (x 0–2200, 2200–4400) = 8 ใบ + ท้ายตู้ 1495mm อีก 2 ใบ = 10
+//     ความหนาแน่นของจัตุรัสกังหัน = 4×1.2/4.84 = 99.2% ซึ่ง grid ทิศเดียวทำไม่ได้เลย
+//  2) **แบ่งเป็นแถบตามความกว้าง (two-band)** — แถบล่างหันทางหนึ่ง แถบบนหันอีกทาง
+//     20'GP + euro: แถบล่าง (กว้าง 1200) วางตามยาว 7 ใบ + แถบบน (กว้าง 800 ที่เหลือ) 4 ใบ = 11
+//
+// โครงสร้าง: guillotine (ตัดตามยาว/ตามกว้างซ้อนกันได้ 4 ชั้น) + leaf เป็น grid หรือกังหัน
+// ครอบทั้งสองท่าข้างบนพร้อมกัน · ยืนยันว่าได้ optimal ครบ 40/40 คู่ ใช้เวลาสูงสุด ~70ms → cache ไว้
+//
+// ⚠ ห้ามใช้เมื่อ SKU ในกลุ่มมี rotH=false — การหันพาเลทขวางทำให้ด้านกล่องที่เคยหันตามความยาวตู้
+// ไปหันตามความกว้างตู้แทน = การสลับ L↔W บนพื้นเทียบกับตู้ ซึ่งเป็นสิ่งที่ธง rotH คุมอยู่
+function palGrid(Lx,Ly,d0,d1){
+  var cols=Math.floor(Lx/d0), rows=Math.floor(Ly/d1);
+  if(cols<1||rows<1)return [];
+  // แถวแรกชิดผนังด้านหนึ่ง แถวสุดท้ายชิดผนังอีกด้าน ที่เหลือกระจายเท่ากัน (พฤติกรรมเดิม)
+  // ปลอดภัยเพราะ rows*d1 <= Ly เสมอ และการกระจายอยู่ในกรอบ Ly ของบริเวณนั้น
+  var yOf=function(r){ return rows>1?Math.round(r*(Ly-d1)/(rows-1)):0; };
+  var s=[];
+  for(var i=0;i<cols;i++)for(var r=0;r<rows;r++)s.push({x:i*d0,y:yOf(r),along:d0,across:d1});
+  return s;
+}
+// แผนที่ได้จำนวนใบมากสุด: guillotine + leaf กังหัน (คืน [] ถ้าพาเลทจัตุรัสหรือเกินงบคำนวณ)
+function palPlanBest(spanL,spanW,pL,pW){
+  var a=Math.max(pL,pW), b=Math.min(pL,pW);
+  if(a===b||b<=0)return [];                       // พาเลทจัตุรัส: หมุนแล้วเหมือนเดิม ไม่มีอะไรได้เพิ่ม
+  // ── งบคำนวณ ──
+  // พาเลทยิ่งเล็กเทียบกับตู้ ตำแหน่งตัดยิ่งเยอะแบบทวีคูณ (custom 400×300 ในตู้ 40'HC = 280 ตำแหน่ง
+  // ใช้เวลา 2.3 วิ/ตู้ ซึ่งช้าเกินรับได้เพราะหน้าเว็บคำนวณทุกตู้พร้อมกัน) และเป็นเคสที่กำไรน้อยอยู่แล้ว
+  // เพราะเศษที่เหลือเล็กเมื่อเทียบกับตัวพาเลท → grid ใกล้ optimal อยู่แล้ว
+  // พาเลทมาตรฐานทุก preset อยู่ที่ 10-30 ตำแหน่ง ห่างจากเพดานนี้มาก (วัดแล้ว: ทุกตู้รวมกัน 182ms
+  // ครั้งแรก แล้ว cache ทำให้ครั้งต่อไปเหลือ 3-6ms)
+  var _slots=Math.floor(spanL/b)*Math.floor(spanW/b);
+  if(_slots>160)return [];
+  var memo={}, cutMemo={}, budget=200000;
+  var shift=function(list,dx,dy){ return list.map(function(s){
+    return {x:s.x+dx,y:s.y+dy,along:s.along,across:s.across}; }); };
+  // ตำแหน่งตัดที่ "ลงตัวกับพาเลท" = i·a + j·b · เอาแค่ครึ่งแรกพอ เพราะตัดที่ x กับ len−x
+  // ให้ผลรวมชุดเดียวกัน (แบ่งเป็นสองส่วนเหมือนกัน แค่สลับซ้ายขวา) — ตัดงานทิ้งครึ่งหนึ่งฟรีๆ
+  var cuts=function(len){
+    if(cutMemo[len])return cutMemo[len];
+    var seen={}, out=[];
+    for(var i=0;i*a<=len;i++)for(var j=0;i*a+j*b<=len;j++){
+      var v=i*a+j*b; if(v>0&&v*2<=len&&!seen[v]){seen[v]=1;out.push(v);}
+    }
+    out.sort(function(m,n){return m-n;});
+    cutMemo[len]=out;
+    return out;
+  };
+  function best(Lx,Ly,depth){
+    if(Lx<b||Ly<b)return [];
+    var key=Lx+','+Ly+','+depth;
+    if(memo[key])return memo[key];
+    if(budget--<=0)return [];
+    var r=palGrid(Lx,Ly,a,b), r2=palGrid(Lx,Ly,b,a);
+    if(r2.length>r.length)r=r2;
+    if(depth>0){
+      var S=a+b, cand;
+      if(Lx>=S&&Ly>=S){                            // กังหัน 4 ใบ + ที่เหลือทางขวา + ที่เหลือด้านบน
+        cand=[{x:0,y:0,along:a,across:b},          // ล่างซ้าย นอน
+              {x:a,y:0,along:b,across:a},          // ล่างขวา ตั้ง
+              {x:S-a,y:S-b,along:a,across:b},      // บนขวา นอน
+              {x:0,y:S-a,along:b,across:a}]        // บนซ้าย ตั้ง
+          .concat(shift(best(Lx-S,Ly,depth-1),S,0), shift(best(S,Ly-S,depth-1),0,S));
+        if(cand.length>r.length)r=cand;
+      }
+      cuts(Lx).forEach(function(x){
+        cand=best(x,Ly,depth-1).concat(shift(best(Lx-x,Ly,depth-1),x,0));
+        if(cand.length>r.length)r=cand;
+      });
+      cuts(Ly).forEach(function(y){
+        cand=best(Lx,y,depth-1).concat(shift(best(Lx,Ly-y,depth-1),0,y));
+        if(cand.length>r.length)r=cand;
+      });
+    }
+    memo[key]=r;
+    return r;
+  }
+  return best(spanL,spanW,4);
+}
+var _palPlanCache={};
+// รายการ "แผนผังตัวเลือก" ทั้งหมดที่จะเอาไปให้คะแนน — grid ทิศเดียวทั้งสองทิศอยู่ในลิสต์ **เสมอ**
+// จึงรับประกันว่าผลลัพธ์ไม่แย่กว่าพฤติกรรมเดิม (เดิมเลือกดีสุดจาก grid สองทิศ + ท้ายตู้)
+function palPlanCandidates(spanL,spanW,pL,pW,allowMix){
+  var key=[spanL,spanW,pL,pW,allowMix?1:0].join('|');
+  if(!_palPlanCache[key]){
+    var out=[], pairs=(pL===pW)?[[pL,pW]]:[[pL,pW],[pW,pL]];
+    pairs.forEach(function(d){
+      var g=palGrid(spanL,spanW,d[0],d[1]);
+      if(!g.length)return;
+      out.push(g);
+      if(allowMix){                                // grid + ใบท้ายตู้หันขวาง (ของเดิม)
+        var used=Math.floor(spanL/d[0])*d[0], tail=spanL-used;
+        if(tail>=d[1]&&d[0]<=spanW){
+          var rows=Math.floor(spanW/d[0]), ex=g.slice();
+          var tY=function(r){ return rows>1?Math.round(r*(spanW-d[0])/(rows-1)):0; };
+          for(var r=0;r<rows;r++)ex.push({x:used,y:tY(r),along:d[1],across:d[0]});
+          out.push(ex);
+        }
+      }
+    });
+    if(allowMix){
+      var bp=palPlanBest(spanL,spanW,pL,pW);
+      if(bp.length)out.push(bp);
+    }
+    _palPlanCache[key]=out;
+  }
+  // คืนสำเนาเสมอ — ผู้เรียกผูก slot เข้ากับ pallet object (pal.slot) จึงต้องไม่ให้แชร์ของใน cache
+  return _palPlanCache[key].map(function(pl){ return pl.map(function(s){
+    return {x:s.x,y:s.y,along:s.along,across:s.across}; }); });
+}
+// จำนวนกล่อง 1 ชั้นที่ SKU นี้วางบน slot นี้ได้ — ต้อง "ลองหมุนกล่องบนพื้นพาเลท" ด้วย
+// ⚠ ห้ามคิดแค่ทิศตามที่ส่งมา: ตอนวางจริง palBox() เลือกทิศกล่องที่ดีที่สุดต่อพาเลทอยู่แล้ว
+// ถ้าตอนให้คะแนนแผนไม่ลองหมุน จะประเมินแผนที่ "ต้องหมุนกล่องจึงจะคุ้ม" ต่ำกว่าความจริง
+// (วัดจริง: พาเลท 800×600 กับกล่อง 300×250 — ไม่หมุน 4 กล่อง/ชั้น หมุนแล้ว 6 กล่อง/ชั้น
+//  ทำให้แผน 3 ใบเสมอกับแผน 2 ใบ แล้วแพ้ที่ tie-break → ของหายไป 54 กล่อง)
+function palSlotFit(bL,bW,slot,rot){
+  var n=Math.floor(slot.along/bL)*Math.floor(slot.across/bW);
+  if(rot){ var m=Math.floor(slot.along/bW)*Math.floor(slot.across/bL); if(m>n)n=m; }
+  return n;
+}
+// ให้คะแนนแผน: (1) รองรับ SKU ได้กี่ชนิด (2) กล่อง/ชั้นถ่วงน้ำหนักตามสัดส่วนของที่ต้องวาง
+// ข้อ (1) มาก่อนเพราะแผนที่จุได้มากแต่วางของบางชนิดไม่ได้เลย = ใช้งานไม่ได้
+// กรณี SKU เดียว สูตรนี้ยุบเหลือ "ผลรวมกล่องทุก slot" ตรงกับที่ calcBox คิด → เลือกแผนเดียวกันเสมอ
+function palPlanScore(slots,items){
+  var tot=0; items.forEach(function(P){ tot+=(P.wt||0); });
+  var hosts=0, cap=0;
+  items.forEach(function(P){
+    var sum=0, any=false;
+    slots.forEach(function(s){ var f=palSlotFit(P.bL,P.bW,s,P.rot); if(f>0)any=true; sum+=f; });
+    if(any)hosts++;
+    cap+=sum*(tot>0?(P.wt||0)/tot:1/Math.max(1,items.length));
+  });
+  return {hosts:hosts,cap:cap,n:slots.length};
+}
+// เทียบสองแผน: hosts มากกว่าชนะ → กล่องมากกว่าชนะ → **ใบน้อยกว่าชนะ** (พาเลทน้อย = ค่าพาเลท/
+// ฟิล์มพันหุ้ม/ค่าแรงยกน้อยลง) การเสมอกันจึงไม่ทำให้เกิดพาเลทเปล่าเพิ่ม
+function palPlanBetter(a,b){
+  if(!b)return true;
+  if(a.hosts!==b.hosts)return a.hosts>b.hosts;
+  if(Math.abs(a.cap-b.cap)>1e-9)return a.cap>b.cap;
+  return a.n<b.n;
+}
+
 // NOTE: item dims are stored in CM; container dims (c.L/W/H) are in MM
 // Helper to get item dims in MM for comparison with container
 function mm(v){return v*10}
@@ -1683,40 +1841,34 @@ function calcBox(it,c){
     var nx=Math.floor(c.L/bL), ny=Math.floor(c.W/bW);
     var nz=Math.floor(effH/bH);
     if(it.maxLayers>0)nz=Math.min(nz,it.maxLayers);
-    var n;
+    var n, nSafe;
     if(it.usePallet&&it.pallet){
-      // Capacity = pallet positions in container × boxes per pallet.
-      // Try both pallet orientations.
-      var pL=it.pallet.L||1200, pW=it.pallet.W||1000, bestP=0;
-      [[pL,pW],[pW,pL]].forEach(function(d){
-        // แถวพาเลทต้อง "ใส่ได้จริง" ตามความกว้างตู้ — ดูเหตุผลที่เลิกใช้ PAL_TOL ใน packLayout
-        var perRow=Math.floor(c.L/d[0]), pRows=Math.floor(c.W/d[1]);
-        if(perRow<1||pRows<1)return;
-        // กล่องต่อพาเลท 1 ใบ ในทิศพาเลทนี้ (บนพาเลทที่ยาว d[0] กว้าง d[1])
-        var bpp=Math.floor(d[0]/bL)*Math.floor(d[1]/bW)*nz;
-        // ── B) ตำแหน่งพาเลทที่ท้ายตู้ วางสลับทิศ ──
-        // grid ทิศเดียวมักเหลือที่ท้ายตู้ที่สั้นกว่าด้านยาวของพาเลท แต่ยาวพอสำหรับด้านสั้น
-        // วัดจริง: 20'GP + พาเลท 1200×1000 grid ได้ 8 ใบ เหลือท้าย 1,095mm วางสลับทิศได้อีก 1 ใบ = 9
-        // ได้เพิ่ม 7 จาก 30 คู่ (ตู้ × พาเลท): 20'GP ทั้ง 3 preset · T18W+us · T10W+euro · T6WL+standard/euro
-        // 40'HC ไม่ได้เพราะท้ายเหลือแค่ 2-192mm — ดูตารางเต็มที่ tests/pack-capacity.mjs
-        // พาเลทที่หันขวางมีด้านยาว/กว้างสลับกัน จำนวนกล่องต่อใบจึงต่างจาก grid ต้องคิดแยก (bppT)
-        var tail=c.L-perRow*d[0], extra=0, bppT=0;
-        if(rotH&&tail>=d[1]&&d[0]<=c.W){
-          extra=Math.floor(c.W/d[0]);
-          bppT=Math.floor(d[1]/bL)*Math.floor(d[0]/bW)*nz;
-        }
-        var total=perRow*pRows*bpp+extra*bppT;
-        if(total>bestP)bestP=total;
+      // Capacity = Σ ทุกตำแหน่งพาเลท (กล่องต่อใบของ "ทิศพาเลทใบนั้น") × ชั้นซ้อน
+      // แผนผังพื้นมาจาก palPlanCandidates() ซึ่งรวม grid ทิศเดียวทั้งสองทิศ + ใบท้ายตู้หันขวาง
+      // + แผนสลับทิศแบบกังหัน/แบ่งแถบ (ดูเหตุผลและตัวเลขที่วัดได้ที่หัวข้อ PALLET FLOOR PLAN)
+      // ให้คะแนนด้วย palPlanScore เหมือนกับ packLayout เป๊ะ ไม่งั้นความจุที่รายงานกับที่วางได้จะไม่ตรง
+      var pL=it.pallet.L||1200, pW=it.pallet.W||1000, bestP=0, gridP=0;
+      palPlanCandidates(c.L,c.W,pL,pW,rotH).forEach(function(slots){
+        var v=palPlanScore(slots,[{bL:bL,bW:bW,rot:rotH,wt:1}]).cap*nz;
+        if(v>bestP)bestP=v;
       });
-      n=bestP;
+      // ⚠ ความจุ "แบบระวังตัว" = grid ทิศเดียวล้วน ใช้ตัดสินว่าทิศตามที่กรอกใส่ครบไหมเท่านั้น
+      // เพราะโซนของกลุ่มที่ไม่ใช่คิวสุดท้าย packLayout ให้ใช้ได้แค่ grid ทิศเดียว (กันแย่งที่คิวถัดไป)
+      // ถ้าเอาความจุสูงสุดมาตัดสิน จะเชื่อว่า "ทิศตามที่กรอกใส่ครบ" แล้วเลือกทิศนั้น พอวางจริงในโซน
+      // ที่แคบกว่ากลับใส่ได้น้อยกว่าทิศอื่น (วัดจริง: 20'GP พาเลท 2 สเปค กลุ่ม A ได้ 576 → 504 กล่อง)
+      palPlanCandidates(c.L,c.W,pL,pW,false).forEach(function(slots){
+        var v=palPlanScore(slots,[{bL:bL,bW:bW,rot:rotH,wt:1}]).cap*nz;
+        if(v>gridP)gridP=v;
+      });
+      n=bestP; nSafe=gridP;
     }else{
-      n=nx*ny*nz;
+      n=nx*ny*nz; nSafe=n;
     }
     if(n<=0)return;
     // track absolute maximum capacity
     if(n>maxN){maxN=n;maxO=[bL,bW,bH];}
-    // track display orientation among those that hold the full qty
-    if(qty>0 && n>=qty){
+    // track display orientation among those that hold the full qty — ใช้ความจุแบบระวังตัว (nSafe)
+    if(qty>0 && nSafe>=qty){
       var lenUsed=(it.usePallet&&it.pallet)?c.L:Math.ceil(qty/(ny*nz))*bL;
       if(idx===0){ dispO=[bL,bW,bH]; dispLen=-1; identityFits=true; }   // identity wins outright
       else if(!identityFits && lenUsed<dispLen){ dispLen=lenUsed; dispO=[bL,bW,bH]; }
@@ -2342,58 +2494,69 @@ function packLayout(result){
     // สูง 1900mm และกระบะ (TPK) สูงแค่ 500mm → ของทะลุหลังคาออกไปนอกตู้ (fuzz จับได้ 5 เคส)
     var availH=Math.min(palMaxH,c.H)-palD0;
 
-    // Pick the pallet orientation that fits the most positions in the container.
-    // Placement is capped at this count — anything beyond it is reported as NOT loaded
-    // (partial), never drawn outside the container.
+    // ── เลือก "แผนผังพื้น" ของโซนนี้ ──
+    // จำนวนพาเลทถูกจำกัดที่จำนวน slot ในแผน — ของที่เกินจากนั้นรายงานว่า "ใส่ไม่หมด" (partial)
+    // ไม่มีการวาดออกไปนอกตู้เด็ดขาด
+    // เดิมเลือกได้แค่ทิศพาเลททิศเดียวสำหรับทั้งโซน (+ ใบท้ายตู้หันขวาง) ซึ่งใส่ได้น้อยกว่าจริง
+    // ตอนนี้ให้ palPlanCandidates() เสนอแผนหลายแบบ (grid สองทิศ / grid+ท้ายตู้ / กังหัน / แบ่งแถบ)
+    // แล้วเลือกด้วย palPlanBetter เหมือน calcBox เป๊ะ — ดูรายละเอียดที่หัวข้อ PALLET FLOOR PLAN
     //
-    // ⚠ pRows ต้องใช้ floor(c.W / across) ตรงๆ ห้ามบวก tolerance เข้าไปในความกว้าง
-    // เดิมเป็น floor((c.W + PAL_TOL) / across) โดยตั้งใจให้เผื่อ "การอัดพาเลทให้ชิดกันแบบหน้างาน"
-    // แต่ผลที่ได้คือระบบเชื่อว่าใส่ได้ 2 แถวในกรณีที่ใส่ไม่ได้จริง แล้ว rowY() ก็ดันแถวแรกชิดผนัง
-    // ด้านหนึ่งและแถวสุดท้ายชิดผนังอีกด้าน → พาเลทสองแถว "ทับกันเอง" ในเชิงเรขาคณิต
-    // ตัวอย่างจริง: ตู้ 20'GP กว้าง 2350mm กับพาเลท 1200mm สองแถว = ต้องใช้ 2400mm เกินมา 50mm
-    // ทำให้ deck ทับกัน 1000×50mm ทุกคู่แถว และกล่องบนพาเลทคนละแถวทะลุกัน 37 คู่ (วัดจริงแล้ว)
-    // — นี่คือสาเหตุที่ภาพ 3D ดู "แปลก" ตรงพาเลท ทั้งที่การจัดเรียงกล่อง *ภายใน* พาเลทถูกต้องหมด
-    // (ตรวจแล้วซ้อนกันภายในพาเลทเดียวกัน 0 คู่) tolerance แบบนี้ไม่มีทางถูก เพราะมันจะ "ช่วย" ก็
-    // ต่อเมื่อพาเลทใส่ไม่ได้จริงเท่านั้น (ถ้าใส่ได้จริงก็ไม่ต้องพึ่ง tolerance อยู่แล้ว) จึงตัดออก
-    // เลือกทิศพาเลท: เอาจำนวนตำแหน่งมากสุด "ในกลุ่มที่รองรับ SKU ได้มากชนิดที่สุด" ก่อน
-    // เดิมดูแต่จำนวนตำแหน่ง ไม่สนว่ากล่องจะวางบนพาเลททิศนั้นได้จริงไหม → ถ้ากล่องกว้างกว่าด้าน
-    // across ที่เลือกมา ก็ไม่มีที่ให้วางเลยทั้งที่ทิศอีกแบบวางได้ (จำนวนพาเลทน้อยกว่าแต่ใส่ของได้)
-    var cfg=null;
-    [[pL0,pW0],[pW0,pL0]].forEach(function(d){
-      var perRow=Math.floor((c.L-offsetX)/d[0]), pRows=Math.floor(c.W/d[1]);
-      if(perRow<1||pRows<1)return;
-      // นับว่าทิศนี้รองรับ SKU ได้กี่ชนิด (กล่องต้องวางได้ทั้งตามยาวและตามกว้างของพาเลท)
-      var hosts=0;
-      palItems.forEach(function(P){ if(P.bL<=d[0]&&P.bW<=d[1])hosts++; });
-      var cand={along:d[0],across:d[1],perRow:perRow,rows:pRows,n:perRow*pRows,hosts:hosts};
-      if(!cfg||cand.hosts>cfg.hosts||(cand.hosts===cfg.hosts&&cand.n>cfg.n))cfg=cand;
-    });
+    // ⚠ pRows/perRow ต้องคิดจากขนาดจริงเท่านั้น ห้ามบวก tolerance เข้าไปในความกว้างตู้
+    // เดิมเป็น floor((c.W + PAL_TOL)/across) โดยตั้งใจให้เผื่อ "การอัดพาเลทให้ชิดกันแบบหน้างาน"
+    // แต่ผลที่ได้คือระบบเชื่อว่าใส่ได้ 2 แถวในกรณีที่ใส่ไม่ได้จริง แล้วแถวแรกชิดผนังด้านหนึ่ง
+    // แถวสุดท้ายชิดผนังอีกด้าน → พาเลทสองแถว "ทับกันเอง" (20'GP กว้าง 2350 กับพาเลท 1200 สองแถว
+    // ต้องใช้ 2400mm เกิน 50mm → deck ทับกันทุกคู่แถว กล่องทะลุกัน 37 คู่ วัดจริงแล้ว)
+    // tolerance แบบนี้ไม่มีทางถูก เพราะมันจะ "ช่วย" ก็ต่อเมื่อพาเลทใส่ไม่ได้จริงเท่านั้น
+    // → ทางที่ถูกคือหาแผนที่ใส่ได้จริงมากขึ้น (กังหัน/แบ่งแถบ) ไม่ใช่ผ่อนขนาดตู้
+    //
+    // การหันพาเลทขวาง = สลับ L↔W ของกล่องบนพื้นเทียบกับตู้ ซึ่งเป็นสิ่งที่ธง rotH คุมอยู่
+    // (ดู allPerms {p:[1,0,2],req:['rotH']}) ถ้ามี SKU ไหนในกลุ่มห้ามหมุน → ใช้ grid ทิศเดียวล้วน
+    var _rotOK=palItems.every(function(P){ return P.it.rotH!==false; });
+    // แผนแบบสลับทิศเปิดให้เฉพาะ "คิวสุดท้าย" เหมือนกฎเดิมของ slot ท้ายตู้ เพราะแผนพวกนี้ใช้ความยาว
+    // ที่เหลือแบบไม่เต็มความกว้าง แล้ว offsetX ข้ามไปทั้งก้อน → คิวถัดไปเสียพื้นที่ฟรีๆ
+    // (เคสจริงที่เคยถอยหลัง: 20'GP พาเลท A 1200×1000 + B 800×600 → B ได้ 3 ใบ กลายเป็น 0 ใบ)
+    var _allowMix=_rotOK&&_lastInLine;
+    // rot ต่อ SKU = อนุญาตให้หมุนกล่องบนพื้นพาเลทไหม (ต้องตรงกับที่ palBox ใช้ตอนวางจริง)
+    var _scoreItems=palItems.map(function(P){
+      return {bL:P.bL,bW:P.bW,rot:P.it.rotH!==false,wt:P.placed}; });
+    var slots=null, _bestSc=null;
     // พาเลทเปล่ายังไม่พ้นความสูงตู้ (เช่น กระบะสูง 500mm) → วางบนพาเลทไม่ได้เลย ไม่ต้องสร้างพาเลท
-    if(cfg&&availH<=0)cfg=null;
-    if(cfg){
-      var along=cfg.along, across=cfg.across, pRows=cfg.rows;
-      // row Y positions: แถวแรกชิดผนังด้านหนึ่ง แถวสุดท้ายชิดผนังอีกด้าน ที่เหลือกระจายเท่ากัน
-      // (ตอนนี้ปลอดภัยแล้วเพราะ pRows*across <= c.W รับประกันว่าไม่ทับกัน)
-      var rowY=function(row){ return pRows>1 ? Math.round(row*(c.W-across)/(pRows-1)) : 0; };
+    if(availH>0){
+      palPlanCandidates(c.L-offsetX,c.W,pL0,pW0,_allowMix).forEach(function(pl){
+        var sc=palPlanScore(pl,_scoreItems);
+        if(palPlanBetter(sc,_bestSc)){ _bestSc=sc; slots=pl; }
+      });
+    }
+    if(slots&&slots.length){
+      // rot = "ใบนี้หันไม่เหมือนใบส่วนใหญ่" ต้องบอกคนโหลด ไม่งั้นวางทิศเดียวหมดแล้วไม่ได้ตามแผน
+      // เสมอกันให้ทิศ (ยาวพาเลท ตามยาวตู้) เป็นทิศหลัก เพื่อผลลัพธ์ที่แน่นอนไม่ขึ้นกับลำดับ
+      var _kA=pL0+'x'+pW0, _nA=0;
+      slots.forEach(function(s){ if(s.along+'x'+s.across===_kA)_nA++; });
+      var _domKey=(_nA>=slots.length-_nA)?_kA:(pW0+'x'+pL0);
+      slots.forEach(function(s){ s.rot=(s.along+'x'+s.across)!==_domKey; });
+      var along=parseInt(_domKey.split('x')[0],10), across=parseInt(_domKey.split('x')[1],10);
 
-      // ── slot = ตำแหน่งพาเลท 1 ใบ พร้อม "เรขาคณิตของตัวเอง" ──
-      // เดิม along/across เป็นค่าเดียวกันทุกใบทั้งโซน แต่ข้อ B ทำให้ใบท้ายตู้หันขวาง (along/across สลับกัน)
-      // จึงต้องผูกขนาดไว้กับ slot แต่ละอัน แล้วให้ตัว pallet พา along/across ของตัวเองไปด้วย
-      var slots=[];
-      for(var _col=0;_col<cfg.perRow;_col++)for(var _row=0;_row<pRows;_row++)
-        slots.push({x:offsetX+_col*along,y:rowY(_row),along:along,across:across,rot:false});
-      // ── B) เติม slot ที่ท้ายตู้ด้วยพาเลทที่หันขวาง ──
-      var _usedLen=cfg.perRow*along, _tail=(c.L-offsetX)-_usedLen;
-      // พาเลทที่หันขวางทำให้ด้านกล่องที่เคยหันตามความยาวตู้ ไปหันตามความกว้างตู้แทน
-      // = การสลับ L↔W บนพื้น "เทียบกับตู้" ซึ่งคือสิ่งที่ธง rotH คุมอยู่ (ดู allPerms {p:[1,0,2],req:['rotH']})
-      // ถ้ามี SKU ไหนในกลุ่มห้ามหมุน ไม่เปิด slot ท้ายตู้ให้ทั้งกลุ่ม — เลือกทางที่รายงานต่ำกว่าเสมอ
-      var _rotOK=palItems.every(function(P){ return P.it.rotH!==false; });
-      if(_lastInLine&&_rotOK&&_tail>=across&&along<=c.W){
-        var _tRows=Math.floor(c.W/along);
-        var _tRowY=function(r){ return _tRows>1 ? Math.round(r*(c.W-along)/(_tRows-1)) : 0; };
-        for(var _tr=0;_tr<_tRows;_tr++)
-          slots.push({x:offsetX+_usedLen,y:_tRowY(_tr),along:across,across:along,rot:true});
+      // ── ดันกลุ่มที่ต้องวางสอดขัดกันไปไว้ "ทางประตู" ──
+      // สะท้อนทั้งแผนกลับด้านภายในความยาวที่ใช้จริง (x' = right − (x + along))
+      // ปลอดภัยเสมอ: การสะท้อนไม่ทำให้พาเลททับกันหรือหลุดกรอบ และขอบขวาสุดเท่าเดิม (offsetX ไม่เปลี่ยน)
+      // เลือกด้านที่ใบหันขวางอยู่ใกล้ประตูกว่า เพราะ:
+      //  1) คนโหลดวางจากผนังในสุดออกมาหาประตู — กลุ่มที่ต้องวางประกบกันพอดีตัวควรอยู่ตอนท้าย
+      //     ที่ยังมองเห็นและขยับได้ ไม่ใช่ลึกสุดที่แก้ทีหลังไม่ได้ (AOF ถามจุดนี้ตรงๆ)
+      //  2) **ของไม่เต็มแผนจะไม่ต้องหันขวางเลยสักใบ** — พาเลทที่ไม่ได้ใช้คือใบท้ายๆ ซึ่งตอนนี้
+      //     เป็นกลุ่มสอดขัดกันพอดี · เดิมกังหันอยู่ผนังใน ของแค่ 3 พาเลทก็ต้องหันขวางแล้วทั้งที่ไม่จำเป็น
+      // ⚠ ห้ามสะท้อนเทียบ c.L (จะดันพาเลทไปชิดประตูแล้วเหลือช่องว่างที่ผนังใน) ต้องเทียบ right เท่านั้น
+      if(_nA!==slots.length&&_nA!==0){
+        var _right=0;
+        slots.forEach(function(s){ if(s.x+s.along>_right)_right=s.x+s.along; });
+        var _now=0,_mir=0;
+        slots.forEach(function(s){ if(s.rot){ _now+=s.x; _mir+=_right-(s.x+s.along); } });
+        if(_mir>_now)slots.forEach(function(s){ s.x=_right-(s.x+s.along); });
       }
+
+      // planner ทำงานบนพิกัดเทียบกับ "ต้นโซน" → เลื่อนไปตามความยาวที่โซนก่อนหน้าใช้ไปแล้ว
+      slots.forEach(function(s){ s.x+=offsetX; });
+      // เรียงลำดับการวางจากผนังในสุดไปทางประตู (x ก่อน แล้ว y) = ลำดับที่คนโหลดทำจริง
+      slots.sort(function(m,n){ return m.x-n.x||m.y-n.y; });
 
       function makePal(slot){ return {sky:[{x0:0,x1:slot.along,z:0}],places:[],counts:{},slot:slot,along:slot.along,across:slot.across,_bo:{}}; }
       // ── A) เลือกทิศกล่องให้เหมาะกับ "พาเลท" ไม่ใช่ "ตู้" ──
