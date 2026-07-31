@@ -6,7 +6,8 @@
 <title>Load & Stuffing Calculator</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@300;400;500&family=Noto+Serif+Thai:wght@300;400&family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script>
 // หน้านี้ถูกเปิดเป็น iframe ในแอปหลัก — iframe ไม่ได้รับ CSS/attribute จาก parent จึงต้อง
 // อ่านธีมที่ผู้ใช้เลือกไว้จาก localStorage เอง (same-origin) และตามการสลับธีมของแอปหลักแบบสด
@@ -34,41 +35,50 @@
    หน้านี้ถูกเปิดเป็น iframe ในแอปหลัก จึงต้องใช้โทนเดียวกัน และรับ data-theme
    จาก localStorage.kobTheme ที่แอปหลักตั้งไว้ (สคริปต์ท้าย <head>) */
 :root{
-  --color-text:#0f172a; --color-text-secondary:#475569; --color-text-tertiary:#64748b; --color-text-muted:#94a3b8;
-  --color-surface:#fff; --color-surface-muted:#f1f5f9; --color-surface-muted2:#e9eef4; --color-page-bg:#f8fafc;
-  --color-border:#e2e8f0;
-  --color-brand:#1d4ed8; --color-danger:#dc2626; --color-success:#16a34a; --color-warn:#b45309;
-  --color-brand-soft:#eef4ff; --color-danger-soft:#fef2f2; --color-success-soft:#f0fdf4; --color-warn-soft:#fffbeb;
-  --color-danger-border:#fecaca; --color-success-border:#bbf7d0;
-  --color-danger-text:#b91c1c; --color-success-text:#15803d; --color-warn-text:#92400e;
-  --radius-sm:6px; --radius:8px; --radius-lg:10px;
-  --shadow-card:0 1px 2px rgba(15,23,42,.04); --shadow-pop:0 8px 24px rgba(15,23,42,.10);
-  --canvas-bg:#0f172a;
+  --color-text:#000000; --color-text-secondary:#333333; --color-text-tertiary:#626262; --color-text-muted:#8c8c8c;
+  --color-surface:#ffffff; --color-surface-muted:#eeeeee; --color-surface-muted2:#dce1e5; --color-page-bg:#ffffff;
+  --color-border:#dce1e5;
+  --color-brand:#00c27a; --color-danger:#dc2626; --color-success:#007b3b; --color-warn:#b45309;
+  --color-brand-soft:#d5f8e0; --color-danger-soft:#fef2f2; --color-success-soft:#eafaf0; --color-warn-soft:#fffbeb;
+  --color-danger-border:#fecaca; --color-success-border:#b4f5c8; --color-warn-border:#fde68a;
+  --color-danger-text:#b91c1c; --color-success-text:#007b3b; --color-warn-text:#92400e; --color-brand-text:#007b3b;
+  --radius-sm:6px; --radius:8px; --radius-lg:24px; --radius-pill:9999px;
+  --shadow-card:0 0 1px 0 rgba(11,41,70,.32), 0 24px 20px 0 rgba(42,82,121,.08);
+  --shadow-pop:0 0 1px 0 rgba(11,41,70,.40), 0 24px 44px 0 rgba(42,82,121,.20);
+  --font-display:'Spectral','Noto Serif Thai',Georgia,'Times New Roman',serif;
+  --font-body:'IBM Plex Sans Thai','Inter',system-ui,-apple-system,sans-serif;
+  /* พื้นภาพตู้ 3D จงใจคงเป็นขาวทั้งสองธีม — เส้นบอกขนาดสีเทาบางจะจมหายถ้าพื้นเข้ม (ดูบันทึกเดิม) */
+  --canvas-bg:#000000;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --color-text:#e8eef6; --color-text-secondary:#a8b6c8; --color-text-tertiary:#8b9aae; --color-text-muted:#6f7f93;
-    --color-surface:#161d29; --color-surface-muted:#1d2634; --color-surface-muted2:#232d3d; --color-page-bg:#0f151e;
-    --color-border:#2a3547;
-    --color-brand-soft:#1b2740; --color-danger-soft:#2c1a1c; --color-success-soft:#14251d; --color-warn-soft:#2a2115;
-    --color-danger-border:#4b2225; --color-success-border:#1f4030;
-    --color-danger-text:#fca5a5; --color-success-text:#86efac; --color-warn-text:#fcd34d;
-    --shadow-card:0 1px 2px rgba(0,0,0,.28); --shadow-pop:0 8px 24px rgba(0,0,0,.42);
-    --canvas-bg:#0b1220;
+    --color-text:#ffffff; --color-text-secondary:#c9c9c9; --color-text-tertiary:#8c8c8c; --color-text-muted:#6b6b6b;
+    --color-surface:#111111; --color-surface-muted:#191919; --color-surface-muted2:#262626; --color-page-bg:#000000;
+    --color-border:#2e3234;
+    --color-brand-soft:#0d2a1d; --color-danger-soft:#2c1a1c; --color-success-soft:#0d2a1d; --color-warn-soft:#2a2115;
+    --color-danger-border:#4b2225; --color-success-border:#1f4030; --color-warn-border:#4a3a12;
+    --color-danger-text:#fca5a5; --color-success-text:#8fec7f; --color-warn-text:#fcd34d; --color-brand-text:#8fec7f;
+    --shadow-card:0 0 0 1px rgba(255,255,255,.05), 0 24px 20px 0 rgba(0,0,0,.50);
+    --shadow-pop:0 0 0 1px rgba(255,255,255,.07), 0 24px 44px 0 rgba(0,0,0,.65);
+    --canvas-bg:#000000;
   }
 }
 :root[data-theme="dark"]{
-  --color-text:#e8eef6; --color-text-secondary:#a8b6c8; --color-text-tertiary:#8b9aae; --color-text-muted:#6f7f93;
-  --color-surface:#161d29; --color-surface-muted:#1d2634; --color-surface-muted2:#232d3d; --color-page-bg:#0f151e;
-  --color-border:#2a3547;
-  --color-brand-soft:#1b2740; --color-danger-soft:#2c1a1c; --color-success-soft:#14251d; --color-warn-soft:#2a2115;
-  --color-danger-border:#4b2225; --color-success-border:#1f4030;
-  --color-danger-text:#fca5a5; --color-success-text:#86efac; --color-warn-text:#fcd34d;
-  --shadow-card:0 1px 2px rgba(0,0,0,.28); --shadow-pop:0 8px 24px rgba(0,0,0,.42);
-  --canvas-bg:#0b1220;
+  --color-text:#ffffff; --color-text-secondary:#c9c9c9; --color-text-tertiary:#8c8c8c; --color-text-muted:#6b6b6b;
+  --color-surface:#111111; --color-surface-muted:#191919; --color-surface-muted2:#262626; --color-page-bg:#000000;
+  --color-border:#2e3234;
+  --color-brand-soft:#0d2a1d; --color-danger-soft:#2c1a1c; --color-success-soft:#0d2a1d; --color-warn-soft:#2a2115;
+  --color-danger-border:#4b2225; --color-success-border:#1f4030; --color-warn-border:#4a3a12;
+  --color-danger-text:#fca5a5; --color-success-text:#8fec7f; --color-warn-text:#fcd34d; --color-brand-text:#8fec7f;
+  --shadow-card:0 0 0 1px rgba(255,255,255,.05), 0 24px 20px 0 rgba(0,0,0,.50);
+  --shadow-pop:0 0 0 1px rgba(255,255,255,.07), 0 24px 44px 0 rgba(0,0,0,.65);
+  --canvas-bg:#000000;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'IBM Plex Sans Thai','Segoe UI',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;background:var(--color-page-bg);color:var(--color-text);font-size:14px}
+body{font-family:var(--font-body);font-weight:300;-webkit-font-smoothing:antialiased;background:var(--color-page-bg);color:var(--color-text);font-size:14px}
+/* display tier เดียวกับแอปหลัก (ดูเหตุผลย่อ scale ที่ import-export-os.html) */
+.kobDisplay{font-family:var(--font-display);font-weight:300;letter-spacing:-.03em}
+.kobDisplayTight{font-family:var(--font-display);font-weight:300;letter-spacing:-.045em}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:99px;border:2px solid transparent;background-clip:content-box}
 :root[data-theme="dark"] ::-webkit-scrollbar-thumb{background:#3a465c}
@@ -87,7 +97,7 @@ body{font-family:'IBM Plex Sans Thai','Segoe UI',system-ui,-apple-system,sans-se
 .content{max-width:1160px;margin:18px auto;padding:0 22px}
 .tab-pane{display:none}.tab-pane.active{display:block}
 .btn{padding:0 14px;height:34px;border:none;border-radius:var(--radius);cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
-.btn-primary{background:var(--color-brand);color:#fff}.btn-primary:hover{filter:brightness(1.08)}
+.btn-primary{background:var(--color-brand);color:#000}.btn-primary:hover{filter:brightness(1.08)}
 .btn-outline{background:var(--color-surface);color:var(--color-text-secondary);border:1px solid var(--color-border);font-weight:500}
 .btn-outline:hover{background:var(--color-surface-muted)}
 .btn-sm{height:30px;padding:0 11px;font-size:12px}
@@ -111,7 +121,7 @@ tr:last-child td{border-bottom:none}
 .badge-warn{background:var(--color-warn-soft);color:var(--color-warn-text)}
 .badge-err{background:var(--color-danger-soft);color:var(--color-danger-text)}
 .calc-bar{text-align:center;padding:22px 0}
-.btn-calc{background:var(--color-brand);color:#fff;font-family:inherit;padding:0 34px;height:38px;font-size:14px;font-weight:600;border-radius:var(--radius);border:none;cursor:pointer}
+.btn-calc{background:var(--color-brand);color:#000;font-family:inherit;padding:0 34px;height:38px;font-size:14px;font-weight:500;border-radius:var(--radius-pill);border:none;cursor:pointer}
 .btn-calc:hover{filter:brightness(1.08)}
 .container-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
 .cont-card{background:var(--color-surface);border-radius:var(--radius-lg);box-shadow:var(--shadow-card);padding:16px;cursor:pointer;border:1px solid var(--color-border)}
@@ -227,9 +237,9 @@ canvas{display:block;width:100%;background:#fff}
 .cp-btns{display:flex;justify-content:flex-end;gap:8px}
 .cp-btn{padding:0 18px;height:32px;border-radius:var(--radius);border:none;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600}
 .cp-btn-cancel{background:var(--color-surface-muted);color:var(--color-text-secondary)}
-.cp-btn-ok{background:var(--color-brand);color:#fff}
+.cp-btn-ok{background:var(--color-brand);color:#000}
 /* ── PREDICT POPUP ── */
-.btn-predict{background:var(--color-brand);color:#fff;border:none;border-radius:var(--radius);padding:0 18px;height:34px;font-family:inherit;font-weight:600;font-size:12.5px;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.btn-predict{background:var(--color-brand);color:#000;border:none;border-radius:var(--radius);padding:0 18px;height:34px;font-family:inherit;font-weight:600;font-size:12.5px;cursor:pointer;white-space:nowrap;flex-shrink:0}
 .btn-predict:hover{filter:brightness(1.08)}
 .predict-pop{display:none;position:absolute;top:calc(100% + 8px);right:0;z-index:50;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-pop);padding:14px 16px;min-width:300px}
 .predict-pop.open{display:block}
@@ -273,7 +283,7 @@ canvas{display:block;width:100%;background:#fff}
 .ur-qty{flex:0 0 90px}
 .ur-remove{flex:0 0 auto;align-self:center;background:var(--color-danger-soft);color:var(--color-danger-text);border:1px solid var(--color-danger-border);border-radius:var(--radius);padding:0 14px;height:34px;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
 .ur-remove:hover{filter:brightness(.97)}
-.btn-addcont{background:var(--color-brand);color:#fff;border:none;border-radius:var(--radius);padding:0 20px;height:38px;font-family:inherit;font-size:13px;font-weight:600;letter-spacing:.2px;cursor:pointer}
+.btn-addcont{background:var(--color-brand);color:#000;border:none;border-radius:var(--radius);padding:0 20px;height:38px;font-family:inherit;font-size:13px;font-weight:600;letter-spacing:.2px;cursor:pointer}
 .btn-addcont:hover{filter:brightness(1.08)}
 /* ── 3D VIEWER ── */
 .v3d-btn{width:36px;height:36px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius);font-size:16px;cursor:pointer;box-shadow:var(--shadow-card);color:var(--color-text-secondary);display:flex;align-items:center;justify-content:center}

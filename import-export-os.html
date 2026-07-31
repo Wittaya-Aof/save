@@ -5,7 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Import-Export OS — KOB &amp; BTV</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- ── ตัวอักษรตามระบบดีไซน์ Mural (mural.design.md) ──
+     display = STK Bureau (proprietary) → spec แนะนำ Lora/Spectral ที่ weight 300
+       เลือก Spectral เพราะ Lora บน Google Fonts ไม่มี weight 300 (เริ่มที่ 400) ซึ่งเป็นน้ำหนักที่
+       spec ย้ำว่า "the move to preserve — heavier display weights collapse the editorial gesture"
+       คู่กับ Noto Serif Thai 300 เพราะ Spectral ไม่มีสระ/พยัญชนะไทย (เบราว์เซอร์เลือกฟอนต์ต่อ glyph
+       → ละตินได้ Spectral, ไทยได้ Noto Serif Thai ทั้งคู่เป็น transitional serif น้ำหนักเบาเหมือนกัน)
+     body = ABC Social (proprietary) → spec แนะนำ Inter weight 300 แต่ Inter ไม่มีอักษรไทย
+       ถ้าใส่ Inter ก่อน จะได้ละติน=Inter ไทย=Plex Thai ปนกันในบรรทัดเดียว (x-height ต่างกันเห็นชัด
+       เพราะแอปนี้มีข้อความไทย+อังกฤษปนกันแทบทุกบรรทัด) จึงใช้ IBM Plex Sans Thai 300 ที่ครอบทั้ง
+       สองสคริปต์ด้วยเมตริกเดียวกัน — ได้ "sans workhorse ที่ weight 300" ตามเจตนาของ spec -->
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@300;400;500&family=Noto+Serif+Thai:wght@300;400&family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
 <!-- ไลบรารีเก็บ local (vendor/) — เปิดแอปได้แม้อินเทอร์เน็ตล่ม -->
 <script src="/vendor/react.production.min.js"></script>
 <script src="/vendor/react-dom.production.min.js"></script>
@@ -17,61 +28,93 @@
    ค่าเริ่มต้น (ไม่มี data-theme) = ตาม prefers-color-scheme ของเครื่อง, data-theme บนหน้า
    จะ override เสมอ (ผู้ใช้กดสลับเองชนะ system preference) */
 :root{
-  /* neutral = slate (เทาอมน้ำเงินกลางๆ) — โทนกลางสำหรับใช้งานทั้งวัน ไม่มีสีอมชมพูเหมือนธีมเดิม */
-  --color-text:#0f172a; --color-text-secondary:#475569; --color-text-tertiary:#64748b; --color-text-muted:#94a3b8;
-  --color-surface:#fff; --color-surface-muted:#f1f5f9; --color-surface-muted2:#e9eef4; --color-page-bg:#f8fafc;
-  --color-border:#e2e8f0;
-  /* brand/danger/success ตั้งใจไม่เปลี่ยนค่าตามธีม (ต่างจากกลุ่ม neutral ด้านบน) — ปุ่มทึบ
-     (background=สีนี้ + ข้อความสีขาว) ใช้สีเดิมอยู่แล้วทั่วทั้งไฟล์ ถ้าทำให้สว่างขึ้นตอน dark mode
-     ข้อความขาวบนพื้นที่สว่างขึ้นจะอ่านไม่ออก (contrast แย่ลง) */
-  --color-brand:#1d4ed8; --color-danger:#dc2626; --color-success:#16a34a; --color-warn:#b45309;
-  /* พื้นจางของ accent/สถานะ — ใช้แทนการเอาสีเข้มมาทำพื้น (ตาสบายกว่าและคุมโทนได้จากที่เดียว) */
-  --color-brand-soft:#eef4ff; --color-danger-soft:#fef2f2; --color-success-soft:#f0fdf4; --color-warn-soft:#fffbeb;
-  --color-danger-border:#fecaca; --color-success-border:#bbf7d0; --color-warn-border:#fde68a;
-  /* *-text = สีตัวอักษรที่อ่านออกบนพื้น *-soft ของธีมนั้นๆ (สลับค่าตอน dark mode ด้านล่าง) — brand เดิม
-     ไม่มีตัวนี้ ทำให้หลายจุดเอา --color-brand (น้ำเงินเข้ม) ไปวางบนพื้น brand-soft ที่กลายเป็นน้ำเงินเข้ม
-     ตอน dark mode แล้วอ่านไม่ออก */
-  --color-danger-text:#b91c1c; --color-success-text:#15803d; --color-warn-text:#92400e; --color-brand-text:#1d4ed8;
-  /* chrome: sidebar/topbar เป็นโทนสว่างเดียวกับเนื้อหา ต่างกันแค่เส้นแบ่ง */
-  --color-chrome:#fff; --color-chrome-text:#334155; --color-chrome-border:#e2e8f0;
-  /* รูปทรง: มุมโค้งน้อยลงและสม่ำเสมอ + เงาบางๆ แทนเงาฟุ้ง */
-  --radius-sm:6px; --radius:8px; --radius-lg:10px;
-  --shadow-card:0 1px 2px rgba(15,23,42,.04);
-  --shadow-pop:0 8px 24px rgba(15,23,42,.10);
+  /* ── ระบบสีตาม Mural (mural.design.md) — "white editorial band" สำหรับพื้นที่เนื้อหา ──
+     ink #000 / canvas #fff / surface-soft #eee / border-default #dce1e5 ตรงตาม token ของ spec
+     spec ยืนยันว่าตัวหนังสือหลักเป็น "pure #000000 — the system does not soften to slate" */
+  --color-text:#000000; --color-text-secondary:#333333; --color-text-tertiary:#626262; --color-text-muted:#8c8c8c;
+  --color-surface:#ffffff; --color-surface-muted:#eeeeee; --color-surface-muted2:#dce1e5; --color-page-bg:#ffffff;
+  --color-border:#dce1e5;
+  /* brand voltage = jade #00c27a (spec: ใช้เป็น "พื้น" ของ CTA เท่านั้น 14 ครั้ง ไม่เคยเป็น text/border)
+     ส่วนขยายที่ spec ไม่มี: danger/warn — Mural เป็น marketing site ไม่มีสีสถานะ แต่แอปนี้เป็น
+     dashboard โลจิสติกส์ที่ต้องเตือน "เลย ETA / ต้นทุนเกินงบ" จึงคงแดง/เหลืองอำพันไว้
+     success ใช้ legacy-green #007b3b ของ Mural (เขียวลึกสุดในตระกูล) ไม่ให้ชนกับ jade ที่เป็น brand */
+  --color-brand:#00c27a; --color-danger:#dc2626; --color-success:#007b3b; --color-warn:#b45309;
+  /* พื้นจาง: brand-soft = mint-soft #d5f8e0 ของ spec, success-border = mint #b4f5c8 */
+  --color-brand-soft:#d5f8e0; --color-danger-soft:#fef2f2; --color-success-soft:#eafaf0; --color-warn-soft:#fffbeb;
+  --color-danger-border:#fecaca; --color-success-border:#b4f5c8; --color-warn-border:#fde68a;
+  /* *-text = สีอักษรที่อ่านออกบนพื้น *-soft — brand-text ใช้ legacy-green เพราะ jade บนพื้นขาว/มินต์
+     contrast ต่ำเกินอ่าน (spec ระบุเองว่า legacy-green "used inside text on jade backgrounds") */
+  --color-danger-text:#b91c1c; --color-success-text:#007b3b; --color-warn-text:#92400e; --color-brand-text:#007b3b;
+  /* chrome = "jet-black canvas" ของ Mural: sidebar+topbar ดำสนิท ตัดกับพื้นที่เนื้อหาสีขาว
+     spec: "the black-to-white band flip is the page's structural device" */
+  --color-chrome:#000000; --color-chrome-text:#ffffff; --color-chrome-border:#4f5457;
+  /* ── token เฉพาะพื้น chrome (ดำทั้งสองธีม) ──
+     spec: "Do use ink-tertiary (#8c8c8c) — not pure white — for headline text on the black hero
+     canvas. The dim-grey is the intentional muting; pure white reads as harsh"
+     chrome-active = "darker black tint" ที่ spec ระบุไว้สำหรับ nav-link hover
+     ต้องแยกจาก --color-text-* เพราะกลุ่มนั้นสลับค่าตามธีม แต่พื้น chrome ดำเสมอ */
+  --color-chrome-display:#8c8c8c; --color-chrome-muted:#8c8c8c; --color-chrome-active:#161616;
+  /* รูปทรง binary + pill ตาม spec: 6px ชิป / 8px input+ปุ่มรอง / 24px การ์ดใหญ่ / pill สำหรับ CTA หลัก
+     spec ย้ำ: "Don't introduce a 16px middle radius tier" จงใจข้ามขั้น 10-16px ที่ธีมเดิมใช้ */
+  --radius-sm:6px; --radius:8px; --radius-lg:24px; --radius-pill:9999px;
+  /* เงา navy-undertone ตาม --elevated-shadow ของ spec (ไม่ใช่ดำล้วน) */
+  --shadow-card:0 0 1px 0 rgba(11,41,70,.32), 0 24px 20px 0 rgba(42,82,121,.08);
+  --shadow-pop:0 0 1px 0 rgba(11,41,70,.40), 0 24px 44px 0 rgba(42,82,121,.20);
+  /* display = serif บรรณาธิการ weight 300, body = sans workhorse weight 300 (เหตุผลเลือกฟอนต์อยู่ที่ head) */
+  --font-display:'Spectral','Noto Serif Thai',Georgia,'Times New Roman',serif;
+  --font-body:'IBM Plex Sans Thai','Inter',system-ui,-apple-system,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,monospace;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --color-text:#e8eef6; --color-text-secondary:#a8b6c8; --color-text-tertiary:#8b9aae; --color-text-muted:#6f7f93;
-    --color-surface:#161d29; --color-surface-muted:#1d2634; --color-surface-muted2:#232d3d; --color-page-bg:#0f151e;
-    --color-border:#2a3547;
-    --color-brand-soft:#1b2740; --color-danger-soft:#2c1a1c; --color-success-soft:#14251d; --color-warn-soft:#2a2115;
+    /* dark = "jet-black hero canvas" ของ Mural (pure #000 ไม่ใช่ near-black — spec ห้ามชัดเจน:
+       "Don't swap the jet-black canvas for charcoal or near-black")
+       ส่วนขยาย: spec ระบุใน Known Gaps ว่า "a coherent dark-mode variant ... is not represented here"
+       จึงสร้างจากโทนที่ spec มีจริง: canvas=black, การ์ด=#111, อักษร=white/grey-500 #8c8c8c,
+       brand-text=spring #8fec7f (เขียวสว่างสุดในตระกูล อ่านออกบนพื้นดำ) */
+    --color-text:#ffffff; --color-text-secondary:#c9c9c9; --color-text-tertiary:#8c8c8c; --color-text-muted:#6b6b6b;
+    --color-surface:#111111; --color-surface-muted:#191919; --color-surface-muted2:#262626; --color-page-bg:#000000;
+    --color-border:#2e3234;
+    --color-brand-soft:#0d2a1d; --color-danger-soft:#2c1a1c; --color-success-soft:#0d2a1d; --color-warn-soft:#2a2115;
     --color-danger-border:#4b2225; --color-success-border:#1f4030; --color-warn-border:#4a3a12;
-    --color-danger-text:#fca5a5; --color-success-text:#86efac; --color-warn-text:#fcd34d; --color-brand-text:#93c5fd;
-    --color-chrome:#141a25; --color-chrome-text:#a8b6c8; --color-chrome-border:#26303f;
-    --shadow-card:0 1px 2px rgba(0,0,0,.28);
-    --shadow-pop:0 8px 24px rgba(0,0,0,.42);
+    --color-danger-text:#fca5a5; --color-success-text:#8fec7f; --color-warn-text:#fcd34d; --color-brand-text:#8fec7f;
+    --color-chrome:#000000; --color-chrome-text:#ffffff; --color-chrome-border:#2e3234;
+    --color-chrome-display:#8c8c8c; --color-chrome-muted:#8c8c8c; --color-chrome-active:#161616;
+    --shadow-card:0 0 0 1px rgba(255,255,255,.05), 0 24px 20px 0 rgba(0,0,0,.50);
+    --shadow-pop:0 0 0 1px rgba(255,255,255,.07), 0 24px 44px 0 rgba(0,0,0,.65);
   }
 }
 :root[data-theme="dark"]{
-  --color-text:#e8eef6; --color-text-secondary:#a8b6c8; --color-text-tertiary:#8b9aae; --color-text-muted:#6f7f93;
-  --color-surface:#161d29; --color-surface-muted:#1d2634; --color-surface-muted2:#232d3d; --color-page-bg:#0f151e;
-  --color-border:#2a3547;
-  --color-brand-soft:#1b2740; --color-danger-soft:#2c1a1c; --color-success-soft:#14251d; --color-warn-soft:#2a2115;
+  --color-text:#ffffff; --color-text-secondary:#c9c9c9; --color-text-tertiary:#8c8c8c; --color-text-muted:#6b6b6b;
+  --color-surface:#111111; --color-surface-muted:#191919; --color-surface-muted2:#262626; --color-page-bg:#000000;
+  --color-border:#2e3234;
+  --color-brand-soft:#0d2a1d; --color-danger-soft:#2c1a1c; --color-success-soft:#0d2a1d; --color-warn-soft:#2a2115;
   --color-danger-border:#4b2225; --color-success-border:#1f4030; --color-warn-border:#4a3a12;
-  --color-danger-text:#fca5a5; --color-success-text:#86efac; --color-warn-text:#fcd34d; --color-brand-text:#93c5fd;
-  --color-chrome:#141a25; --color-chrome-text:#a8b6c8; --color-chrome-border:#26303f;
-  --shadow-card:0 1px 2px rgba(0,0,0,.28);
-  --shadow-pop:0 8px 24px rgba(0,0,0,.42);
+  --color-danger-text:#fca5a5; --color-success-text:#8fec7f; --color-warn-text:#fcd34d; --color-brand-text:#8fec7f;
+  --color-chrome:#000000; --color-chrome-text:#ffffff; --color-chrome-border:#2e3234;
+  --color-chrome-display:#8c8c8c; --color-chrome-muted:#8c8c8c; --color-chrome-active:#161616;
+  --shadow-card:0 0 0 1px rgba(255,255,255,.05), 0 24px 20px 0 rgba(0,0,0,.50);
+  --shadow-pop:0 0 0 1px rgba(255,255,255,.07), 0 24px 44px 0 rgba(0,0,0,.65);
 }
 *{box-sizing:border-box;}
 html,body,#root{margin:0;padding:0;height:100%;}
-body{font-family:'IBM Plex Sans Thai',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;color:var(--color-text);background:var(--color-page-bg);}
+body{font-family:var(--font-body);font-weight:300;-webkit-font-smoothing:antialiased;color:var(--color-text);background:var(--color-page-bg);}
+/* ── display tier: serif บรรณาธิการ weight 300 + tracking ติดลบ ──
+   ปรับ scale จาก spec: Mural ใช้ 80px (hero) / 70px (section) / 54px (metric) บน marketing page ที่มี
+   ข้อความสั้น 1-2 ประโยค — แอปนี้เป็น dashboard ที่หัวข้อต้องอยู่ร่วมกับบอร์ด 326 การ์ดและแผงข้อมูล
+   หลายชั้น ขนาดระดับนั้นกินพื้นที่จนใช้งานไม่ได้ จึงย่อเหลือ 30/20/34px แต่คงสิ่งที่เป็นตัวตนของระบบไว้:
+   น้ำหนัก 300 + tracking ติดลบ + serif คู่กับ sans body (spec เตือนว่าน้ำหนักหนักกว่า 300 จะทำให้
+   ท่าทางบรรณาธิการหายไป) tracking แปลงเป็น em ให้ย่อ/ขยายตามขนาด (-4px ที่ 80px = -.05em) */
+.kobDisplay{font-family:var(--font-display);font-weight:300;letter-spacing:-.03em;}
+.kobDisplayTight{font-family:var(--font-display);font-weight:300;letter-spacing:-.045em;}
+/* eyebrow ตัวพิมพ์ใหญ่ tracking 2.45px ตรงตาม typography.uppercase-eyebrow ของ spec */
+.kobEyebrow{font-weight:300;letter-spacing:.175em;text-transform:uppercase;}
 ::-webkit-scrollbar{width:9px;height:9px;}
-::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:99px;border:2px solid transparent;background-clip:content-box;}
-::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:content-box;}
-:root[data-theme="dark"] ::-webkit-scrollbar-thumb{background:#3a465c;}
+::-webkit-scrollbar-thumb{background:#dce1e5;border-radius:99px;border:2px solid transparent;background-clip:content-box;}
+::-webkit-scrollbar-thumb:hover{background:#b8c1cc;background-clip:content-box;}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb{background:#2e3234;}
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) ::-webkit-scrollbar-thumb{background:#3a465c;}
+  :root:not([data-theme="light"]) ::-webkit-scrollbar-thumb{background:#2e3234;}
 }
 @keyframes kobSlideIn{from{transform:translateX(100%);}to{transform:translateX(0);}}
 @keyframes kobFadeIn{from{opacity:0;}to{opacity:1;}}
@@ -1044,23 +1087,23 @@ class App extends Component {
     const iconBtn={display:'flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'var(--radius)',border:'1px solid var(--color-chrome-border)',background:'var(--color-chrome)',cursor:'pointer',flexShrink:0};
     return <header style={{display:'flex',alignItems:'center',gap:'12px',padding:'0 22px',height:'60px',background:'var(--color-chrome)',borderBottom:'1px solid var(--color-chrome-border)',flexShrink:0}}>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:'15px',fontWeight:600,color:'var(--color-text)',letterSpacing:'-.1px'}}>{page.t}</div>
-        {!isNarrow&&<div style={{fontSize:'11.5px',color:'var(--color-text-tertiary)',marginTop:'1px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{page.d}</div>}
+        <div className="kobDisplayTight" style={{fontSize:'27px',lineHeight:1.05,color:'var(--color-chrome-display)'}}>{page.t}</div>
+        {!isNarrow&&<div style={{fontSize:'11.5px',color:'var(--color-chrome-muted)',marginTop:'1px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{page.d}</div>}
       </div>
-      <div onClick={dataSource==='fallback'?()=>this.sync():undefined} title={dataSource==='fallback'?'คลิกเพื่อลองเชื่อมต่อ Odoo อีกครั้ง':''} style={{display:'flex',alignItems:'center',gap:'6px',padding:'5px 10px',borderRadius:'var(--radius-sm)',background:'var(--color-surface-muted)',flexShrink:0,cursor:dataSource==='fallback'?'pointer':'default'}}>
+      <div onClick={dataSource==='fallback'?()=>this.sync():undefined} title={dataSource==='fallback'?'คลิกเพื่อลองเชื่อมต่อ Odoo อีกครั้ง':''} style={{display:'flex',alignItems:'center',gap:'6px',padding:'5px 10px',borderRadius:'var(--radius-sm)',background:'var(--color-chrome-active)',flexShrink:0,cursor:dataSource==='fallback'?'pointer':'default'}}>
         <span style={{width:'7px',height:'7px',borderRadius:'50%',background:dbConf.c,flexShrink:0}}/>
-        <span style={{fontSize:'11.5px',fontWeight:500,color:'var(--color-text-secondary)'}}>{dbConf.t}{dataSource==='fallback'?' · คลิกลองใหม่':''}</span>
+        <span style={{fontSize:'11.5px',fontWeight:500,color:'var(--color-chrome-text)'}}>{dbConf.t}{dataSource==='fallback'?' · คลิกลองใหม่':''}</span>
       </div>
-      {!isNarrow&&lastSync!=='—'&&<span style={{fontSize:'11.5px',color:'var(--color-text-muted)',whiteSpace:'nowrap'}}>ซิงค์ {lastSync}</span>}
-      <button onClick={()=>this.toggleTheme()} aria-label={this.state.theme==='dark'?'สลับเป็นโหมดสว่าง':'สลับเป็นโหมดมืด'} title={this.state.theme==='dark'?'สลับเป็นโหมดสว่าง':'สลับเป็นโหมดมืด'} style={{...iconBtn,color:'var(--color-text-tertiary)'}}>
+      {!isNarrow&&lastSync!=='—'&&<span style={{fontSize:'11.5px',color:'var(--color-chrome-muted)',whiteSpace:'nowrap'}}>ซิงค์ {lastSync}</span>}
+      <button onClick={()=>this.toggleTheme()} aria-label={this.state.theme==='dark'?'สลับเป็นโหมดสว่าง':'สลับเป็นโหมดมืด'} title={this.state.theme==='dark'?'สลับเป็นโหมดสว่าง':'สลับเป็นโหมดมืด'} style={{...iconBtn,color:'var(--color-chrome-muted)'}}>
         <Ico name={this.state.theme==='dark'?'sun':'moon'} size={16} sw={1.8}/>
       </button>
       {(()=>{const al=this.alerts();const late=al.filter(a=>a.kind==='late').length;
-        return <button onClick={()=>this.setState({alertsOpen:true})} title="รายการต้องติดตาม" style={{...iconBtn,position:'relative',color:al.length?'var(--color-warn)':'var(--color-text-tertiary)'}}>
+        return <button onClick={()=>this.setState({alertsOpen:true})} title="รายการต้องติดตาม" style={{...iconBtn,position:'relative',color:al.length?'var(--color-warn)':'var(--color-chrome-muted)'}}>
           <Ico name="bell" size={17} sw={1.8}/>
           {al.length>0&&<span style={{position:'absolute',top:'-5px',right:'-5px',minWidth:'17px',height:'17px',padding:'0 4px',borderRadius:'99px',background:late?'var(--color-danger)':'var(--color-warn)',color:'#fff',fontSize:'10px',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',border:'1.5px solid var(--color-chrome)'}}>{al.length}</span>}
         </button>;})()}
-      <button onClick={()=>this.sync()} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:isNarrow?'0 9px':'0 13px',border:0,borderRadius:'var(--radius)',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:syncing?'default':'pointer',opacity:syncing?0.8:1}}>
+      <button onClick={()=>this.sync()} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:isNarrow?'0 9px':'0 13px',border:0,borderRadius:'var(--radius-pill)',background:'var(--color-brand)',color:'#000',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:syncing?'default':'pointer',opacity:syncing?0.8:1}}>
         <span style={{display:'flex',animation:syncing?'kobSpin 1s linear infinite':'none'}}><Ico name="sync" size={15} sw={2}/></span>
         {!isNarrow&&<span>Sync Odoo</span>}
       </button>
@@ -1072,8 +1115,8 @@ class App extends Component {
     const inLogisticsGroup=tab==='import'||tab==='export'||tab==='dashboard';
     return <aside style={{width:'224px',flexShrink:0,height:'100vh',background:'var(--color-chrome)',display:'flex',flexDirection:'column',borderRight:'1px solid var(--color-chrome-border)'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'0 18px',height:'60px',flexShrink:0,borderBottom:'1px solid var(--color-chrome-border)'}}>
-        <div style={{width:'30px',height:'30px',borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Ico name="boxes" size={17} sw={1.8}/></div>
-        <div style={{minWidth:0}}><div style={{fontWeight:600,fontSize:'13.5px',color:'var(--color-text)',letterSpacing:'-.1px'}}>Import-Export OS</div><div style={{fontSize:'10.5px',color:'var(--color-text-muted)'}}>KOB &amp; BTV</div></div>
+        <div style={{width:'30px',height:'30px',borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'#000',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Ico name="boxes" size={17} sw={1.8}/></div>
+        <div style={{minWidth:0}}><div className="kobDisplayTight" style={{fontSize:'18px',color:'var(--color-chrome-display)'}}>Import-Export OS</div><div style={{fontSize:'10.5px',color:'var(--color-chrome-muted)'}}>KOB &amp; BTV</div></div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'12px 10px',display:'flex',flexDirection:'column',gap:'1px'}}>
         {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'verify',label:'ตรวจเอกสาร Shipment',icon:'check',active:tab==='verify'}].map(t=>{
@@ -1081,7 +1124,7 @@ class App extends Component {
           return <button key={t.key} onClick={()=>{
             if(t.key==='logistics'){if(!inLogisticsGroup)this.setState({tab:'import',detailId:null});}
             else this.setState({tab:t.key,detailId:null});
-          }} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 12px',border:0,borderRadius:'var(--radius)',background:active?'var(--color-brand-soft)':'transparent',color:active?'var(--color-brand)':'var(--color-chrome-text)',fontFamily:'inherit',fontSize:'13px',fontWeight:active?600:500,cursor:'pointer',textAlign:'left',width:'100%'}}>
+          }} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 12px',border:0,borderRadius:'var(--radius)',background:active?'var(--color-chrome-active)':'transparent',color:active?'var(--color-brand)':'var(--color-chrome-text)',fontFamily:'inherit',fontSize:'13px',fontWeight:active?600:500,cursor:'pointer',textAlign:'left',width:'100%'}}>
             <Ico name={t.icon} size={16} sw={1.8}/>
             <span style={{flex:1}}>{t.label}</span>
           </button>;
@@ -1124,7 +1167,7 @@ class App extends Component {
         <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
           <div style={{display:'flex',alignItems:'center',gap:'8px',background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',padding:'0 11px',height:'34px',width:'230px',maxWidth:'48vw'}}>
             <span style={{display:'flex',color:'var(--color-text-muted)'}}><Ico name="search" size={15} sw={1.8}/></span>
-            <input value={query} onChange={e=>this.setState({query:e.target.value})} placeholder="ค้นหา PO, ผู้ขาย, BL/AWB, ตู้, เรือ, forwarder…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',width:'100%'}}/>
+            <input value={query} onChange={e=>this.setState({query:e.target.value})} placeholder="ค้นหา PO, ผู้ขาย, BL, ตู้, เรือ…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',width:'100%'}}/>
           </div>
           <div style={{display:'flex',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',overflow:'hidden'}}>
             <button onClick={()=>this.setState({view:'kanban'})} title="มุมมองบอร์ด" style={vbtn(view==='kanban')}><Ico name="kanban" size={16} sw={1.8}/></button>
@@ -1133,7 +1176,7 @@ class App extends Component {
           <button onClick={()=>this.exportExcel(tab)} title="ดาวน์โหลด Excel" style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:'0 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer',flexShrink:0}}>
             <Ico name="dl" size={15} sw={1.9}/>{!isNarrow&&<span>Excel</span>}
           </button>
-          <button onClick={()=>this.setState({creating:true,form:defaultForm(tab==='export'?'export':'import')})} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:'0 14px',border:0,borderRadius:'var(--radius)',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}>
+          <button onClick={()=>this.setState({creating:true,form:defaultForm(tab==='export'?'export':'import')})} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:'0 14px',border:0,borderRadius:'var(--radius-pill)',background:'var(--color-brand)',color:'#000',fontFamily:'inherit',fontSize:'12.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}>
             <Ico name="plus" size={16} sw={2}/>{!isNarrow&&<span>เพิ่มรายการ</span>}
           </button>
         </div>
@@ -1182,7 +1225,7 @@ class App extends Component {
                   title="ลากไปวางคอลัมน์อื่นเพื่อปรับสถานะจริง"
                   style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',padding:'10px 11px',cursor:'grab',boxShadow:'var(--shadow-card)'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px'}}>
-                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11px',fontWeight:600,color:'var(--color-text-secondary)'}}>{s.poNo}</span>
+                    <span style={{fontFamily:'var(--font-mono)',fontSize:'11px',fontWeight:600,color:'var(--color-text-secondary)'}}>{s.poNo}</span>
                     <span style={{display:'flex',alignItems:'center',gap:'4px'}}>
                       {isSplit&&<span title={'PO นี้แบ่งส่งเป็น '+grp.length+' shipment'} style={{display:'inline-flex',alignItems:'center',padding:'1px 6px',borderRadius:'var(--radius-sm)',fontSize:'9.5px',fontWeight:700,background:'var(--color-brand-soft)',color:'var(--color-brand)'}}>{splitIdx}/{grp.length}</span>}
                       {s.overReceipt&&<span title="รับของเกินสั่ง" style={{display:'inline-flex',alignItems:'center',padding:'1px 6px',borderRadius:'var(--radius-sm)',fontSize:'9.5px',fontWeight:700,background:'var(--color-warn-soft)',color:'var(--color-warn-text)'}}>เกิน</span>}
@@ -1217,15 +1260,15 @@ class App extends Component {
     return <div style={{flex:1,overflow:'auto',minHeight:0,padding:'0 22px 22px'}}>
       <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',overflow:'hidden'}}>
         <table style={{width:'100%',borderCollapse:'collapse',minWidth:'840px'}}>
-          <thead><tr style={{background:'var(--color-page-bg)'}}>
+          <thead><tr style={{background:'var(--color-surface-muted)'}}>
             {[['PO / ผู้ขาย','left'],['บริษัท','left'],['ประเภท','left'],['สถานะ','left'],['มูลค่า','right'],['ETA','left']].map(([h,a])=>(
-              <th key={h} style={{textAlign:a,fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'12px 14px'}}>{h}</th>
+              <th key={h} style={{textAlign:a,fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.14em',textTransform:'uppercase',padding:'12px 14px'}}>{h}</th>
             ))}
           </tr></thead>
           <tbody>
             {list.map(s=>{const sm=stageMeta(tab,s.stage);return(
               <tr key={s.id} onClick={()=>this.setState({detailId:s.id})} style={{cursor:'pointer',borderTop:'1px solid var(--color-surface-muted2)'}}>
-                <td style={{padding:'12px 14px'}}><div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</div><div style={{fontSize:'12px',color:'var(--color-text-tertiary)',marginTop:'2px',maxWidth:'240px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</div></td>
+                <td style={{padding:'12px 14px'}}><div style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</div><div style={{fontSize:'12px',color:'var(--color-text-tertiary)',marginTop:'2px',maxWidth:'240px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</div></td>
                 <td style={{padding:'12px 14px'}}><span style={coBadgeSty(s.company)}>{s.company}</span></td>
                 <td style={{padding:'12px 14px'}}><span style={typeBadgeSty(s.type)}><span style={typeDotSty(s.type)}/>{typeMeta(s.type).label}</span></td>
                 <td style={{padding:'12px 14px'}}><span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{sm.label}</span></td>
@@ -1398,7 +1441,7 @@ class App extends Component {
               <Ico name={k.icon} size={14} sw={1.9}/>
               <span style={{fontSize:'12px',fontWeight:500}}>{k.label}</span>
             </div>
-            <div style={{fontSize:'26px',fontWeight:600,color:'var(--color-text)',marginTop:'10px',lineHeight:1,fontVariantNumeric:'tabular-nums',letterSpacing:'-.5px'}}>{k.value}</div>
+            <div style={{fontSize:'34px',fontFamily:'var(--font-display)',fontWeight:300,color:'var(--color-text)',marginTop:'8px',lineHeight:1,fontVariantNumeric:'tabular-nums',letterSpacing:'-.045em'}}>{k.value}</div>
             <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'6px'}}>{k.sub}</div>
           </div>)}
         </div>
@@ -1419,7 +1462,7 @@ class App extends Component {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',flexWrap:'wrap'}}>
               <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                 <span style={{width:'9px',height:'9px',borderRadius:'50%',background:totalEx?'var(--color-danger)':'var(--color-success)',flexShrink:0}}/>
-                <span style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>สรุปข้อยกเว้นที่ควรตรวจสอบ</span>
+                <span style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>สรุปข้อยกเว้นที่ควรตรวจสอบ</span>
               </div>
               <button onClick={()=>this.exportAccountingReport(qRows)} title="ดาวน์โหลด Excel: Import+Export ทุกรายการ + สรุปรายไตรมาส สำหรับกระทบยอดกับบัญชี" style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-success-text)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer',flexShrink:0}}><Ico name="dl" size={13} sw={2}/>Export รายงานบัญชี</button>
             </div>
@@ -1434,7 +1477,7 @@ class App extends Component {
             {missingCost.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'2px'}}>
               {missingCost.slice(0,5).map(s=>(
                 <div key={s.id} onClick={()=>this.setState({tab:'import',detailId:s.id,view:'kanban'})} style={{fontSize:'12px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',borderLeft:'2px solid var(--color-danger)',borderRadius:'0 var(--radius-sm) var(--radius-sm) 0',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>{s.poNo}</span>
+                  <span style={{fontFamily:'var(--font-mono)',fontWeight:600}}>{s.poNo}</span>
                   <span>{s.party}</span>
                 </div>
               ))}
@@ -1443,7 +1486,7 @@ class App extends Component {
             {overBudget.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'2px'}}>
               {overBudget.slice(0,5).map(s=>(
                 <div key={s.id} onClick={()=>this.setState({tab:s._board,detailId:s.id,view:'kanban'})} style={{fontSize:'12px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',borderLeft:'2px solid var(--color-danger)',borderRadius:'0 var(--radius-sm) var(--radius-sm) 0',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>{s.poNo}</span>
+                  <span style={{fontFamily:'var(--font-mono)',fontWeight:600}}>{s.poNo}</span>
                   <span>ต้นทุนจริง {fmtBaht(totalCostThb(s))} เทียบคาดการณ์ {fmtBaht(s.expectedCost)}</span>
                 </div>
               ))}
@@ -1461,7 +1504,7 @@ class App extends Component {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'10px'}}>
               <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
                 <span style={{width:'9px',height:'9px',borderRadius:'50%',background:dirty?'var(--color-danger)':clean?'var(--color-success)':'var(--color-text-muted)',flexShrink:0}}/>
-                <span style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>ผลตรวจสอบข้อมูลอัตโนมัติ</span>
+                <span style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>ผลตรวจสอบข้อมูลอัตโนมัติ</span>
                 {ir&&ir.ranAt&&<span style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ตรวจล่าสุด {new Date(ir.ranAt).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น. · เช็ค {ir.importChecked+ir.exportChecked} รายการ</span>}
               </div>
               <button onClick={()=>this.loadIntegrityReport(true)} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังตรวจ…':'ตรวจสอบตอนนี้'}</button>
@@ -1487,7 +1530,7 @@ class App extends Component {
           const log=this.state.auditLog,loading=this.state.auditLoading;
           return <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'18px 22px',display:'flex',flexDirection:'column',gap:'10px'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'10px'}}>
-              <span style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>ประวัติการแก้ไขล่าสุด</span>
+              <span style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>ประวัติการแก้ไขล่าสุด</span>
               <button onClick={()=>this.loadAuditLog()} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังโหลด…':'รีเฟรช'}</button>
             </div>
             {!log&&!loading&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่มีประวัติ</div>}
@@ -1496,7 +1539,7 @@ class App extends Component {
               {log.map((e,i)=>(
                 <div key={i} onClick={()=>this.jumpToAuditEntry(e.po_so)} style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'150px 150px 1fr',gap:isNarrow?'2px':'12px',padding:'8px 6px',borderBottom:i<log.length-1?'1px solid var(--color-surface-muted2)':'none',cursor:'pointer',fontSize:'12px'}}>
                   <span style={{color:'var(--color-text-muted)',whiteSpace:'nowrap'}}>{new Date(e.ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</span>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600,color:'var(--color-brand)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{e.po_so}</span>
+                  <span style={{fontFamily:'var(--font-mono)',fontWeight:600,color:'var(--color-brand)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{e.po_so}</span>
                   <span style={{color:'var(--color-text-secondary)'}}>{auditEntrySummary(e)}</span>
                 </div>
               ))}
@@ -1506,7 +1549,7 @@ class App extends Component {
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1.7fr 1fr',gap:isNarrow?'14px':'16px'}}>
           <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
             <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'18px'}}>
-              <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Import Pipeline</div>
+              <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>Import Pipeline</div>
               <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>{impAll.length} รายการ</div>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
@@ -1525,7 +1568,7 @@ class App extends Component {
             </div>
           </div>
           <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Company Split</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>Company Split</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'20px'}}>KOB เทียบ BTV</div>
             {companySplit.map(c=>{
               const tot=c.kob+c.btv||1,totVal=c.kobVal+c.btvVal||1;
@@ -1552,7 +1595,7 @@ class App extends Component {
           </div>
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
-          <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>สัดส่วนสกุลเงิน (ก่อนแปลงเป็นบาท)</div>
+          <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>สัดส่วนสกุลเงิน (ก่อนแปลงเป็นบาท)</div>
           <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>ยอดต้นฉบับตามสกุลเงินจริง ยังไม่แปลงเป็นบาท — ไว้ดูความเสี่ยงอัตราแลกเปลี่ยน (FX exposure)</div>
           <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
             {[{title:'Import',rows:impCurRows},{title:'Export',rows:expCurRows}].map(col=>(
@@ -1574,7 +1617,7 @@ class App extends Component {
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'18px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Export Pipeline</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>Export Pipeline</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>{expAll.length} รายการ</div>
           </div>
           <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
@@ -1591,7 +1634,7 @@ class App extends Component {
           </div>
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
-          <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Top ผู้ขาย/ลูกค้าตามมูลค่า</div>
+          <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>Top ผู้ขาย/ลูกค้าตามมูลค่า</div>
           <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>เรียงตามมูลค่ารวมแปลงเป็นบาท (฿) สูงสุด 10 อันดับ</div>
           <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
             {[{title:'Import: ผู้ขายอันดับต้น',rows:topVendors,color:'var(--color-brand)'},{title:'Export: ลูกค้าอันดับต้น',rows:topCustomers,color:'#0891b2'}].map(col=>(
@@ -1624,14 +1667,14 @@ class App extends Component {
             return {...v,spend:m?m.value:null};
           }).sort((a,b)=>(b.spend||0)-(a.spend||0));
           return <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Vendor Scorecard — อัตราส่งตรงเวลา</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>Vendor Scorecard — อัตราส่งตรงเวลา</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>เทียบ scheduled_date กับวันที่ส่งจริงจาก Odoo · เฉพาะผู้ขายที่มีข้อมูลอย่างน้อย 2 ครั้ง</div>
             {loading&&!sc&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>กำลังโหลด…</div>}
             {!loading&&sc&&sc.length===0&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่มีข้อมูลเพียงพอ</div>}
             {sc&&sc.length>0&&<div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12.5px'}}>
-                <thead><tr style={{background:'var(--color-page-bg)'}}>{['ผู้ขาย','จำนวนครั้ง','ตรงเวลา','ล่าช้าเฉลี่ย','มูลค่ารวม'].map((h,i)=>(
-                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
+                <thead><tr style={{background:'var(--color-surface-muted)'}}>{['ผู้ขาย','จำนวนครั้ง','ตรงเวลา','ล่าช้าเฉลี่ย','มูลค่ารวม'].map((h,i)=>(
+                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.14em',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>{merged.slice(0,15).map((v,i)=>{
                   const rate=v.deliveries>0?Math.round(v.on_time/v.deliveries*100):0;
@@ -1658,7 +1701,7 @@ class App extends Component {
           // ซึ่งมีคนกรอกจริงไม่ถึง 1% ของ shipment ทั้งหมด
           return <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
             <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-              <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>รอบเวลาสั่งซื้อจนคาดว่าจะถึง (PO → กำหนดถึงท่า)</div>
+              <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>รอบเวลาสั่งซื้อจนคาดว่าจะถึง (PO → กำหนดถึงท่า)</div>
               {ltAvg!=null&&<div style={{fontSize:'12.5px',fontWeight:600,color:'var(--color-text)'}}>เฉลี่ย {ltAvg} วัน</div>}
             </div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginBottom:'18px'}}>
@@ -1668,8 +1711,8 @@ class App extends Component {
             {!ltByVendor.length&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่มีข้อมูลเพียงพอ (ต้องมีอย่างน้อย 2 PO ต่อผู้ขาย)</div>}
             {!!ltByVendor.length&&<div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12.5px'}}>
-                <thead><tr style={{background:'var(--color-page-bg)'}}>{['ผู้ขาย','จำนวน PO','เฉลี่ย'].map((h,i)=>(
-                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
+                <thead><tr style={{background:'var(--color-surface-muted)'}}>{['ผู้ขาย','จำนวน PO','เฉลี่ย'].map((h,i)=>(
+                  <th key={h} style={{textAlign:i>=1?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.14em',textTransform:'uppercase',padding:'9px 12px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>{ltByVendor.slice(0,10).map((v,i)=>(
                   <tr key={v.partyId!=null?v.partyId:v.party} style={{borderTop:i?'1px solid var(--color-surface-muted2)':'none'}}>
@@ -1688,7 +1731,7 @@ class App extends Component {
           const gl=this.state.glReconcile,loading=this.state.glReconcileLoading;
           const zeroN=gl?gl.zeroBilled.length:0,partN=gl?gl.partialMismatch.length:0;
           return <div style={{background:'var(--color-surface)',border:'1px solid '+((zeroN+partN)?'var(--color-warn-border)':'var(--color-border)'),borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>กระทบยอดกับ Odoo (GL Reconciliation)</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>กระทบยอดกับ Odoo (GL Reconciliation)</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>เทียบมูลค่า PO ที่ Odoo ระบุว่า "invoiced" แล้ว กับยอดใบวางบิลจริงที่ผูกไว้ (สกุลเงินเดียวกันเท่านั้น) · ต่างกันเกิน 15%</div>
             {loading&&!gl&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>กำลังโหลด…</div>}
             {gl&&zeroN===0&&partN===0&&<div style={{fontSize:'12.5px',color:'var(--color-success-text)',display:'flex',alignItems:'center',gap:'6px'}}><Ico name="check" size={14} sw={2.2}/>ไม่พบ PO ที่ยอดต่างจากบิลจริงเกินเกณฑ์</div>}
@@ -1697,7 +1740,7 @@ class App extends Component {
               <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
                 {gl.zeroBilled.slice(0,6).map(r=>(
                   <div key={r.po_number} onClick={()=>this.jumpToAuditEntry(r.po_number)} style={{fontSize:'12px',color:'var(--color-warn-text)',background:'var(--color-warn-soft)',border:'1px solid var(--color-warn-border)',borderRadius:'var(--radius)',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
-                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>{r.po_number}</span>
+                    <span style={{fontFamily:'var(--font-mono)',fontWeight:600}}>{r.po_number}</span>
                     <span>{r.currency} {Math.round(r.po_total).toLocaleString('en-US')} → บิล 0</span>
                   </div>
                 ))}
@@ -1709,7 +1752,7 @@ class App extends Component {
               <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
                 {gl.partialMismatch.slice(0,6).map(r=>(
                   <div key={r.po_number} onClick={()=>this.jumpToAuditEntry(r.po_number)} style={{fontSize:'12px',color:'var(--color-warn-text)',background:'var(--color-warn-soft)',border:'1px solid var(--color-warn-border)',borderRadius:'var(--radius)',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
-                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontWeight:600}}>{r.po_number}</span>
+                    <span style={{fontFamily:'var(--font-mono)',fontWeight:600}}>{r.po_number}</span>
                     <span>{r.currency} {Math.round(r.po_total).toLocaleString('en-US')} → บิล {Math.round(r.billed_total).toLocaleString('en-US')} ({r.diff_pct}%)</span>
                   </div>
                 ))}
@@ -1719,18 +1762,18 @@ class App extends Component {
           </div>;
         })()}
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
-          <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>PO/SO ที่ค้างนาน</div>
+          <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>PO/SO ที่ค้างนาน</div>
           <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'18px'}}>นับจากวันที่สั่งซื้อ (orderDate) ถึงวันนี้ เฉพาะรายการที่ยังไม่จบสถานะ</div>
           <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr':'1fr 1fr',gap:isNarrow?'20px':'28px'}}>
             <div>
               <div style={{display:'flex',alignItems:'baseline',gap:'9px',marginBottom:'12px'}}>
-                <span style={{fontSize:'22px',fontWeight:700,color:impBacklog.length?'var(--color-danger)':'var(--color-success)',fontVariantNumeric:'tabular-nums'}}>{impBacklog.length}</span>
+                <span style={{fontSize:'28px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.04em',color:impBacklog.length?'var(--color-danger)':'var(--color-success)',fontVariantNumeric:'tabular-nums'}}>{impBacklog.length}</span>
                 <span style={{fontSize:'12.5px',color:'var(--color-text-secondary)'}}>PO ค้างเกิน 45 วัน</span>
               </div>
               {impBacklog.length===0&&<div style={{fontSize:'12px',color:'var(--color-success-text)',background:'var(--color-success-soft)',border:'1px solid var(--color-success-border)',borderRadius:'var(--radius)',padding:'10px 14px'}}>ไม่มีรายการค้างนาน</div>}
               {impBacklog.slice(0,5).map(({s,days})=>(
                 <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid var(--color-surface-muted2)'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'var(--color-text)',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
+                  <span style={{fontFamily:'var(--font-mono)',fontSize:'11.5px',fontWeight:600,color:'var(--color-text)',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
                   <span style={{flex:1,fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
                   <span style={stageBadgeSty('import',s.stage)}><span style={stageDotSty('import',s.stage)}/>{stageMeta('import',s.stage).label}</span>
                   <span style={{fontSize:'11.5px',fontWeight:700,color:'var(--color-danger)',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
@@ -1739,13 +1782,13 @@ class App extends Component {
             </div>
             <div>
               <div style={{display:'flex',alignItems:'baseline',gap:'9px',marginBottom:'12px'}}>
-                <span style={{fontSize:'22px',fontWeight:700,color:expBacklog.length?'var(--color-danger)':'var(--color-success)',fontVariantNumeric:'tabular-nums'}}>{expBacklog.length}</span>
+                <span style={{fontSize:'28px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.04em',color:expBacklog.length?'var(--color-danger)':'var(--color-success)',fontVariantNumeric:'tabular-nums'}}>{expBacklog.length}</span>
                 <span style={{fontSize:'12.5px',color:'var(--color-text-secondary)'}}>SO ค้างเกิน 30 วัน</span>
               </div>
               {expBacklog.length===0&&<div style={{fontSize:'12px',color:'var(--color-success-text)',background:'var(--color-success-soft)',border:'1px solid var(--color-success-border)',borderRadius:'var(--radius)',padding:'10px 14px'}}>ไม่มีรายการค้างนาน</div>}
               {expBacklog.slice(0,5).map(({s,days})=>(
                 <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid var(--color-surface-muted2)'}}>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'var(--color-text)',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
+                  <span style={{fontFamily:'var(--font-mono)',fontSize:'11.5px',fontWeight:600,color:'var(--color-text)',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
                   <span style={{flex:1,fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
                   <span style={stageBadgeSty('export',s.stage)}><span style={stageDotSty('export',s.stage)}/>{stageMeta('export',s.stage).label}</span>
                   <span style={{fontSize:'11.5px',fontWeight:700,color:'var(--color-danger)',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
@@ -1756,21 +1799,21 @@ class App extends Component {
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'6px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>Transit Time KPI (นำเข้า · Sea Freight)</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>Transit Time KPI (นำเข้า · Sea Freight)</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>เทียบ ETD → วันที่รับเข้าคลังจริง กับมาตรฐานต่อท่า</div>
           </div>
           <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'16px'}}>วัดได้ {tstat.measured} จาก {impAll.length} รายการ (ต้องมี ETD + วันที่รับจริง + มีมาตรฐานท่านั้น) · ยังไม่มีข้อมูล {tstat.noData} รายการ</div>
           <div style={{display:'grid',gridTemplateColumns:isNarrow?'1fr 1fr':'repeat(3,1fr)',gap:isNarrow?'10px':'16px',marginBottom:'16px'}}>
             <div style={{background:'var(--color-success-soft)',border:'1px solid var(--color-success-border)',borderRadius:'var(--radius-lg)',padding:'14px 16px'}}>
-              <div style={{fontSize:'22px',fontWeight:700,color:'var(--color-success-text)',fontVariantNumeric:'tabular-nums'}}>{tstat.onTime}</div>
+              <div style={{fontSize:'28px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.04em',color:'var(--color-success-text)',fontVariantNumeric:'tabular-nums'}}>{tstat.onTime}</div>
               <div style={{fontSize:'12px',color:'var(--color-success-text)',marginTop:'3px'}}>ตรงเวลา / เร็วกว่า KPI</div>
             </div>
             <div style={{background:'var(--color-danger-soft)',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius-lg)',padding:'14px 16px'}}>
-              <div style={{fontSize:'22px',fontWeight:700,color:'var(--color-danger)',fontVariantNumeric:'tabular-nums'}}>{tstat.late}</div>
+              <div style={{fontSize:'28px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.04em',color:'var(--color-danger)',fontVariantNumeric:'tabular-nums'}}>{tstat.late}</div>
               <div style={{fontSize:'12px',color:'var(--color-danger-text)',marginTop:'3px'}}>เกินระยะเวลา KPI</div>
             </div>
             <div style={{background:'var(--color-surface-muted)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'14px 16px'}}>
-              <div style={{fontSize:'22px',fontWeight:700,color:'var(--color-text-tertiary)',fontVariantNumeric:'tabular-nums'}}>{tstat.noData}</div>
+              <div style={{fontSize:'28px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.04em',color:'var(--color-text-tertiary)',fontVariantNumeric:'tabular-nums'}}>{tstat.noData}</div>
               <div style={{fontSize:'12px',color:'var(--color-text-tertiary)',marginTop:'3px'}}>ยังไม่มีข้อมูลวัด</div>
             </div>
           </div>
@@ -1788,17 +1831,17 @@ class App extends Component {
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',overflow:'hidden'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>สรุปต้นทุนนำเข้าตาม PO</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>สรุปต้นทุนนำเข้าตาม PO</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>{costAll.length>7?('แสดง 7 จาก '+costAll.length+' รายการที่มีต้นทุน · '):''}มูลค่าแปลงเป็นบาท (฿)</div>
           </div>
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:'720px'}}>
-              <thead><tr style={{background:'var(--color-page-bg)'}}>{['PO','ผู้ขาย','มูลค่าสินค้า','ขนส่ง+พิธีการ+ประกัน','ภาษี+อากร','รวม'].map((h,i)=>(
-                <th key={h} style={{textAlign:i>=2?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
+              <thead><tr style={{background:'var(--color-surface-muted)'}}>{['PO','ผู้ขาย','มูลค่าสินค้า','ขนส่ง+พิธีการ+ประกัน','ภาษี+อากร','รวม'].map((h,i)=>(
+                <th key={h} style={{textAlign:i>=2?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.14em',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
               ))}</tr></thead>
               <tbody>{costSrc.map(s=>{const goods=s.amount*s.rate,imp=(s.freight||0)+(s.clearance||0)+(s.insurance||0),tax=(s.duty||0)+(s.vat||0),total=goods+imp+tax;return(
                 <tr key={s.id} style={{borderTop:'1px solid var(--color-surface-muted2)'}}>
-                  <td style={{padding:'11px 14px'}}><span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'12px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</span></td>
+                  <td style={{padding:'11px 14px'}}><span style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</span></td>
                   <td style={{padding:'11px 14px',fontSize:'12.5px',color:'var(--color-text-secondary)',maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(goods)}</td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-text-secondary)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(imp)}</td>
@@ -1807,7 +1850,7 @@ class App extends Component {
                 </tr>
               );})}
               </tbody>
-              <tfoot><tr style={{background:'var(--color-page-bg)',borderTop:'2px solid var(--color-border)'}}>
+              <tfoot><tr style={{background:'var(--color-surface-muted)',borderTop:'2px solid var(--color-border)'}}>
                 <td colSpan={2} style={{padding:'12px 14px',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)'}}>รวมทั้งหมด ({costAll.length} รายการ)</td>
                 <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg)}</td>
                 <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:700,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tf)}</td>
@@ -1819,13 +1862,13 @@ class App extends Component {
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',overflow:'hidden'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'18px 22px 14px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>สัดส่วนต้นทุนตามปี — Import เทียบ Export</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>สัดส่วนต้นทุนตามปี — Import เทียบ Export</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>มูลค่าแปลงเป็นบาท (฿) · แยกตามปี ETD</div>
           </div>
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',minWidth:'620px'}}>
-              <thead><tr style={{background:'var(--color-page-bg)'}}>{['ปี','Import (฿)','Export (฿)','รวม (฿)','สัดส่วน Import : Export'].map((h,i)=>(
-                <th key={h} style={{textAlign:i>=1&&i<=3?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.4px',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
+              <thead><tr style={{background:'var(--color-surface-muted)'}}>{['ปี','Import (฿)','Export (฿)','รวม (฿)','สัดส่วน Import : Export'].map((h,i)=>(
+                <th key={h} style={{textAlign:i>=1&&i<=3?'right':'left',fontSize:'11px',fontWeight:600,color:'var(--color-text-muted)',letterSpacing:'.14em',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
               ))}</tr></thead>
               <tbody>{yearRows.map(y=>(
                 <tr key={y.year} style={{borderTop:'1px solid var(--color-surface-muted2)'}}>
@@ -1850,7 +1893,7 @@ class App extends Component {
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>เทียบต้นทุนตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>เทียบต้นทุนตามไตรมาส — Import เทียบ Export</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>1 ปี = 3 ไตรมาส (Q1 ม.ค.-เม.ย. · Q2 พ.ค.-ส.ค. · Q3 ก.ย.-ธ.ค.)</div>
           </div>
           <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'var(--color-text-secondary)',marginBottom:'18px'}}>
@@ -1863,7 +1906,7 @@ class App extends Component {
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>มูลค่าเฉลี่ยต่อออเดอร์ตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>มูลค่าเฉลี่ยต่อออเดอร์ตามไตรมาส — Import เทียบ Export</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ต้นทุนรวมแปลงเป็นบาท (฿) หารด้วยจำนวน shipment ต่อไตรมาส</div>
           </div>
           <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'var(--color-text-secondary)',marginBottom:'18px'}}>
@@ -1876,7 +1919,7 @@ class App extends Component {
         </div>
         <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'20px 22px'}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:'4px'}}>
-            <div style={{fontSize:'14.5px',fontWeight:600,color:'var(--color-text)'}}>จำนวน Shipment ตามไตรมาส — Import เทียบ Export</div>
+            <div style={{fontSize:'20px',fontFamily:'var(--font-display)',fontWeight:300,letterSpacing:'-.03em',color:'var(--color-text)'}}>จำนวน Shipment ตามไตรมาส — Import เทียบ Export</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>1 ปี = 3 ไตรมาส (Q1 ม.ค.-เม.ย. · Q2 พ.ค.-ส.ค. · Q3 ก.ย.-ธ.ค.)</div>
           </div>
           <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'var(--color-text-secondary)',marginBottom:'18px'}}>
@@ -1910,7 +1953,7 @@ class App extends Component {
       <div style={{position:'fixed',top:0,right:0,bottom:0,width:'440px',maxWidth:'94vw',background:'var(--color-surface)',zIndex:61,boxShadow:'var(--shadow-pop)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
         <div style={{display:'flex',alignItems:'flex-start',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid var(--color-border)'}}>
           <div style={{minWidth:0}}>
-            <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'17px',fontWeight:600,color:'var(--color-text)'}}>{sel.poNo}</div>
+            <div style={{fontFamily:'var(--font-mono)',fontSize:'17px',fontWeight:600,color:'var(--color-text)'}}>{sel.poNo}</div>
             <div style={{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}}>
               <span style={coBadgeSty(sel.company)}>{sel.company}</span>
               <span style={typeBadgeSty(sel.type)}><span style={typeDotSty(sel.type)}/>{typeMeta(sel.type).label}</span>
@@ -1931,13 +1974,13 @@ class App extends Component {
               <div style={{fontSize:'12px',fontWeight:600,color:'var(--color-brand-text)'}}>PO นี้แบ่งส่งเป็น {siblings.length} shipment — ตรวจมูลค่า/ค่าใช้จ่ายแต่ละอันไม่ให้นับซ้ำกับต้นฉบับ</div>
               <div style={{display:'flex',flexWrap:'wrap',gap:'6px'}}>
                 {siblings.map(sb=>(
-                  <button key={sb.id} onClick={()=>this.setState({detailId:sb.id,editing:false,editForm:null})} style={{padding:'5px 10px',borderRadius:'var(--radius)',border:sb.id===sel.id?'1px solid var(--color-brand)':'1px solid var(--color-border)',background:sb.id===sel.id?'var(--color-brand-soft)':'var(--color-surface)',color:'var(--color-brand-text)',fontFamily:"'IBM Plex Mono',monospace",fontSize:'11px',fontWeight:600,cursor:'pointer'}}>{sb.poNo}</button>
+                  <button key={sb.id} onClick={()=>this.setState({detailId:sb.id,editing:false,editForm:null})} style={{padding:'5px 10px',borderRadius:'var(--radius)',border:sb.id===sel.id?'1px solid var(--color-brand)':'1px solid var(--color-border)',background:sb.id===sel.id?'var(--color-brand-soft)':'var(--color-surface)',color:'var(--color-brand-text)',fontFamily:'var(--font-mono)',fontSize:'11px',fontWeight:600,cursor:'pointer'}}>{sb.poNo}</button>
                 ))}
               </div>
             </div>;
           })()}
           {!editing&&<>
-            <div style={{display:'flex',alignItems:'center',gap:'10px',background:'var(--color-page-bg)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius-lg)',padding:'14px 16px',marginBottom:'18px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'10px',background:'var(--color-surface-muted)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius-lg)',padding:'14px 16px',marginBottom:'18px'}}>
               <div style={{minWidth:0,flex:1}}><div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ต้นทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.origin||'—'}</div></div>
               <span style={{display:'flex',color:'var(--color-brand)',flexShrink:0}}><Ico name="arrow" size={18} sw={1.9}/></span>
               <div style={{minWidth:0,flex:1,textAlign:'right'}}><div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ปลายทาง</div><div style={{fontSize:'13px',fontWeight:600,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.dest||'—'}</div></div>
@@ -2033,13 +2076,13 @@ class App extends Component {
               </div>;
             })()}
             {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginBottom:'18px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
-            {sel.note&&<div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',background:'var(--color-page-bg)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}>{sel.note}</div>}
+            {sel.note&&<div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}>{sel.note}</div>}
             <SectionTitle>ไทม์ไลน์</SectionTitle>
             <div style={{display:'flex',flexDirection:'column'}}>
               {timeline.map(s=>(
                 <div key={s.key} style={{display:'flex',gap:'14px'}}>
                   <div style={{display:'flex',flexDirection:'column',alignItems:'center'}}>
-                    <span style={s.done?{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-brand)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}:s.cur?{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-surface)',border:'3px solid var(--color-brand)',boxShadow:'0 0 0 3px var(--color-brand-soft)',flexShrink:0}:{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-surface)',border:'2px solid var(--color-border)',flexShrink:0}}>
+                    <span style={s.done?{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-brand)',color:'#000',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}:s.cur?{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-surface)',border:'3px solid var(--color-brand)',boxShadow:'0 0 0 3px var(--color-brand-soft)',flexShrink:0}:{width:'24px',height:'24px',borderRadius:'50%',background:'var(--color-surface)',border:'2px solid var(--color-border)',flexShrink:0}}>
                       {s.done&&<Ico name="check" size={13} sw={2.4}/>}
                     </span>
                     {s.showLine&&<span style={{width:'2px',flex:1,minHeight:'24px',background:s.done?'var(--color-brand)':'var(--color-border)',marginTop:'2px',marginBottom:'2px'}}/>}
@@ -2104,7 +2147,7 @@ class App extends Component {
               <SectionTitle>ต้นทุน (บาท)</SectionTitle>
               <button onClick={()=>this.openBillPicker()} style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'6px 11px',border:'1px solid var(--color-brand)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}><Ico name="boxes" size={13} sw={1.8}/>เลือกบิลจาก Odoo</button>
             </div>
-            {Array.isArray(ef.bills)&&ef.bills.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'5px',marginBottom:'12px',background:'var(--color-page-bg)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'10px 12px'}}>
+            {Array.isArray(ef.bills)&&ef.bills.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'5px',marginBottom:'12px',background:'var(--color-surface-muted)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'10px 12px'}}>
               <div style={{fontSize:'10.5px',fontWeight:700,color:'var(--color-text-muted)',letterSpacing:'.4px'}}>บิลที่จับคู่ ({ef.bills.length})</div>
               {ef.bills.map(b=><div key={b.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',fontSize:'11.5px'}}>
                 <span style={{color:'var(--color-text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</span>
@@ -2124,14 +2167,14 @@ class App extends Component {
               <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ต้นทุนที่คาดการณ์ไว้ (บาท) — กรอกไว้เทียบกับต้นทุนจริงภายหลัง (ไม่บังคับ)</div>
               <input value={ef.expectedCost===''||ef.expectedCost==null?'':ef.expectedCost} onChange={e=>this.setEdit('expectedCost',e.target.value)} type="number" placeholder="ไม่ระบุ" style={INP}/>
             </div>
-            <div style={{fontSize:'11px',fontWeight:700,color:'var(--color-text-muted)',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ปรับสถานะ</div>
+            <div className="kobEyebrow" style={{fontSize:'12px',color:'var(--color-text-tertiary)',margin:'22px 0 11px'}}>ปรับสถานะ</div>
             <div style={{display:'flex',flexWrap:'wrap',gap:'7px'}}>
               {stages.map(stg=>{const active=curStage===stg.key;return(
                 <button key={stg.key} onClick={()=>this.setEdit('stage',stg.key)} style={{padding:'7px 12px',borderRadius:'var(--radius)',border:active?'1.5px solid '+stg.color:'1px solid var(--color-border)',background:active?stg.color+'15':'var(--color-surface)',color:active?stg.color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12px',fontWeight:active?600:500,cursor:'pointer'}}>{stg.label}</button>
               );})}
             </div>
             {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'10px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
-            <div style={{fontSize:'11px',fontWeight:700,color:'var(--color-text-muted)',letterSpacing:'.6px',textTransform:'uppercase',margin:'22px 0 11px'}}>ธงพิเศษ / หมายเหตุ</div>
+            <div className="kobEyebrow" style={{fontSize:'12px',color:'var(--color-text-tertiary)',margin:'22px 0 11px'}}>ธงพิเศษ / หมายเหตุ</div>
             <label style={{display:'flex',alignItems:'center',gap:'9px',cursor:'pointer',marginBottom:'13px'}}>
               <input type="checkbox" checked={!!ef.overReceipt} onChange={e=>this.toggleOverReceipt(e.target.checked)} style={{width:'17px',height:'17px',accentColor:'var(--color-brand)',cursor:'pointer'}}/>
               <span style={{fontSize:'12.5px',color:'var(--color-text)'}}>PO นี้เปิดเพื่อรับของส่วนเกินจากซัพพลายเออร์ (Over-receipt)</span>
@@ -2145,11 +2188,11 @@ class App extends Component {
             <button onClick={()=>this.splitShipment()} title="แยกเป็น shipment ย่อยใหม่ (PO เดียวกัน ส่งคนละรอบ)" style={{width:'40px',height:'40px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand-text)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="split" size={16} sw={1.8}/></button>
             {sel._synthetic&&<button onClick={()=>this.openDeleteDialog(sel.poNo)} title="ลบ shipment ย่อยนี้ (ต้องมีรหัสผ่านผู้มีอำนาจ)" style={{width:'40px',height:'40px',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-danger)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="trash" size={16} sw={1.8}/></button>}
             <button onClick={()=>this.setState({detailId:null})} style={{flex:1,height:'40px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ปิด</button>
-            <button onClick={()=>this.startEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'var(--radius)',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="edit" size={15} sw={1.8}/>แก้ไข</button>
+            <button onClick={()=>this.startEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'var(--radius-pill)',background:'var(--color-brand)',color:'#000',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="edit" size={15} sw={1.8}/>แก้ไข</button>
           </>}
           {editing&&<>
             <button onClick={()=>this.cancelEdit()} style={{flex:1,height:'40px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-            <button onClick={()=>this.saveEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'var(--radius)',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:savingEdit?'default':'pointer',opacity:savingEdit?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="check" size={15} sw={2.2}/>{savingEdit?'กำลังบันทึก…':'บันทึก'}</button>
+            <button onClick={()=>this.saveEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'var(--radius-pill)',background:'var(--color-brand)',color:'#000',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:savingEdit?'default':'pointer',opacity:savingEdit?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="check" size={15} sw={2.2}/>{savingEdit?'กำลังบันทึก…':'บันทึก'}</button>
           </>}
         </div>
       </div>
@@ -2167,7 +2210,7 @@ class App extends Component {
           <span style={{color:'var(--color-danger)',display:'flex'}}><Ico name="trash" size={18} sw={1.8}/></span>
           <div style={{fontSize:'15px',fontWeight:700,color:'var(--color-text)'}}>ลบ shipment ย่อย</div>
         </div>
-        <div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',marginBottom:'14px'}}>ยืนยันลบ <b style={{fontFamily:"'IBM Plex Mono',monospace"}}>{d.poNo}</b> — ลบแล้วกู้คืนไม่ได้ ต้องใส่รหัสผ่านของผู้มีอำนาจลบ</div>
+        <div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',marginBottom:'14px'}}>ยืนยันลบ <b style={{fontFamily:'var(--font-mono)'}}>{d.poNo}</b> — ลบแล้วกู้คืนไม่ได้ ต้องใส่รหัสผ่านของผู้มีอำนาจลบ</div>
         {/* type="text" ไม่ mask ตัวอักษร — ตั้งใจไม่ใช้ type="password" เพราะ Chrome autofill/password
             manager จะแทรกแซงค่าที่พิมพ์จริงได้ (ค่าที่ submit ไม่ตรงกับที่เห็นบนจอ) ทำให้ลบไม่สำเร็จ
             ทั้งที่ดูเหมือนพิมพ์รหัสถูกแล้ว — รหัสนี้เป็น PIN ใช้ร่วมกันในทีม ไม่ใช่รหัสผ่านล็อกอินส่วนตัว */}
@@ -2203,7 +2246,7 @@ class App extends Component {
               <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'2px'}}>จาก Odoo · เลือกบิลที่เป็นของ shipment นี้ (เลือกได้หลายใบ)</div></div>
             <button onClick={()=>this.closeBillPicker()} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',background:'var(--color-page-bg)',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',padding:'0 12px',height:'38px',marginTop:'14px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',background:'var(--color-surface-muted)',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',padding:'0 12px',height:'38px',marginTop:'14px'}}>
             <span style={{display:'flex',color:'var(--color-text-muted)'}}><Ico name="search" size={16} sw={1.8}/></span>
             <input value={billQuery} onChange={e=>this.setState({billQuery:e.target.value})} placeholder="ค้นหา ผู้ขาย / เลขบิล / วันที่…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',width:'100%'}}/>
           </div>
@@ -2225,7 +2268,7 @@ class App extends Component {
                 <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'3px',flexWrap:'wrap'}}>
                   <span style={billCatSty(b.category)}>{billCatLabel(b.category)}</span>
                   <span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'var(--radius-sm)',fontSize:'10px',fontWeight:700,background:b.kind==='po'?'var(--color-surface-muted)':'var(--color-success-soft)',color:b.kind==='po'?'var(--color-text-tertiary)':'var(--color-success-text)'}}>{b.kind==='po'?'PO รอบิล':'จ่ายจริง'}</span>
-                  <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'10.5px',color:(on||used)?'var(--color-text-secondary)':'var(--color-text-muted)'}}>{b.bill}</span>
+                  <span style={{fontFamily:'var(--font-mono)',fontSize:'10.5px',color:(on||used)?'var(--color-text-secondary)':'var(--color-text-muted)'}}>{b.bill}</span>
                   <span style={{fontSize:'10.5px',color:(on||used)?'var(--color-text-secondary)':'var(--color-text-muted)'}}>· {fmtDate(b.date)}</span>
                   {used&&<span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'var(--radius-sm)',fontSize:'10px',fontWeight:700,background:'var(--color-warn-soft)',color:'var(--color-warn-text)'}}>ใช้กับ {used} แล้ว</span>}
                 </div>
@@ -2248,7 +2291,7 @@ class App extends Component {
           </div>
           <div style={{display:'flex',gap:'10px'}}>
             <button onClick={()=>this.closeBillPicker()} style={{flex:1,height:'42px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-            <button onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'var(--radius)',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้รายการที่เลือก (฿{Math.round(sumAll).toLocaleString()})</button>
+            <button onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'var(--radius-pill)',background:'var(--color-brand)',color:'#000',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้รายการที่เลือก (฿{Math.round(sumAll).toLocaleString()})</button>
           </div>
         </div>
       </div>
@@ -2274,7 +2317,7 @@ class App extends Component {
               <div onClick={()=>this.setState({alertsOpen:false,tab:s._board,detailId:s.id,editing:false,editForm:null})} style={{display:'flex',alignItems:'center',gap:'11px',cursor:'pointer'}}>
                 <div style={{minWidth:0,flex:1}}>
                   <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
-                    <span style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:'11.5px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</span>
+                    <span style={{fontFamily:'var(--font-mono)',fontSize:'11.5px',fontWeight:600,color:'var(--color-text)'}}>{s.poNo}</span>
                     <span style={coBadgeSty(s.company)}>{s.company}</span>
                   </div>
                   <div style={{fontSize:'11.5px',color:'var(--color-text-tertiary)',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.party}</div>
@@ -2351,7 +2394,7 @@ class App extends Component {
         </div>
         <div style={{padding:'14px 22px',borderTop:'1px solid var(--color-border)',display:'flex',gap:'10px'}}>
           <button onClick={()=>this.setState({creating:false})} style={{flex:1,height:'42px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-          <button onClick={()=>this.submitCreate()} style={{flex:2,height:'42px',border:0,borderRadius:'var(--radius)',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:saving?'default':'pointer',opacity:saving?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>{saving?'กำลังบันทึก…':'บันทึก'}</button>
+          <button onClick={()=>this.submitCreate()} style={{flex:2,height:'42px',border:0,borderRadius:'var(--radius-pill)',background:'var(--color-brand)',color:'#000',fontFamily:'inherit',fontSize:'13.5px',fontWeight:600,cursor:saving?'default':'pointer',opacity:saving?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>{saving?'กำลังบันทึก…':'บันทึก'}</button>
         </div>
       </div>
     </>;
@@ -2378,7 +2421,7 @@ class App extends Component {
         </Field>
         <div style={{height:'14px'}}/>
         <div onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();this.onVerifyFilesAdd(e.dataTransfer.files);}}
-             style={{border:'1px dashed var(--color-border)',borderRadius:'var(--radius)',padding:'24px',textAlign:'center',background:'var(--color-page-bg)'}}>
+             style={{border:'1px dashed var(--color-border)',borderRadius:'var(--radius)',padding:'24px',textAlign:'center',background:'var(--color-surface-muted)'}}>
           <div style={{color:'var(--color-text-tertiary)',fontSize:'12.5px',marginBottom:'4px'}}>ลากไฟล์มาวางที่นี่</div>
           <div style={{color:'var(--color-text-muted)',fontSize:'11px',marginBottom:'12px'}}>Invoice / Packing List / B/L (ขาออกใช้ กศก.101/1) · PDF, Excel, รูปภาพ</div>
           <label style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 15px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>
@@ -2394,7 +2437,7 @@ class App extends Component {
           </div>)}
         </div>}
         <button onClick={()=>this.submitVerify()} disabled={verifyLoading}
-                style={{marginTop:'16px',display:'flex',alignItems:'center',gap:'8px',padding:'10px 20px',border:0,borderRadius:'var(--radius)',background:'var(--color-brand)',color:'#fff',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:verifyLoading?'default':'pointer',opacity:verifyLoading?0.75:1}}>
+                style={{marginTop:'16px',display:'flex',alignItems:'center',gap:'8px',padding:'10px 20px',border:0,borderRadius:'var(--radius-pill)',background:'var(--color-brand)',color:'#000',fontFamily:'inherit',fontSize:'13px',fontWeight:600,cursor:verifyLoading?'default':'pointer',opacity:verifyLoading?0.75:1}}>
           {verifyLoading&&<span style={{display:'flex',animation:'kobSpin 1s linear infinite'}}><Ico name="sync" size={15} sw={2}/></span>}
           {verifyLoading?'กำลังตรวจสอบ…':'เริ่มตรวจสอบ'}
         </button>
@@ -2441,11 +2484,16 @@ class App extends Component {
         {this.renderTopbar()}
         {/* โหมดตัวอย่างเดิมบอกแค่จุดสีเล็กๆ กับข้อความ "โหมดตัวอย่าง" ที่ topbar — แต่ข้อมูลตัวอย่างใช้ชื่อผู้ขาย
             และเลข PO ที่หน้าตาเหมือนของจริงทุกอย่าง เสี่ยงมากที่จะมีคนอ่านตัวเลขไปใช้ตัดสินใจ/รายงานโดยไม่รู้ตัว
-            (ยิ่งเข้าหน้า Dashboard ตรงๆ จะไม่ได้มองที่ป้าย) จึงกั้นเป็นแถบเตือนเต็มความกว้างให้พลาดไม่ได้ */}
-        {this.state.dataSource==='sample'&&<div style={{flexShrink:0,display:'flex',alignItems:'center',gap:'10px',padding:'10px 22px',background:'var(--color-danger-soft)',borderBottom:'1px solid var(--color-danger-border)',color:'var(--color-danger-text)',fontSize:'12.5px',fontWeight:600}}>
+            (ยิ่งเข้าหน้า Dashboard ตรงๆ จะไม่ได้มองที่ป้าย) จึงกั้นเป็นแถบเตือนเต็มความกว้างให้พลาดไม่ได้
+            เงื่อนไขผูกกับ "ยังไม่มี shipments จริงในสเตต" ไม่ใช่ dataSource==='sample' อย่างเดียว — เพราะ
+            allShipments() คืนข้อมูลตัวอย่างทุกครั้งที่ shipments ยังไม่ใช่ array รวมถึงช่วง dataSource==='loading'
+            (รอ MCP bridge หลายวินาที) ซึ่งเดิมโชว์ตัวเลขปลอมโดยไม่มีอะไรเตือนเลย */}
+        {!Array.isArray(this.state.shipments)&&<div style={{flexShrink:0,display:'flex',alignItems:'center',gap:'10px',padding:'10px 22px',background:'var(--color-danger-soft)',borderBottom:'1px solid var(--color-danger-border)',color:'var(--color-danger-text)',fontSize:'12.5px',fontWeight:600}}>
           <span style={{display:'flex',flexShrink:0}}><Ico name="bell" size={15} sw={2}/></span>
-          <span style={{flex:1}}>ข้อมูลตัวอย่างเท่านั้น — เชื่อมต่อ Odoo ไม่ได้และไม่มีข้อมูลสำรองในเครื่อง ตัวเลขทั้งหน้านี้ไม่ใช่ของจริง ห้ามนำไปใช้ตัดสินใจหรือทำรายงาน</span>
-          <button onClick={()=>this.sync()} style={{flexShrink:0,height:'28px',padding:'0 12px',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-danger-text)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}>ลองเชื่อมต่ออีกครั้ง</button>
+          <span style={{flex:1}}>{this.state.dataSource==='loading'
+            ? 'กำลังโหลดข้อมูลจริงจาก Odoo — ตัวเลขที่เห็นอยู่ตอนนี้เป็นข้อมูลตัวอย่าง ยังไม่ใช่ของจริง'
+            : 'ข้อมูลตัวอย่างเท่านั้น — เชื่อมต่อ Odoo ไม่ได้และไม่มีข้อมูลสำรองในเครื่อง ตัวเลขทั้งหน้านี้ไม่ใช่ของจริง ห้ามนำไปใช้ตัดสินใจหรือทำรายงาน'}</span>
+          {this.state.dataSource!=='loading'&&<button onClick={()=>this.sync()} style={{flexShrink:0,height:'28px',padding:'0 12px',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius-pill)',background:'var(--color-surface)',color:'var(--color-danger-text)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:600,cursor:'pointer'}}>ลองเชื่อมต่ออีกครั้ง</button>}
         </div>}
         <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
           {(isBoard||tab==='dashboard')&&this.renderLogisticsSubnav()}
@@ -2469,7 +2517,7 @@ class App extends Component {
 }
 
 function SectionTitle({children}){
-  return <div style={{fontSize:'11px',fontWeight:700,color:'var(--color-text-muted)',letterSpacing:'.6px',textTransform:'uppercase',paddingBottom:'9px',borderBottom:'1px solid var(--color-border)',marginBottom:'13px'}}>{children}</div>;
+  return <div className="kobEyebrow" style={{fontSize:'12px',color:'var(--color-text-tertiary)',paddingBottom:'9px',borderBottom:'1px solid var(--color-border)',marginBottom:'13px'}}>{children}</div>;
 }
 function Row({label,value}){
   return <div style={{display:'flex',justifyContent:'space-between',gap:'12px'}}>

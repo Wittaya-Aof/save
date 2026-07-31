@@ -192,6 +192,57 @@ node tests/pack-fuzz.mjs 3000       # สุ่ม 3000 เคส (มี seed �
 ยืนยันภาพ 3D: โซนพาเลทใหญ่ (deck 150mm) → โซนพาเลทเล็ก (deck 100mm, 3 แถว) → ของไม่ขึ้นพาเลท
 แยกกันชัด ไม่ทับกัน และ manifest รายงานขนาด/tare ตรงตามที่ตั้งไว้จริงทั้งสองสเปค
 
+## ธีม UI ใหม่ตาม Mural design system (2026-07-31 รอบ 3)
+ปรับใช้ `C:/Users/User/Projects/mural.design.md` (DESIGN.md ของ Mural จาก shadcn.io)
+แก้ที่ **design token ที่ `:root` จุดเดียว** ทั้งแอปหลักและ calculator จึงเปลี่ยนยกทั้งระบบ
+backup ก่อนเปลี่ยน: `backups/*.pre-mural.html`
+
+**สิ่งที่ยกมาตรงตาม spec**
+| ส่วน | ค่าที่ใช้ |
+|---|---|
+| brand voltage | jade `#00c27a` เป็น "พื้น" ของ CTA เท่านั้น (spec: 14 ครั้ง background, 0 text, 0 border) |
+| ปุ่มหลัก | jade + อักษร **ดำ** (`components.button-primary.textColor = ink`) + radius **pill** 9999px |
+| chrome | jet-black `#000000` sidebar+topbar = "black canvas" / เนื้อหาขาว = "white editorial band" |
+| หัวเรื่อง | serif weight **300** tracking ติดลบ + สี dim-grey `#8c8c8c` (spec ห้ามใช้ขาวล้วนบน hero ดำ) |
+| body | sans weight **300** ทั้งหมด |
+| eyebrow | uppercase tracking `.175em` (= 2.45px ที่ 14px ตาม `typography.uppercase-eyebrow`) |
+| radius | binary + pill: 6px ชิป / 8px input / **24px** การ์ด / pill CTA — ข้ามขั้น 16px ตามที่ spec ห้าม |
+| เงา | navy-undertone `rgba(11,41,70,.32)` + `rgba(42,82,121,.08)` ไม่ใช่ดำล้วน |
+| พื้นจาง | mint-soft `#d5f8e0`, mint `#b4f5c8`, surface-soft `#eeeeee` |
+
+**สิ่งที่ปรับ (พร้อมเหตุผล) — spec เป็น marketing site ไม่ใช่ dashboard**
+1. **ย่อ display tier**: spec ใช้ 80px (hero) / 70px (section) / 54px (metric) → ใช้ **27 / 20 / 34px**
+   spec เตือนเองว่า "the editorial serif at weight 300 requires display copy short enough to fit one or
+   two sentences" แต่หน้านี้มีบอร์ด 327 การ์ด + แผงข้อมูลหลายชั้น ขนาดระดับนั้นกินพื้นที่จนใช้งานไม่ได้
+   **คงตัวตนไว้ครบ**: weight 300 + tracking ติดลบ (แปลงเป็น em ให้ scale ตามขนาด) + serif คู่ sans
+2. **ฟอนต์**: STK Bureau / ABC Social เป็น proprietary — spec แนะนำ Lora / Inter แต่
+   - Lora บน Google Fonts **ไม่มี weight 300** (เริ่มที่ 400) ซึ่งเป็นค่าที่ spec ย้ำว่าห้ามเปลี่ยน → ใช้
+     **Spectral 300** (spec ระบุเป็นตัวเลือกที่สองอยู่แล้ว) + **Noto Serif Thai 300** สำหรับอักษรไทย
+   - Inter **ไม่มีอักษรไทย** ถ้าใส่ก่อนจะได้ละติน=Inter ไทย=Plex Thai ปนกันคนละ x-height ในบรรทัดเดียว
+     (แอปนี้มีไทย+อังกฤษปนแทบทุกบรรทัด) → ใช้ **IBM Plex Sans Thai 300** ที่ครอบทั้งสองสคริปต์
+   - **คง IBM Plex Mono** ไว้สำหรับรหัส (PO/BL/เลขตู้) — spec ไม่มี mono แต่เป็นความจำเป็นเชิงหน้าที่
+3. **danger/warn ยังอยู่**: Mural เป็น marketing site ไม่มีสีสถานะเลย แต่แอปนี้ต้องเตือน "เลย ETA /
+   ต้นทุนเกินงบ / ข้อมูลผิดปกติ" → คงแดง+เหลืองอำพัน ส่วน success ใช้ **legacy-green `#007b3b`**
+   ของ Mural เอง ไม่ให้ชนกับ jade ที่เป็น brand (spec ก็แยก jade / mint / legacy-green เป็น 3 บทบาท)
+4. **dark mode สร้างขึ้นใหม่**: spec ระบุใน Known Gaps ว่า "a coherent dark-mode variant ... is not
+   represented here" → สร้างจากโทนที่ spec มีจริง: canvas=`#000` (pure black ตามที่ spec ห้าม near-black),
+   การ์ด=`#111`, อักษร=white/`#8c8c8c`, brand-text=spring `#8fec7f`
+5. **token เฉพาะ chrome**: `--color-chrome-display / -muted / -active` (ค่าเท่ากันทั้งสองธีมเพราะ chrome ดำเสมอ)
+   จำเป็นเพราะ `--color-text-*` สลับค่าตามธีม ถ้าเอาไปใช้บนพื้นดำจะได้ **ดำบนดำ** (เจอจริงตอนทดสอบ:
+   ชื่อ "Import-Export OS" กับ "Logistics Tracking" หายไปทั้งคู่) และ nav ที่ active เดิมเป็น
+   mint-soft + jade = contrast 2.04 อ่านไม่ออก → เปลี่ยนเป็น dark tint + jade (9.00)
+
+**ผลพลอยได้เชิงการเข้าถึง**: ปุ่ม CTA เดิมเป็นอักษรขาวบนพื้น brand = contrast 2.33 (**ตก WCAG AA**)
+ตอนนี้อักษรดำบน jade = **9.00** ตามที่ spec กำหนดไว้แต่แรก
+
+**ทดสอบแล้ว**: light/dark = 0 pageerror · ชื่อหน้า/แบรนด์แสดงครบ (ไม่มีอักษรจมพื้น) · ข้อมูลจริง 327/106 ·
+calculator ใน iframe รับ token ชุดเดียวกัน (jade + body weight 300) · **packer suite 42 scenario +
+fuzz 800 เคส = 0 violation** (ยืนยันว่า restyle ไม่กระทบ logic)
+
+**แก้พ่วงไปด้วย**: แถบเตือน "ข้อมูลตัวอย่าง" เดิมผูกกับ `dataSource==='sample'` แต่ `allShipments()` คืน
+ข้อมูลตัวอย่างทุกครั้งที่ `shipments` ยังไม่ใช่ array **รวมถึงช่วง `loading`** (รอ MCP bridge หลายวินาที)
+ซึ่งเดิมโชว์ตัวเลขปลอมโดยไม่มีอะไรเตือน → เปลี่ยนเงื่อนไขเป็น `!Array.isArray(shipments)` + ข้อความแยก 2 กรณี
+
 ## ยังไม่แก้ (ตั้งใจ)
 - **pinwheel / tail rotation สำหรับพาเลท** — พิสูจน์แล้วว่าได้ 9 ใบแทน 8 ในตู้ 20'GP (ดูหัวข้อด้านบน)
   เป็นฟีเจอร์ใหม่ ต้องเขียน placement แบบผสมทิศ
