@@ -154,6 +154,11 @@ const MCP_NCOLS = 24, MCP_CHUNK = 50, MCP_PAGE = 120;
 const MCP_NCOLS_WIDE = 100;
 // กันยิง MCP ถี่เกินไปตอน direct หลุดยาว (ทุก request ที่ไม่ force จะเช็คก่อน) — ลองใหม่ได้ทุก 1 นาที/key
 const MCP_RETRY_INTERVAL = 60000;
+// error ที่บ่งชี้ว่า "ต่อฐานข้อมูลไม่ได้" จริงๆ — ต่างจาก SQL ผิด/ตารางไม่มี/query เดียวหนักเกินจน statement
+// timeout ซึ่งไม่ได้แปลว่าเครือข่ายไป RDS พัง เดิม markDbDown() ถูกเรียกทุก error ไม่เลือก ทำให้ error เฉพาะ
+// จุด (เช่น /api/shipments ตอนยังไม่ได้ติดตั้ง module → "relation does not exist") ไปเปิด circuit breaker
+// ปิดทุก endpoint ที่เหลือทิ้งยาว 2.5 นาที ทั้งที่ DB ยังต่อได้ปกติ
+const isConnFailure = (e) => /timeout|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|EPIPE|terminated|getaddrinfo|Client has encountered a connection error/i.test((e && e.message) || '');
 // snapshot อายุไม่เกินนี้ถือว่า "ยังสด" แม้รอบนี้จะโดน throttle ไม่ได้ fetch จริง (กัน UI ขึ้นเตือนหลอก)
 // ต้องยาวกว่า MCP_RETRY_INTERVAL และ AutoProbe (2 นาที) รวมกัน ไม่งั้นจะมีช่วงโดนตีเป็น stale ทั้งที่เพิ่งอัปเดต
 const SNAPSHOT_FRESH_WINDOW = 240000; // 4 นาที
@@ -882,24 +887,18 @@ const SQL_SHIPMENTS = `
   ORDER BY ls.create_date DESC
 `;
 
-const SQL_STATS = `
-  SELECT
-    (SELECT COUNT(*) FROM purchase_order WHERE company_id IN (1,2) AND state NOT IN ('cancel','draft')) AS total_po,
-    (SELECT COUNT(*) FROM sale_order     WHERE company_id IN (1,2) AND state NOT IN ('cancel','draft')
-       AND partner_id NOT IN (SELECT id FROM res_partner WHERE name ILIKE '%SHOPEE%' OR name ILIKE '%TIKTOK%' OR name ILIKE '%LAZADA%')
-    ) AS total_so,
-    (SELECT COUNT(*) FROM purchase_order WHERE company_id IN (1,2) AND state NOT IN ('cancel')
-       AND currency_id NOT IN (SELECT id FROM res_currency WHERE name = 'THB')
-       AND date_order >= NOW() - INTERVAL '2 years'
-    ) AS import_pos,
-    (SELECT name FROM res_currency ORDER BY id LIMIT 1) AS check
-`;
-
 // ─── In-memory cache (5 min TTL) ─────────────────────────────────
 const cache = { data: {}, ts: {} };
 const CACHE_TTL = 5 * 60 * 1000;
 
-async function cachedQuery(key, sql, force) {
+// mcp = { orderCols, maxRows, ncols } → เปิดทาง fallback ผ่าน MCP bridge เมื่อ direct pg ใช้ไม่ได้
+// (ดู comment ที่ mcpWrap/mcpPull) endpoint ที่ไม่ส่ง mcp มาจะทำงานเหมือนเดิมทุกอย่าง
+// ที่มา: บนเครื่องนี้ direct RDS (5432) หลุดถาวรเพราะ IP เป็น dynamic ไม่อยู่ใน security-group allowlist
+// (ยืนยันจาก server.log: AutoProbe ล้มทุกรอบ แต่ MCP bridge สำเร็จทุกรอบ) — endpoint ที่มีแต่ทาง direct
+// จึงตอบ 500 ตลอดเวลา: /api/vendors, /api/vendor-scorecard, /api/gl-reconciliation, /api/fx-rates
+// ผลคือ Dashboard มี 2 panel ว่างเปล่าเงียบๆ, autocomplete forwarder ไม่มีรายชื่อ และอัตราแลกเปลี่ยน
+// ตกไปใช้ค่าเดาที่ฮาร์ดโค้ดไว้ในหน้าเว็บ (rateGuess) โดยไม่มีอะไรบอกผู้ใช้ว่าไม่ใช่อัตราจริงจาก Odoo
+async function cachedQuery(key, sql, force, mcp) {
   const now = Date.now();
   // force=true ต้องข้าม cache 5 นาทีด้วย ไม่ใช่แค่ circuit breaker — เดิมเช็ค cache ก่อนดู force เลย ทำให้
   // caller ที่ตั้งใจขอข้อมูลสด (AutoProbe force:true ทุก 2 นาที) มักได้ผลลัพธ์เก่าจาก cache ซ้ำ แต่ยัง stamp
@@ -907,10 +906,27 @@ async function cachedQuery(key, sql, force) {
   if (!force && cache.data[key] && (now - cache.ts[key]) < CACHE_TTL) {
     return cache.data[key];
   }
+  // ดึงผ่าน MCP bridge (คนละ path จาก direct — port 443 ไม่ติดปัญหา IP allowlist) แล้ว cache แบบเดียวกัน
+  // คืน null = ไม่มีทางนี้ให้ใช้ (endpoint ไม่รองรับ / ไม่ได้ตั้งค่า MCP / เพิ่งลองไปเมื่อกี้)
+  const tryMcp = async (why) => {
+    if (!mcp || !MCP_URL || !MCP_TOKEN) return null;
+    if (!force && Date.now() < (mcpNextTry[key] || 0)) return null;
+    mcpNextTry[key] = Date.now() + MCP_RETRY_INTERVAL;
+    const sid  = await mcpConnect();
+    const rows = await mcpPull(sid, sql, mcp.orderCols, mcp.maxRows, mcp.ncols || MCP_NCOLS);
+    cache.data[key] = rows;
+    cache.ts[key]   = Date.now();
+    console.log('[MCP] ดึง ' + key + ' ผ่าน bridge สำเร็จ —', rows.length, 'แถว (' + why + ')');
+    return rows;
+  };
   // Circuit breaker — DB เพิ่งล่มและยังไม่หมด window: ไม่ลองซ้ำ (กันทุก endpoint
   // เสียเวลารอ connect timeout 6 วิ ต่อ request). มี cache เก่าก็คืนไปก่อน
   if (!force && dbLikelyDown()) {
     if (cache.data[key]) return cache.data[key];
+    const viaMcp = await tryMcp('direct ปิดอยู่ที่ circuit breaker').catch(e => {
+      console.error('[MCP] fallback ' + key + ' ล้มเหลว:', e.message); return null;
+    });
+    if (viaMcp) return viaMcp;
     const e = new Error('DB recently down (circuit open)'); e.fast = true; throw e;
   }
   // เครือข่ายไป RDS สะดุดเป็นระยะ — ลองซ้ำสั้นๆ ก่อนยอมแพ้
@@ -925,10 +941,17 @@ async function cachedQuery(key, sql, force) {
       return result.rows;
     } catch (e) {
       lastErr = e;
+      // SQL/schema error ไม่หายไปเพราะลองใหม่ — ลองซ้ำเฉพาะที่ดูเหมือนปัญหาการเชื่อมต่อ
+      if (!isConnFailure(e)) break;
       if (attempt === 0) await new Promise(r => setTimeout(r, 800));
     }
   }
-  markDbDown(); // ทั้ง 2 ครั้งล้ม → เปิด circuit ให้ request ถัดๆ ไป fail เร็ว
+  // เปิด circuit ให้ request ถัดๆ ไป fail เร็ว — เฉพาะเมื่อเป็นปัญหาการเชื่อมต่อจริง (ดู isConnFailure)
+  if (isConnFailure(lastErr)) markDbDown();
+  const viaMcp = await tryMcp('direct หลุด: ' + lastErr.message).catch(e => {
+    console.error('[MCP] fallback ' + key + ' ล้มเหลว:', e.message); return null;
+  });
+  if (viaMcp) return viaMcp;
   throw lastErr;
 }
 
@@ -981,8 +1004,14 @@ function jsonOk(res, data) {
   res.end(body);
 }
 
+// ต้องมี charset=utf-8 (ข้อความ error เป็นภาษาไทยทั้งหมด) + security headers ชุดเดียวกับ jsonOk —
+// เดิม response ทาง error หลุดออกไปโดยไม่มี nosniff/X-Frame-Options ทั้งที่ทาง success มีครบ
 function jsonErr(res, code, msg) {
-  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    ...SECURITY_HEADERS,
+  });
   res.end(JSON.stringify({ error: msg }));
 }
 
@@ -1002,7 +1031,11 @@ function jsonErrEx(res, code, label, err) {
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024; // 10MB
 function readJsonBody(req, res, maxBytes = MAX_JSON_BODY_BYTES) {
   return new Promise((resolve) => {
-    let body = '';
+    // เก็บเป็น Buffer แล้วต่อทีเดียวตอนจบ — ห้าม `body += chunk` เพราะการบวก Buffer เข้ากับ string จะ
+    // toString('utf8') ต่อ chunk ทันที ถ้าขอบ chunk (TCP/64KB) ตกกลางตัวอักษร UTF-8 หลายไบต์ (ภาษาไทย
+    // ทุกตัวเป็น 3 ไบต์) ตัวอักษรนั้นจะเสียกลายเป็น U+FFFD ทำให้ JSON.parse พังหรือหมายเหตุภาษาไทยเพี้ยน
+    // ตอนบันทึก — เกิดกับ body ที่ยาว (upsert หลายรายการ/หมายเหตุยาว) เท่านั้น จึงไม่โผล่ในการทดสอบสั้นๆ
+    const chunks = [];
     let bytes = 0;
     let settled = false;
     const finish = (value) => { if (!settled) { settled = true; resolve(value); } };
@@ -1015,11 +1048,11 @@ function readJsonBody(req, res, maxBytes = MAX_JSON_BODY_BYTES) {
         finish(null);
         return;
       }
-      body += chunk;
+      chunks.push(chunk);
     });
     req.on('end', () => {
       if (settled) return;
-      try { finish(JSON.parse(body || '{}')); }
+      try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); }
       catch (e) { jsonErr(res, 400, e.message); finish(null); }
     });
     req.on('error', (e) => {
@@ -1104,7 +1137,7 @@ const server = http.createServer(async (req, res) => {
           poLineCacheSet(cacheKey, r.rows);
           jsonOk(res, { ok: true, rows: r.rows, source: 'direct' });
           return;
-        } catch (e) { directErr = e; markDbDown(); }
+        } catch (e) { directErr = e; if (isConnFailure(e)) markDbDown(); }
       }
       // direct ต่อไม่ได้ (หรือรู้อยู่แล้วว่าล่ม) — ลองผ่าน MCP bridge ก่อนยอมแพ้
       if (MCP_URL && MCP_TOKEN) {
@@ -1154,7 +1187,7 @@ const server = http.createServer(async (req, res) => {
             AND rp.is_company = true
           ORDER BY COALESCE(v.po_count, 0) DESC, rp.name ASC
           LIMIT 500
-        `);
+        `, false, { orderCols: 'r.po_count AS _ord, r.id AS _id', maxRows: 500 });
         jsonOk(res, { ok: true, count: rows.length, rows });
       } catch (e) {
         jsonErrEx(res, 500, 'vendors', e);
@@ -1196,7 +1229,7 @@ const server = http.createServer(async (req, res) => {
           HAVING COUNT(*) >= 2
           ORDER BY deliveries DESC
           LIMIT 200
-        `);
+        `, false, { orderCols: 'r.deliveries AS _ord, r.vendor_id AS _id', maxRows: 200 });
         jsonOk(res, { ok: true, count: rows.length, rows });
       } catch (e) {
         jsonErrEx(res, 500, 'vendor-scorecard', e);
@@ -1215,7 +1248,7 @@ const server = http.createServer(async (req, res) => {
     if (reqUrl === '/api/gl-reconciliation' && method === 'GET') {
       try {
         const rows = await cachedQuery('gl-reconciliation', `
-          SELECT po.name AS po_number, po.amount_total AS po_total, cu.name AS currency,
+          SELECT po.id AS po_id, po.name AS po_number, po.amount_total AS po_total, cu.name AS currency,
             SUM(CASE WHEN am.move_type = 'in_refund' THEN -am.amount_total ELSE am.amount_total END) AS billed_total,
             ROUND((SUM(CASE WHEN am.move_type = 'in_refund' THEN -am.amount_total ELSE am.amount_total END) - po.amount_total) / NULLIF(po.amount_total,0) * 100, 1) AS diff_pct
           FROM purchase_order po
@@ -1244,7 +1277,7 @@ const server = http.createServer(async (req, res) => {
           HAVING ABS(SUM(CASE WHEN am.move_type = 'in_refund' THEN -am.amount_total ELSE am.amount_total END) - po.amount_total) / NULLIF(po.amount_total,0) > 0.15
           ORDER BY ABS((SUM(CASE WHEN am.move_type = 'in_refund' THEN -am.amount_total ELSE am.amount_total END) - po.amount_total) / NULLIF(po.amount_total,0)) DESC
           LIMIT 300
-        `);
+        `, false, { orderCols: 'r.po_id AS _id', maxRows: 300 });
         // ใช้ !==0 ไม่ใช่ >0 กัน billed_total ติดลบ (ใบลดหนี้เกินยอด invoice) หลุดจากทั้งสองกลุ่มไปเงียบๆ
         const zeroBilled = rows.filter(r => parseFloat(r.billed_total) === 0);
         const partialMismatch = rows.filter(r => parseFloat(r.billed_total) !== 0);
@@ -1345,43 +1378,7 @@ const server = http.createServer(async (req, res) => {
           LIMIT 20
         `, [`%${poNo}%`]);
 
-        // 2. ตัวอย่าง expense POs ล่าสุด (ไม่ filter by PO) เพื่อดูรูปแบบ origin
-        const sampleExpense = await db.query(`
-          SELECT po.name::text, po.origin, po.amount_total, cu.name::text AS currency,
-            pol_cat.expense_sub, pol_prod.main_product
-          FROM purchase_order po
-          JOIN res_currency cu ON cu.id = po.currency_id
-          LEFT JOIN LATERAL (
-            SELECT split_part(pc.complete_name, ' / ', 2) AS expense_sub
-            FROM purchase_order_line pol
-            JOIN product_product pp ON pp.id = pol.product_id
-            JOIN product_template pt ON pt.id = pp.product_tmpl_id
-            JOIN product_category pc ON pc.id = pt.categ_id
-            WHERE pol.order_id = po.id
-            GROUP BY 1 ORDER BY SUM(pol.price_subtotal) DESC LIMIT 1
-          ) pol_cat ON true
-          LEFT JOIN LATERAL (
-            SELECT (pt.name)::text AS main_product
-            FROM purchase_order_line pol
-            JOIN product_product pp ON pp.id = pol.product_id
-            JOIN product_template pt ON pt.id = pp.product_tmpl_id
-            WHERE pol.order_id = po.id ORDER BY pol.price_subtotal DESC LIMIT 1
-          ) pol_prod ON true
-          WHERE po.company_id IN (1,2)
-            AND po.state NOT IN ('cancel')
-            AND po.date_order >= NOW() - INTERVAL '3 months'
-            AND EXISTS (
-              SELECT 1 FROM purchase_order_line pol2
-              JOIN product_product pp2 ON pp2.id = pol2.product_id
-              JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
-              JOIN product_category pc2 ON pc2.id = pt2.categ_id
-              WHERE pol2.order_id = po.id
-                AND split_part(pc2.complete_name, '/', 1) = 'Expense'
-            )
-          ORDER BY po.date_order DESC LIMIT 15
-        `);
-
-        // 3. Vendor Bills (account_move) ที่อ้างอิง PO นี้
+        // 2. Vendor Bills (account_move) ที่อ้างอิง PO นี้
         const vendorBills = await db.query(`
           SELECT am.name::text, am.ref::text, (am.invoice_origin)::text AS invoice_origin,
             am.amount_total, cu.name::text AS currency,
@@ -1406,23 +1403,7 @@ const server = http.createServer(async (req, res) => {
           LIMIT 20
         `, [`%${poNo}%`]);
 
-        // 4. ตัวอย่าง Vendor Bills ล่าสุด (เพื่อดูรูปแบบ ref/origin)
-        const sampleBills = await db.query(`
-          SELECT am.name::text, am.ref::text, (am.invoice_origin)::text AS invoice_origin,
-            am.amount_total, cu.name::text AS currency, am.invoice_date::text,
-            rp.name::text AS partner
-          FROM account_move am
-          JOIN res_currency cu ON cu.id = am.currency_id
-          JOIN res_partner  rp ON rp.id = am.partner_id
-          WHERE am.company_id IN (1,2)
-            AND am.move_type = 'in_invoice'
-            AND am.state != 'cancel'
-            AND am.invoice_date >= NOW() - INTERVAL '2 months'
-            AND rp.name ILIKE ANY(ARRAY['%freight%','%forwarder%','%customs%','%logistic%','%shipping%','%ขนส่ง%','%Sino%','%DHL%','%Kerry%','%Pantos%','%Yusen%','%SITC%','%Maersk%','%PIL%','%ONE%','%OOCL%','%CMA%'])
-          ORDER BY am.invoice_date DESC LIMIT 15
-        `);
-
-        // 5. Top product categories ในระบบ (ดูว่ามี Expense หรือเปล่า)
+        // 3. Top product categories ในระบบ (ดูว่ามี Expense หรือเปล่า)
         const topCategories = await db.query(`
           SELECT pc.complete_name::text, COUNT(*) AS po_lines
           FROM purchase_order_line pol
@@ -1434,7 +1415,7 @@ const server = http.createServer(async (req, res) => {
           GROUP BY 1 ORDER BY 2 DESC LIMIT 20
         `);
 
-        // 6. PO หลักที่ชื่อ match — ดู supplier + partner_id เพื่อเข้าใจ goods-bill filter
+        // 4. PO หลักที่ชื่อ match — ดู supplier + partner_id เพื่อเข้าใจ goods-bill filter
         const mainPo = await db.query(`
           SELECT po.name::text, po.partner_id, rp.name::text AS supplier,
             cu.name::text AS currency, po.amount_total
@@ -1445,7 +1426,7 @@ const server = http.createServer(async (req, res) => {
           LIMIT 10
         `, [`%${poNo}%`]);
 
-        // 7. bills ทั้งหมดที่ match พร้อม partner_id (เทียบกับ PO supplier)
+        // 5. bills ทั้งหมดที่ match พร้อม partner_id (เทียบกับ PO supplier)
         const billsWithPid = await db.query(`
           SELECT am.name::text AS bill, am.partner_id, rp.name::text AS partner,
             cu.name::text AS currency, am.amount_total
@@ -1480,7 +1461,10 @@ const server = http.createServer(async (req, res) => {
     if (reqUrl === '/api/logistics-bills' && method === 'GET') {
       const params = new URL('http://x' + req.url).searchParams;
       const co      = params.get('company') || '';
-      const months  = Math.min(parseInt(params.get('months')) || 8, 24);
+      // ต้อง clamp ขั้นต่ำ 1 ด้วย ไม่ใช่แค่เพดาน — months ติดลบ (เช่น ?months=-6) ผ่าน `|| 8` ไปได้เพราะ
+      // -6 เป็นค่า truthy แล้วกลายเป็น INTERVAL '-6 months' ทำให้เงื่อนไข invoice_date >= อนาคต → คืนลิสต์ว่าง
+      // เปล่าโดยไม่มี error ให้เห็น (ดูเหมือน "ไม่มีบิล" ทั้งที่จริงมี)
+      const months  = Math.min(Math.max(parseInt(params.get('months')) || 8, 1), 24);
       // จำกัดความยาว + charset ของ q ก่อนนำไปใช้ — ฝั่ง MCP ต้องฝัง q เป็น SQL literal (escape ' เอง)
       // การ cap ความยาว + ตัดอักขระควบคุม/backslash เป็น defense-in-depth เพิ่มจาก escape (กันพึ่ง
       // standard_conforming_strings อย่างเดียว) และกัน ReDoS/query ยาวผิดปกติ
@@ -1605,7 +1589,7 @@ const server = http.createServer(async (req, res) => {
           poRows   = (await db.query(poSql(poSearchDirect),     q ? args : [])).rows;
           markDbUp(); via = 'direct';
         } catch (e) {
-          if (/timeout|ETIMEDOUT|ECONNREFUSED|ECONNRESET|terminated/.test(e.message)) markDbDown();
+          if (isConnFailure(e)) markDbDown();
           console.error('[API] logistics-bills direct หลุด → ลอง MCP bridge:', e.message);
         }
       }
@@ -1906,13 +1890,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ตรวจการเชื่อมต่อ Odoo ทั้ง 2 ทาง แยกกัน — เดิมเช็คแต่ direct pg แล้วตอบ 500 ทั้งก้อน ทำให้ดูเหมือน
+    // "Odoo ล่ม" ทั้งที่ MCP bridge (ทางที่แอปใช้จริงเวลา direct หลุด) ยังทำงานได้ปกติ วินิจฉัยผิดทาง
     if (reqUrl === '/api/ping' && method === 'GET') {
-      try {
-        await db.query('SELECT 1');
-        jsonOk(res, { ok: true, db: 'kiss-production', ts: new Date().toISOString() });
-      } catch (e) {
-        jsonErrEx(res, 500, 'ping', e);
-      }
+      const out = { ok: true, db: process.env.DB_NAME || '?', ts: new Date().toISOString() };
+      try { await db.query('SELECT 1'); markDbUp(); out.direct = true; }
+      catch (e) { if (isConnFailure(e)) markDbDown(); out.direct = false; out.direct_error = e.message; }
+      if (MCP_URL && MCP_TOKEN) {
+        try { await mcpRunSql(await mcpConnect(), 'SELECT 1 AS ok'); out.mcp = true; }
+        catch (e) { out.mcp = false; out.mcp_error = e.message; }
+      } else out.mcp = null; // ไม่ได้ตั้งค่า bridge ไว้
+      out.ok = !!(out.direct || out.mcp);
+      jsonOk(res, out);
       return;
     }
 
@@ -1934,6 +1923,12 @@ const server = http.createServer(async (req, res) => {
     // ── ผลตรวจสอบข้อมูลอัตโนมัติ — GET /api/integrity-check?force=1 เพื่อสั่งตรวจใหม่ทันที ──
     if (reqUrl === '/api/integrity-check' && method === 'GET') {
       const force = new URL('http://x' + req.url).searchParams.get('force') === '1';
+      // force=1 เขียนไฟล์ integrity_seen.json + อาจส่งอีเมลแจ้งเตือน — จำกัดไว้กันกดรัว/ยิงซ้ำ
+      // (คืนผลรอบล่าสุดไปก่อน ไม่ต้อง error เพราะข้อมูลชุดเดิมก็ยังใช้ได้)
+      if (force && !rateLimit('integrity:' + (req.socket.remoteAddress || '?'), 6, 60 * 1000)) {
+        jsonOk(res, { ok: true, throttled: true, ...integrityReport });
+        return;
+      }
       if (force || !integrityReport.ranAt) await runIntegrityCheck(force ? 'Manual' : 'FirstView');
       jsonOk(res, { ok: true, ...integrityReport });
       return;
@@ -1992,7 +1987,14 @@ const server = http.createServer(async (req, res) => {
           const changed = before
             ? Object.keys(r).filter(k => JSON.stringify(before[k]) !== JSON.stringify(r[k]))
             : Object.keys(r);
-          auditLog(before ? 'update' : 'create', key, changed, req.socket.remoteAddress);
+          // ไม่เขียน audit เมื่อ "อัปเดต" ที่ไม่มีฟิลด์ไหนเปลี่ยนจริง (หรือเปลี่ยนแค่ _ts = เวลาที่กดบันทึก)
+          // เดิมบันทึกทุกครั้งที่ client ส่ง upsert เข้ามา ไม่ว่าจะมีอะไรต่างหรือไม่ ทำให้แถวชนิด
+          // "แก้ไข (ไม่มีฟิลด์สำคัญเปลี่ยน)" กินพื้นที่ ~8% ของ audit log (43/540 แถว ณ วันตรวจ) แล้วดัน
+          // การแก้ไขจริงตกออกจากแผง "ประวัติการแก้ไขล่าสุด" ที่โชว์แค่ 40 รายการล่าสุดบน Dashboard
+          const meaningful = changed.filter(k => k !== '_ts');
+          if (!before || meaningful.length) {
+            auditLog(before ? 'update' : 'create', key, changed, req.socket.remoteAddress);
+          }
           applied++;
         });
         const ok = saveTracking(data);
@@ -2067,7 +2069,7 @@ const server = http.createServer(async (req, res) => {
           FROM res_currency_rate r
           JOIN res_currency c ON c.id = r.currency_id
           ORDER BY c.name, r.name DESC
-        `);
+        `, false, { orderCols: 'r.currency AS _ord', maxRows: 500 });
         // Odoo เก็บ rate = จำนวนหน่วยเงินนั้นต่อ 1 บาท → thb_per_unit = 1/rate
         const out = rows.map(r => {
           const rate = parseFloat(r.rate) || 0;
@@ -2236,7 +2238,14 @@ const server = http.createServer(async (req, res) => {
       res.end('404 Not Found: ' + reqUrl);
       return;
     }
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'text/plain', ...SECURITY_HEADERS });
+    // HTML = ตัวแอปทั้งตัว (React + โค้ดทั้งหมดอยู่ในไฟล์เดียว ไม่มี hash ในชื่อไฟล์) — ถ้าไม่บอก no-cache
+    // browser จะใช้ heuristic caching ของตัวเอง ทำให้หลัง deploy ผู้ใช้ยังเห็นโค้ดเก่าจนกด hard reload
+    // ส่วน vendor/*.js เป็นไลบรารีตายตัว (react/babel/xlsx) cache ได้นานๆ ให้โหลดหน้าเร็วขึ้น
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'text/plain',
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=86400',
+      ...SECURITY_HEADERS,
+    });
     res.end(data);
   });
 });
