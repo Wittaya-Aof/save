@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Noto+Sans+Thai:wght@400;500&display=swap" rel="stylesheet">
 <script>
 // หน้านี้ถูกเปิดเป็น iframe ในแอปหลัก — iframe ไม่ได้รับ CSS/attribute จาก parent จึงต้อง
 // อ่านธีมที่ผู้ใช้เลือกไว้จาก localStorage เอง (same-origin) และตามการสลับธีมของแอปหลักแบบสด
@@ -31,11 +31,11 @@
 })();
 </script>
 <style>
-/* ── Design tokens: ชุดเดียวกับ import-export-os.html (slate + accent น้ำเงิน) ──
+/* ── Design tokens: ชุดเดียวกับ import-export-os.html ──
    หน้านี้ถูกเปิดเป็น iframe ในแอปหลัก จึงต้องใช้โทนเดียวกัน และรับ data-theme
    จาก localStorage.kobTheme ที่แอปหลักตั้งไว้ (สคริปต์ท้าย <head>) */
 :root{
-  /* ── ระบบสีตาม Mintlify (mintlify.design.md) — ชุดเดียวกับ import-export-os.html ──
+  /* ── ระบบสีตาม Supabase (supabase.design.md) — ชุดเดียวกับ import-export-os.html ──
      หน้านี้เปิดเป็น iframe ในแอปหลัก จึงต้องใช้ token ชุดเดียวกันและรับ data-theme จาก
      localStorage.kobTheme ที่แอปหลักตั้งไว้ (สคริปต์ท้าย head) */
   /* ── ระบบสีตาม Supabase (supabase.design.md) — ชุดเดียวกับ import-export-os.html ──

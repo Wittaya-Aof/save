@@ -192,121 +192,10 @@ node tests/pack-fuzz.mjs 3000       # สุ่ม 3000 เคส (มี seed �
 ยืนยันภาพ 3D: โซนพาเลทใหญ่ (deck 150mm) → โซนพาเลทเล็ก (deck 100mm, 3 แถว) → ของไม่ขึ้นพาเลท
 แยกกันชัด ไม่ทับกัน และ manifest รายงานขนาด/tare ตรงตามที่ตั้งไว้จริงทั้งสองสเปค
 
-## ธีม UI รอบก่อน: Mural design system (2026-07-31 รอบ 3 — **ถูกทับด้วย Mintlify แล้ว**)
-เก็บไว้เป็นบันทึกเหตุผล/บทเรียน ถ้าจะย้อนกลับใช้ `backups/*.pre-mintlify.html`
-ปรับใช้ `C:/Users/User/Projects/mural.design.md` (DESIGN.md ของ Mural จาก shadcn.io)
-แก้ที่ **design token ที่ `:root` จุดเดียว** ทั้งแอปหลักและ calculator จึงเปลี่ยนยกทั้งระบบ
-backup ก่อนเปลี่ยน: `backups/*.pre-mural.html`
-
-**สิ่งที่ยกมาตรงตาม spec**
-| ส่วน | ค่าที่ใช้ |
-|---|---|
-| brand voltage | jade `#00c27a` เป็น "พื้น" ของ CTA เท่านั้น (spec: 14 ครั้ง background, 0 text, 0 border) |
-| ปุ่มหลัก | jade + อักษร **ดำ** (`components.button-primary.textColor = ink`) + radius **pill** 9999px |
-| chrome | jet-black `#000000` sidebar+topbar = "black canvas" / เนื้อหาขาว = "white editorial band" |
-| หัวเรื่อง | serif weight **300** tracking ติดลบ + สี dim-grey `#8c8c8c` (spec ห้ามใช้ขาวล้วนบน hero ดำ) |
-| body | sans weight **300** ทั้งหมด |
-| eyebrow | uppercase tracking `.175em` (= 2.45px ที่ 14px ตาม `typography.uppercase-eyebrow`) |
-| radius | binary + pill: 6px ชิป / 8px input / **24px** การ์ด / pill CTA — ข้ามขั้น 16px ตามที่ spec ห้าม |
-| เงา | navy-undertone `rgba(11,41,70,.32)` + `rgba(42,82,121,.08)` ไม่ใช่ดำล้วน |
-| พื้นจาง | mint-soft `#d5f8e0`, mint `#b4f5c8`, surface-soft `#eeeeee` |
-
-**สิ่งที่ปรับ (พร้อมเหตุผล) — spec เป็น marketing site ไม่ใช่ dashboard**
-1. **ย่อ display tier**: spec ใช้ 80px (hero) / 70px (section) / 54px (metric) → ใช้ **27 / 20 / 34px**
-   spec เตือนเองว่า "the editorial serif at weight 300 requires display copy short enough to fit one or
-   two sentences" แต่หน้านี้มีบอร์ด 327 การ์ด + แผงข้อมูลหลายชั้น ขนาดระดับนั้นกินพื้นที่จนใช้งานไม่ได้
-   **คงตัวตนไว้ครบ**: weight 300 + tracking ติดลบ (แปลงเป็น em ให้ scale ตามขนาด) + serif คู่ sans
-2. **ฟอนต์**: STK Bureau / ABC Social เป็น proprietary — spec แนะนำ Lora / Inter แต่
-   - Lora บน Google Fonts **ไม่มี weight 300** (เริ่มที่ 400) ซึ่งเป็นค่าที่ spec ย้ำว่าห้ามเปลี่ยน → ใช้
-     **Spectral 300** (spec ระบุเป็นตัวเลือกที่สองอยู่แล้ว) + **Noto Serif Thai 300** สำหรับอักษรไทย
-   - Inter **ไม่มีอักษรไทย** ถ้าใส่ก่อนจะได้ละติน=Inter ไทย=Plex Thai ปนกันคนละ x-height ในบรรทัดเดียว
-     (แอปนี้มีไทย+อังกฤษปนแทบทุกบรรทัด) → ใช้ **IBM Plex Sans Thai 300** ที่ครอบทั้งสองสคริปต์
-   - **คง IBM Plex Mono** ไว้สำหรับรหัส (PO/BL/เลขตู้) — spec ไม่มี mono แต่เป็นความจำเป็นเชิงหน้าที่
-3. **danger/warn ยังอยู่**: Mural เป็น marketing site ไม่มีสีสถานะเลย แต่แอปนี้ต้องเตือน "เลย ETA /
-   ต้นทุนเกินงบ / ข้อมูลผิดปกติ" → คงแดง+เหลืองอำพัน ส่วน success ใช้ **legacy-green `#007b3b`**
-   ของ Mural เอง ไม่ให้ชนกับ jade ที่เป็น brand (spec ก็แยก jade / mint / legacy-green เป็น 3 บทบาท)
-4. **dark mode สร้างขึ้นใหม่**: spec ระบุใน Known Gaps ว่า "a coherent dark-mode variant ... is not
-   represented here" → สร้างจากโทนที่ spec มีจริง: canvas=`#000` (pure black ตามที่ spec ห้าม near-black),
-   การ์ด=`#111`, อักษร=white/`#8c8c8c`, brand-text=spring `#8fec7f`
-5. **token เฉพาะ chrome**: `--color-chrome-display / -muted / -active` (ค่าเท่ากันทั้งสองธีมเพราะ chrome ดำเสมอ)
-   จำเป็นเพราะ `--color-text-*` สลับค่าตามธีม ถ้าเอาไปใช้บนพื้นดำจะได้ **ดำบนดำ** (เจอจริงตอนทดสอบ:
-   ชื่อ "Import-Export OS" กับ "Logistics Tracking" หายไปทั้งคู่) และ nav ที่ active เดิมเป็น
-   mint-soft + jade = contrast 2.04 อ่านไม่ออก → เปลี่ยนเป็น dark tint + jade (9.00)
-
-**ผลพลอยได้เชิงการเข้าถึง**: ปุ่ม CTA เดิมเป็นอักษรขาวบนพื้น brand = contrast 2.33 (**ตก WCAG AA**)
-ตอนนี้อักษรดำบน jade = **9.00** ตามที่ spec กำหนดไว้แต่แรก
-
-**ทดสอบแล้ว**: light/dark = 0 pageerror · ชื่อหน้า/แบรนด์แสดงครบ (ไม่มีอักษรจมพื้น) · ข้อมูลจริง 327/106 ·
-calculator ใน iframe รับ token ชุดเดียวกัน (jade + body weight 300) · **packer suite 42 scenario +
-fuzz 800 เคส = 0 violation** (ยืนยันว่า restyle ไม่กระทบ logic)
-
-**แก้พ่วงไปด้วย**: แถบเตือน "ข้อมูลตัวอย่าง" เดิมผูกกับ `dataSource==='sample'` แต่ `allShipments()` คืน
-ข้อมูลตัวอย่างทุกครั้งที่ `shipments` ยังไม่ใช่ array **รวมถึงช่วง `loading`** (รอ MCP bridge หลายวินาที)
-ซึ่งเดิมโชว์ตัวเลขปลอมโดยไม่มีอะไรเตือน → เปลี่ยนเงื่อนไขเป็น `!Array.isArray(shipments)` + ข้อความแยก 2 กรณี
-
-## ธีม UI รอบก่อน: Mintlify (2026-07-31 รอบ 4 — **ถูกทับด้วย Supabase แล้ว**)
-เก็บไว้เป็นบันทึกเหตุผล ถ้าจะย้อนใช้ `backups/*.pre-supabase.html`
-ปรับใช้ `C:/Users/User/Projects/mintlify.design.md` แทนธีม Mural ของรอบก่อน
-backup ก่อนเปลี่ยน: `backups/*.pre-mintlify.html` (ธีม Mural อยู่ใน `backups/*.pre-mural.html`)
-
-**ทำไมเข้ากับแอปนี้ดีกว่า Mural:** Mintlify เป็น "dual-mode" — มีทั้งโหมด marketing และ
-**documentation tier** (sidebar 240px / prose 720px / TOC 200px, body 14px line-height 1.50,
-sidebar nav 8px rhythm) ซึ่งเป็นโครงเดียวกับ dashboard นี้อยู่แล้ว จึงไม่ต้องดัดแปลงมากเท่ารอบก่อน
-ที่ต้องย่อ hero serif 80px ลงมา 3 เท่า
-
-**ยกมาตรงตาม spec**
-| ส่วน | ค่า |
-|---|---|
-| primary action | **ดำ `#0a0a0a`** + อักษรขาว + pill (`components.button-primary`) |
-| accent | mint `#00d4a4` ใช้ประหยัดมากตามที่ spec ย้ำ ("never on body text", "even one mint accent per viewport carries weight") → เฉพาะ **จุดสถานะเชื่อมต่อ + วงโฟกัส input** (`text-input-focused` = 2px mint) |
-| active state | ink ทั้งหมด (`segmented-tab-active` border+text = ink, `pill-tab-active` bg = primary) |
-| ตัวอักษร | **Inter** ทุก UI prose + **Geist Mono** เฉพาะรหัส (ทั้งคู่มีบน Google Fonts จริง ตรวจแล้ว) |
-| body | Inter **400** / 14px / line-height **1.50** · display Inter **600** tracking ติดลบ |
-| eyebrow | `micro-uppercase` 11px/600/tracking .045em |
-| ไล่โทนอักษร | ink `#0a0a0a` → slate `#3a3a3c` → steel `#5a5a5c` → stone `#888888` |
-| พื้น | canvas `#fff` / surface `#f7f7f7` / hairline `#e5e5e5` + `#ededed` |
-| chrome | **สว่าง** ตาม documentation layout (`sidebar-nav-item` text=steel, active bg=surface) |
-| radius | **ladder 7 ขั้น**: 4 / 6 / 8 / **12 (การ์ด)** / 16 / 24 / pill — ตรงข้ามกับ Mural ที่ห้ามมี 12-16px |
-| เงา | แทบไม่ใช้ (แยกชั้นด้วย hairline) · `--shadow-pop` = `rgba(0,0,0,.12) 0 24px 48px -8px` ของ `hero-product-mockup` |
-| สีสถานะ | ใช้ค่าจาก spec เอง: `brand-error #d45656` / `brand-annotate #1ba673` / `brand-warn #c37d0d` |
-
-**⭐ กลไกที่ต้องรู้: `--color-brand` พลิกค่าตามธีม + ต้องมี `--color-on-brand` คู่กัน**
-spec มี `components.button-on-dark` (bg = on-dark, text = primary) = "white pills invert on dark hero
-bands" → ธีมนี้ทำตาม: light `--color-brand:#0a0a0a` + `--color-on-brand:#ffffff`, dark สลับกลับ
-**ปุ่มทุกปุ่มที่ใช้พื้น brand ต้องใช้ `color:var(--color-on-brand)`** ห้ามฮาร์ดโค้ด `#fff` หรือ `#000`
-ไม่งั้นจะได้ขาวบนขาว (dark) หรือดำบนดำ (light) — toast โหมด info ก็ใช้คู่นี้
-
-**สิ่งที่ปรับ / ขยายจาก spec**
-1. **อักษรไทย**: Inter ไม่มี glyph ไทย → เพิ่ม **Noto Sans Thai** (400/500/600) คู่กัน เบราว์เซอร์เลือก
-   ต่อ glyph: ละติน+เลข = Inter, ไทย = Noto Sans Thai · คู่นี้กลืนกันดีกว่ากรณี serif ของรอบก่อน
-   เพราะทั้งสองเป็น neutral grotesque x-height ใกล้กัน
-2. **ย่อ display tier**: hero 72px/600 → ใช้ **24px** (ชื่อหน้า) / **18px** (หัวแผง = `heading-5`) /
-   **32px** (ตัวเลข KPI) / 26px (ตัวเลขแผง) — ยืมจาก tier ที่ spec มีอยู่แล้วสำหรับ documentation
-   ไม่ได้คิดค่าใหม่ และคงน้ำหนัก 600 + tracking ติดลบไว้ครบ
-3. **dark mode** = ส่วนขยาย (spec ระบุใน Known Gaps ว่า "the brand has not yet shipped a published
-   dark-mode palette") แต่สร้างจาก token ฝั่งเข้มที่ spec มีจริงทั้งหมด ไม่คิดค่าใหม่:
-   `canvas-dark #0a0a0a` / `charcoal #1c1c1e` / `hairline-dark #1f1f1f` / `on-dark #fff` /
-   `on-dark-muted #b3b3b3` / `muted #a8a8aa` / `stone #888888`
-4. **พื้นจางของสถานะใช้ rgba 12%** ตามแบบ `badge-tag` ของ spec (`rgba(55,114,207,.15)`) — ข้อดีคือ
-   ทับพื้นสว่างได้จางๆ และทับพื้นเข้มตอน dark mode ก็ยังเป็นโทนเข้ม ไม่ต้องมีชุดค่าแยกสองธีม
-5. **คง IBM Plex Mono เป็น fallback** หลัง Geist Mono และเลข PO บนการ์ด kanban ต้องคุมเป็น
-   `10.5px + tracking -.02em + nowrap` เพราะ **Geist Mono กว้างกว่า IBM Plex Mono ที่ขนาดเท่ากัน**
-   ทำให้เลข PO ตัดเป็น 2 บรรทัด (วัดแล้ว: ก่อนแก้ทับ 2 บรรทัดหลายใบ / หลังแก้ 327 ใบอยู่บรรทัดเดียว
-   ไม่มีตัวไหนถูกตัดแนวนอน)
-
-**แก้เรื่อง contrast ที่พบตอนวัดจริง**: อักษรขาวบนสีสถานะของ spec ตกเกณฑ์เมื่อเป็นตัวอักษรเล็ก —
-ขาวบน `success #1ba673` = **3.11**, บน `warn #c37d0d` = **3.35**, บน `danger #d45656` = **3.99**
-(spec ใช้คู่หลังใน `badge-required` เอง) → จุดที่เป็น **ตัวอักษร** (ป้ายนับแจ้งเตือน 10px, ปุ่มยืนยันลบ,
-toast) เปลี่ยนไปใช้โทนเข้ม `*-text` เป็นพื้นแทน ได้ **4.9-6.0** โดยคงเฉดเดิม
-ส่วนไอคอนกระดิ่งสีอำพันบนพื้นขาว = 3.35 **ปล่อยไว้** เพราะเป็นกราฟิก เกณฑ์ WCAG 1.4.11 คือ ≥3.0
-
-**ทดสอบแล้ว**: light/dark = 0 pageerror · Inter/Geist Mono ถูกใช้จริง (ตรวจจาก computed style) ·
-ชื่อหน้า/แบรนด์แสดงครบ · ข้อมูลจริง 327/106 · เลข PO 327 ใบไม่ตัดบรรทัด · calculator ใน iframe รับ
-token ชุดเดียวกัน · **packer suite 42 scenario + fuzz 600 เคส = 0 violation** · endpoint หลักตอบ 200
-
-## ธีม UI ปัจจุบัน: Supabase design system (2026-07-31 รอบ 5 — ทับ Mintlify)
-ปรับใช้ `C:/Users/User/Projects/supabase.design.md`
-backup: `backups/*.pre-supabase.html` (ลำดับธีม: pre-mural → pre-mintlify → pre-supabase)
+## ธีม UI: Supabase design system (2026-07-31)
+ปรับใช้ `C:/Users/User/Projects/supabase.design.md` — **เป็นระบบดีไซน์เดียวของโปรเจกต์นี้**
+backup ก่อนเปลี่ยนธีมถูกลบทิ้งตามที่ AOF สั่ง (ยกเลิกธีมที่ทดลองไว้ก่อนหน้า) — ถ้าต้องย้อนดู
+ให้ใช้ git: `7532051` (Mural) / `ca23a1a` (Mintlify) / `732f144` (Supabase = ปัจจุบัน)
 
 **ท่าเด่น 3 อย่างที่ทำให้ตรง**
 1. **emerald `#3ecf8e` เป็นสีเดียวในหน้า** — spec: "the only chromatic event across the entire page"
@@ -314,8 +203,8 @@ backup: `backups/*.pre-supabase.html` (ลำดับธีม: pre-mural → p
 2. **อักษรบนปุ่มเขียวเป็น "เกือบดำ" ไม่ใช่ขาว** — spec: "near-black #171717 text on the emerald
    button (not white) — the green reads as a 'lit' surface with dark type, which is the brand's
    idiosyncratic choice" · **วัดจริง: ink บน emerald = 8.98 / ขาวบน emerald = 2.00** สเปคถูกกว่าชัดเจน
-3. **ปุ่ม 6px ห้ามเป็น pill** — spec: "square-ish and technical, never pill-shaped" (ตรงข้ามกับ 2 ธีมก่อน
-   ที่ CTA เป็น pill ทั้งคู่) · `--radius` เปลี่ยนจาก 8px → **6px** ทั้งระบบ, pill สงวนให้ tag/avatar
+3. **ปุ่ม 6px ห้ามเป็น pill** — spec: "square-ish and technical, never pill-shaped"
+   `--radius` = **6px** ทั้งระบบ, pill สงวนไว้ให้ tag/avatar เท่านั้น
 
 **⚠ ข้อจำกัดที่วัดได้และต้องระวังเวลาแก้ต่อ: emerald บนพื้นขาว = 2.00**
 ตกทั้งเกณฑ์ข้อความ (4.5) และกราฟิก (3.0) → **ห้ามใช้ `--color-brand` เป็นสีตัวอักษรหรือเส้นขอบบนพื้นสว่าง**
@@ -323,8 +212,8 @@ backup: `backups/*.pre-supabase.html` (ลำดับธีม: pre-mural → p
 จึงตั้ง `--color-brand-text` = ink (ไม่ใช่ emerald) และสถานะ active ทั้งหมดเป็น ink
 ตอน dark mode ใช้ `primary-soft #4ade80` ของ spec แทน (บน `#1c1c1c` = 9.78 ผ่านสบาย)
 
-**`--color-on-brand` = `#171717` ทั้งสองธีม** (ต่างจากธีม Mintlify ที่ต้องพลิกขาว↔ดำ) เพราะปุ่มเขียว
-มีอักษรเกือบดำเสมอ — ปุ่มยังต้องใช้ `color:var(--color-on-brand)` ห้ามฮาร์ดโค้ด
+**`--color-on-brand` = `#171717` ทั้งธีมสว่างและมืด** เพราะปุ่มเขียวมีอักษรเกือบดำเสมอ ไม่ต้องพลิกค่า
+ตามธีม — แต่ปุ่มยังต้องใช้ `color:var(--color-on-brand)` ห้ามฮาร์ดโค้ด
 
 **ยกมาตรงตาม spec (อื่นๆ)**
 | ส่วน | ค่า |
@@ -334,8 +223,8 @@ backup: `backups/*.pre-supabase.html` (ลำดับธีม: pre-mural → p
 | พื้น | canvas `#fff` / canvas-soft `#fafafa` / hairline-cool `#ededed` |
 | เส้น | hairline `#dfdfdf` + hairline-strong `#c7c7c7` |
 | **น้ำหนักตัวอักษร** | **มีแค่ 400 (body) กับ 500 (display/button)** — spec ไม่มี 600/700 เลย ("display weights capped at 500") → แปลง 600→500 (**111 จุด**) และ 700→500 (**32 จุด**) ทั้งสองไฟล์ |
-| ฟอนต์ | Circular เป็น proprietary — **spec แนะนำตัวแทนเอง**: "use Inter at weight 500" → ใช้ Inter ต่อจากรอบก่อน |
-| code/mono | `typography.code` เป็น **system mono stack** (ui-monospace/Menlo/Monaco/Consolas) ไม่ใช่ webfont → ตัด Geist Mono ออก **ได้ผลพลอยได้: แคบกว่า เลข PO บนการ์ดไม่ตัดบรรทัด (327 ใบ อยู่บรรทัดเดียว)** |
+| ฟอนต์ | Circular เป็น proprietary — **spec แนะนำตัวแทนเอง**: "use Inter at weight 500" → ใช้ Inter + Noto Sans Thai (Inter ไม่มีอักษรไทย) |
+| code/mono | `typography.code` เป็น **system mono stack** (ui-monospace/Menlo/Monaco/Consolas) ไม่ใช่ webfont — แคบพอให้เลข PO บนการ์ดอยู่บรรทัดเดียวครบ 327 ใบ |
 | radius | 4 / 6 / 8 / 12 / 16 / pill · การ์ด 12px · ปุ่ม+อินพุต 6px |
 | เงา | spec ไม่ระบุเงาเลย ใช้ "subtle 1px hairlines" → `--shadow-card:none` เหลือเงาเฉพาะแผงลอย |
 
@@ -345,14 +234,14 @@ backup: `backups/*.pre-supabase.html` (ลำดับธีม: pre-mural → p
    ink `#171717` เป็นพื้นล่างสุด, canvas-night `#1c1c1c` เป็นการ์ด, canvas-night-soft `#202020` เป็นพื้นรอง
 2. **สีสถานะ danger/success/warn** — spec Known Gap: "Toast and inline-alert system — semantic
    info/success/warning/error treatments aren't represented" (และ `accent-*` ของ spec สงวนไว้ให้
-   กราฟ/โลโก้) → **คงชุดที่ผ่านเกณฑ์ contrast จากรอบก่อน ไม่คิดค่าใหม่แบบเดา**
+   กราฟ/โลโก้) → **เลือกค่าที่ผ่านเกณฑ์ contrast เองโดยคุมให้อยู่ในโทนเดียวกับระบบ ไม่เดาจาก spec**
 3. **จุดสีบอกสถานะ shipment 6 ขั้น (เทา→ฟ้า→น้ำเงิน→อำพัน→เขียว) ยังเป็นสี** — เบี่ยงจาก
    "only chromatic event" อย่างตั้งใจ เพราะ (ก) มันเข้ารหัสสถานะงานที่ผู้ใช้อ่านจากบอร์ดด้วยสายตา
    ไม่ใช่การตกแต่ง (ข) spec เองระบุว่า `accent-*` "reserved for chart and logo work" คือการเข้ารหัสข้อมูล
    (ค) ถ้า remap ไปใช้ accent ของ spec จะได้ `accent-yellow #ffdb13` บนจุด 7px = contrast 1.2 มองไม่เห็น
 4. **focus ring** — spec Known Gap ("not the focus-ring color") + emerald ใช้เป็นเส้นไม่ได้ → ใช้ ink
 5. **`--color-text-muted` = ink-mute-2 `#9a9a9a` ได้ contrast 2.81** บนพื้นขาว — เป็นจุดเดียวที่ความ
-   ซื่อตรงต่อ spec แลกมาด้วย contrast ที่ต่ำลง (ธีมก่อนใช้ `#888888` = 3.54) ใช้กับ caption เล็กเท่านั้น
+   ซื่อตรงต่อ spec แลกมาด้วย contrast ที่ต่ำลง — ใช้กับ caption เล็ก (วันที่/จำนวนรายการ) เท่านั้น
    **ถ้าอ่านยากให้เปลี่ยนบรรทัดเดียว**: `--color-text-muted:#707070` (ink-mute = 4.95)
    ส่วน `ink-faint #b2b2b2` (2.12) จงใจไม่ใช้เลย
 

@@ -6,16 +6,15 @@
 <title>Import-Export OS — KOB &amp; BTV</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- ── ตัวอักษรตามระบบดีไซน์ Mintlify (mintlify.design.md) ──
-     spec ใช้ Circular (proprietary) และ "ระบุตัวแทนเอง" ว่า: use Inter at weight 500 with
+<!-- ── ตัวอักษรตามระบบดีไซน์ Supabase (supabase.design.md) ──
+     spec ใช้ Circular (proprietary) แต่ "ระบุตัวแทนเอง" ว่า: use Inter at weight 500 with
      letter-spacing -1.92px at 64px, or Geist Sans — both open-source · จึงใช้ Inter ตามคำแนะนำของ spec
-     ส่วนโค้ด/รหัส: typography.code ของ spec เป็น system mono stack (ui-monospace/Menlo/Monaco/Consolas)
-     ไม่ใช่ webfont — ได้ผลพลอยได้คือแคบกว่า Geist Mono เลข PO บนการ์ดจึงไม่ตัดบรรทัด
-     เพิ่ม Noto Sans Thai เพราะ Inter ไม่มีอักษรไทย — คู่นี้เข้ากันดีกว่ากรณี serif ของธีมก่อน เพราะ
-     ทั้ง Inter และ Noto Sans Thai เป็น neutral grotesque x-height ใกล้กัน (เบราว์เซอร์เลือกต่อ glyph:
-     ละติน/เลข = Inter, ไทย = Noto Sans Thai) · รหัส PO/BL/ตู้ ใช้ system mono stack ตาม typography.code
-     spec ระบุว่า "There are no italic variants — emphasis comes from weight (500/600)" จึงโหลดแค่ 400/500/600 -->
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+     เพิ่ม Noto Sans Thai เพราะ Inter ไม่มีอักษรไทย — ทั้งคู่เป็น neutral grotesque x-height ใกล้กัน
+     เบราว์เซอร์เลือกฟอนต์ต่อ glyph: ละติน+เลข = Inter, ไทย = Noto Sans Thai
+     โหลดแค่ 400/500 เพราะ spec มีสองน้ำหนักนี้เท่านั้น (400 body / 500 display+button) —
+     highlights ระบุชัด "display weights capped at 500" จึงไม่มี 600/700 ที่ไหนในระบบ
+     รหัส PO/BL/ตู้ ใช้ system mono stack ตาม typography.code ของ spec (ไม่ใช่ webfont) -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Noto+Sans+Thai:wght@400;500&display=swap" rel="stylesheet">
 <!-- ไลบรารีเก็บ local (vendor/) — เปิดแอปได้แม้อินเทอร์เน็ตล่ม -->
 <script src="/vendor/react.production.min.js"></script>
 <script src="/vendor/react-dom.production.min.js"></script>
@@ -42,13 +41,13 @@
      ใช้ได้แค่ 3 แบบตามที่ spec ระบุ: พื้นปุ่ม CTA / จุด accent / ตัวชี้สถานะเป็นครั้งคราว */
   --color-brand:#3ecf8e; --color-brand-deep:#24b47e; --color-brand-soft-green:#4ade80;
   --color-on-brand:#171717;
-  /* on-brand คงเป็น #171717 ทั้งสองธีม (ปุ่มเขียวมีอักษรเกือบดำเสมอ) ต่างจากธีม Mintlify ที่ต้องพลิก */
+  /* on-brand เป็น #171717 ทั้งธีมสว่างและมืด — ปุ่มเขียวมีอักษรเกือบดำเสมอ ไม่ต้องพลิกค่าตามธีม */
   --color-brand-soft:#fafafa;
   /* brand-text = ink เพราะ emerald เป็นตัวอักษรไม่ได้ (2.00) — สอดคล้องกับ "everything else is monochrome" */
   --color-brand-text:#171717;
   /* ⚠ สีสถานะ: spec ระบุใน Known Gaps ว่า "Toast and inline-alert system — semantic info/success/
      warning/error treatments aren't represented in the marketing track" (accent-* ของ spec สงวนไว้
-     ให้กราฟ/โลโก้) จึงคงชุดที่ผ่านเกณฑ์ contrast จากรอบก่อนไว้ ไม่คิดค่าใหม่แบบเดา */
+     ให้กราฟ/โลโก้) จึงเลือกค่าที่ผ่านเกณฑ์ contrast เองโดยคุมให้อยู่ในโทนเดียวกับระบบ ไม่เดาจาก spec */
   --color-danger:#d45656; --color-success:#1ba673; --color-warn:#c37d0d;
   --color-danger-soft:rgba(212,86,86,.12); --color-success-soft:rgba(27,166,115,.12); --color-warn-soft:rgba(195,125,13,.12);
   --color-danger-border:rgba(212,86,86,.32); --color-success-border:rgba(27,166,115,.32); --color-warn-border:rgba(195,125,13,.32);
@@ -107,12 +106,13 @@
 *{box-sizing:border-box;}
 html,body,#root{margin:0;padding:0;height:100%;}
 body{font-family:var(--font-body);font-weight:400;line-height:1.5;-webkit-font-smoothing:antialiased;color:var(--color-text);background:var(--color-page-bg);}
-/* ── display tier: serif บรรณาธิการ weight 300 + tracking ติดลบ ──
-   ปรับ scale จาก spec: Mural ใช้ 80px (hero) / 70px (section) / 54px (metric) บน marketing page ที่มี
-   ข้อความสั้น 1-2 ประโยค — แอปนี้เป็น dashboard ที่หัวข้อต้องอยู่ร่วมกับบอร์ด 326 การ์ดและแผงข้อมูล
-   หลายชั้น ขนาดระดับนั้นกินพื้นที่จนใช้งานไม่ได้ จึงย่อเหลือ 30/20/34px แต่คงสิ่งที่เป็นตัวตนของระบบไว้:
-   น้ำหนัก 300 + tracking ติดลบ + serif คู่กับ sans body (spec เตือนว่าน้ำหนักหนักกว่า 300 จะทำให้
-   ท่าทางบรรณาธิการหายไป) tracking แปลงเป็น em ให้ย่อ/ขยายตามขนาด (-4px ที่ 80px = -.05em) */
+/* ── display tier: Inter weight 500 + tracking ติดลบ ──
+   spec ไล่ระดับ 64 / 48 / 36 / 28 / 22px ที่น้ำหนัก 500 พร้อม tracking -1.92px ถึง -0.42px
+   "to pull the rounded letterforms into editorial density"
+   แอปนี้เป็น dashboard ที่หัวข้อต้องอยู่ร่วมกับบอร์ดหลายร้อยการ์ด ขนาดระดับนั้นกินพื้นที่จนใช้งานไม่ได้
+   จึงย่อเหลือ 24px (ชื่อหน้า) / 18px (หัวแผง) / 32px (ตัวเลข KPI) โดยคงตัวตนของระบบไว้ครบ:
+   น้ำหนัก 500 (spec ระบุว่า "display weights capped at 500") + tracking ติดลบ
+   tracking แปลงเป็น em ให้ย่อ/ขยายตามขนาดเอง (-1.92px ที่ 64px = -.03em) */
 .kobDisplay{font-family:var(--font-display);font-weight:500;letter-spacing:-.02em;}
 .kobDisplayTight{font-family:var(--font-display);font-weight:500;letter-spacing:-.03em;}
 /* eyebrow ตัวพิมพ์ใหญ่ tracking 2.45px ตรงตาม typography.uppercase-eyebrow ของ spec */
