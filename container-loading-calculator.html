@@ -2247,11 +2247,13 @@ function packLayout(result){
     // Cap by pallet max stack height (pallet.H = boxes + deck combined, default 2000mm = 200cm)
     if(it.usePallet&&it.pallet&&(it.pallet.H||0)>palD) effH=Math.min(effH,(it.pallet.H||0)-palD);
     if(it.maxH2>0)effH=Math.min(effH,mm(it.maxH2));
-    // Pallet mode: the per-pallet grid is decided in the pallet section below
-    // (orientation-aware) — keep a permissive placeholder so the item isn't rejected early
+    // Pallet mode: the per-pallet grid is decided in the pallet section below (orientation-aware)
+    // — ใช้ด้านที่ยาวกว่าของพาเลทเป็นขอบเขตแบบผ่อนปรน เพราะยังไม่รู้ว่าจะเลือกวางพาเลททิศไหน
+    // ⚠ ห้ามครอบด้วย Math.max(1,…) เดิมบังคับให้ "วางได้อย่างน้อย 1 ใบต่อแถว" เสมอ ทำให้กล่องที่
+    // กว้างกว่าตัวพาเลทเองยังถูกวางลงไป แล้วล้นออกนอกพาเลท/นอกตู้ (fuzz จับได้บนรถ 6 ล้อ/กระบะ)
     var nW;
     if(it.usePallet&&it.pallet){
-      nW=Math.max(1,Math.floor(Math.max(it.pallet.L||1200,it.pallet.W||1000)/bW));
+      nW=Math.floor(Math.max(it.pallet.L||1200,it.pallet.W||1000)/bW);
     }else{
       nW=Math.floor(c.W/bW);
     }
@@ -2277,11 +2279,27 @@ function packLayout(result){
   // per-pallet 3-axis cursor (pz height, px column mm, py boxes across). The open
   // partial column/layer left by one SKU is COMPLETED by the next SKU before it
   // moves on — no voids between SKUs on the same pallet.
-  if(palItems.length>0){
+  // จัดกลุ่มสินค้าที่ขึ้นพาเลทตาม "สเปคพาเลท" (ขนาด/ความสูงซ้อน/หน้าพาเลท/น้ำหนักพาเลท) แล้ววางแยก
+  // โซนกันไปตามความยาวตู้ — เดิมใช้ palItems[0].it.pallet เป็นสเปคของ "ทุกใบ" ทั้งที่ pallet ผูกกับ group
+  // ผู้ใช้ตั้งคนละขนาดได้จริงจากหน้าจอ ผลคือของจาก group ที่ตั้งพาเลทเล็กกว่าถูกวางบนพาเลทใหญ่เงียบๆ
+  // แล้วรายงานว่าใส่ได้มากกว่าความจริง (วัดจริง: ตั้ง 800×600 ซ้อน 1000mm แต่แผนวางบน 1200×1000
+  // ได้ 48 กล่อง/ใบ ซึ่งพาเลทจริงรับไม่ได้) และ tare ที่เอาไปคิดน้ำหนักรวมก็เป็นของพาเลทใบแรกไปหมด
+  var palSpecGroups={};
+  palItems.forEach(function(P){
+    var pl=P.it.pallet||{};
+    var k=[pl.L||1200,pl.W||1000,pl.H||2000,pl.D||150,pl.tare||5.2,pl.color||''].join('|');
+    (palSpecGroups[k]=palSpecGroups[k]||[]).push(P);
+  });
+  var palFramesAll=[], palManifestAll=[], palNumBase=0;
+  Object.keys(palSpecGroups).forEach(function(_specKey){
+    var palItems=palSpecGroups[_specKey];
     var pal0=palItems[0].it.pallet;
     var pL0=pal0.L||1200, pW0=pal0.W||1000, palD0=pal0.D||150;
     var palMaxH=pal0.H||2000, palTare=pal0.tare||5.2;
-    var availH=palMaxH-palD0;
+    // ความสูงที่วางของบนพาเลทได้ = ต่ำสุดของ (ความสูงซ้อนที่พาเลทกำหนด, ความสูงภายในตู้) ลบหน้าพาเลท
+    // ⚠ เดิมเป็น palMaxH-palD0 เฉยๆ ไม่ดูความสูงตู้เลย — พาเลท default ซ้อนได้ 2000mm แต่รถ 6 ล้อเล็ก
+    // สูง 1900mm และกระบะ (TPK) สูงแค่ 500mm → ของทะลุหลังคาออกไปนอกตู้ (fuzz จับได้ 5 เคส)
+    var availH=Math.min(palMaxH,c.H)-palD0;
 
     // Pick the pallet orientation that fits the most positions in the container.
     // Placement is capped at this count — anything beyond it is reported as NOT loaded
@@ -2296,12 +2314,21 @@ function packLayout(result){
     // — นี่คือสาเหตุที่ภาพ 3D ดู "แปลก" ตรงพาเลท ทั้งที่การจัดเรียงกล่อง *ภายใน* พาเลทถูกต้องหมด
     // (ตรวจแล้วซ้อนกันภายในพาเลทเดียวกัน 0 คู่) tolerance แบบนี้ไม่มีทางถูก เพราะมันจะ "ช่วย" ก็
     // ต่อเมื่อพาเลทใส่ไม่ได้จริงเท่านั้น (ถ้าใส่ได้จริงก็ไม่ต้องพึ่ง tolerance อยู่แล้ว) จึงตัดออก
+    // เลือกทิศพาเลท: เอาจำนวนตำแหน่งมากสุด "ในกลุ่มที่รองรับ SKU ได้มากชนิดที่สุด" ก่อน
+    // เดิมดูแต่จำนวนตำแหน่ง ไม่สนว่ากล่องจะวางบนพาเลททิศนั้นได้จริงไหม → ถ้ากล่องกว้างกว่าด้าน
+    // across ที่เลือกมา ก็ไม่มีที่ให้วางเลยทั้งที่ทิศอีกแบบวางได้ (จำนวนพาเลทน้อยกว่าแต่ใส่ของได้)
     var cfg=null;
     [[pL0,pW0],[pW0,pL0]].forEach(function(d){
-      var perRow=Math.floor(c.L/d[0]), pRows=Math.floor(c.W/d[1]);
+      var perRow=Math.floor((c.L-offsetX)/d[0]), pRows=Math.floor(c.W/d[1]);
       if(perRow<1||pRows<1)return;
-      if(!cfg||perRow*pRows>cfg.n)cfg={along:d[0],across:d[1],perRow:perRow,rows:pRows,n:perRow*pRows};
+      // นับว่าทิศนี้รองรับ SKU ได้กี่ชนิด (กล่องต้องวางได้ทั้งตามยาวและตามกว้างของพาเลท)
+      var hosts=0;
+      palItems.forEach(function(P){ if(P.bL<=d[0]&&P.bW<=d[1])hosts++; });
+      var cand={along:d[0],across:d[1],perRow:perRow,rows:pRows,n:perRow*pRows,hosts:hosts};
+      if(!cfg||cand.hosts>cfg.hosts||(cand.hosts===cfg.hosts&&cand.n>cfg.n))cfg=cand;
     });
+    // พาเลทเปล่ายังไม่พ้นความสูงตู้ (เช่น กระบะสูง 500mm) → วางบนพาเลทไม่ได้เลย ไม่ต้องสร้างพาเลท
+    if(cfg&&availH<=0)cfg=null;
     if(cfg){
       var along=cfg.along, across=cfg.across, pRows=cfg.rows, maxPallets=cfg.n;
       // row Y positions: แถวแรกชิดผนังด้านหนึ่ง แถวสุดท้ายชิดผนังอีกด้าน ที่เหลือกระจายเท่ากัน
@@ -2313,6 +2340,15 @@ function packLayout(result){
       function palAddCount(pal,P,n){
         if(!pal.counts[P.idx])pal.counts[P.idx]={P:P,placed:0};
         pal.counts[P.idx].placed+=n;
+      }
+      // จำนวนชั้นที่ SKU นี้ใช้ไปแล้ว "บนพาเลทใบที่กำลังวาง" (zSeen key = "<พาเลทที่>:<z>")
+      // คืน -1 เมื่อ z นั้นเป็นชั้นที่เคยใช้แล้ว = ไม่ใช่การเปิดชั้นใหม่ จึงไม่ติดเพดาน
+      // ต้องนับแยกต่อพาเลท ไม่ใช่นับรวมทุกใบ (บั๊กเดียวกับคอลัมน์ "ชั้น" ที่แก้ไปแล้ว)
+      function palLayersUsed(a,palIdx,z){
+        if(a.zSeen[palIdx+':'+z])return -1;
+        var pref=palIdx+':', n=0;
+        Object.keys(a.zSeen).forEach(function(k){ if(k.slice(0,pref.length)===pref)n++; });
+        return n;
       }
       function skyRaisePal(pal,x0,x1,newZ){
         var out=[];
@@ -2369,7 +2405,15 @@ function packLayout(result){
               var c2=actives[i];
               if(c2.remaining<=0)continue;
               if(seg.x1-seg.x0<c2.P.bL)continue;
+              // กล่องต้องวางตามความกว้างพาเลท (across) ได้อย่างน้อย 1 ใบ ไม่งั้นจะล้นออกนอกพาเลท
+              // — nWp ด้านล่างใช้ Math.max(1,…) ซึ่งจะบังคับวาง 1 ใบแม้กล่องกว้างเกิน จึงต้องกันที่นี่
+              if(c2.P.bW>across)continue;
               if(seg.z+c2.P.bH>capOf(pallets.length-1))continue;
+              // เพดานจำนวนชั้นต่อ SKU (P.nH = min(ชั้นที่ความสูงรับได้, maxLayers ที่ผู้ใช้ตั้ง))
+              // เดิม pallet packer ไม่เช็คข้อนี้เลย มีแต่เพดานความสูง (capOf) → ผู้ใช้ตั้ง "ซ้อนไม่เกิน 2 ชั้น"
+              // (สินค้าเปราะ/ข้อกำหนดลูกค้า) แต่แผนบรรจุวางให้ 4 ชั้น เงียบๆ ทั้งที่ฝั่ง std เช็คอยู่แล้ว
+              // และ calcBox ก็คิด nz โดยรวม maxLayers ไว้แล้ว — มีแต่ packLayout ที่หลุดไปจุดเดียว
+              if(palLayersUsed(c2,pallets.length-1,seg.z)>=c2.P.nH)continue;
               a=c2; break;
             }
           }
@@ -2383,7 +2427,10 @@ function packLayout(result){
                 for(var j=0;j<actives.length;j++){
                   var cj=actives[j];
                   if(cj.remaining<=0)continue;
-                  if(s.x1-s.x0>=cj.P.bL&&s.z+cj.P.bH<=capOf(pallets.length-1)){ fitsSomewhere=true; break; }
+                  // ต้องเช็คเพดานชั้นด้วยเงื่อนไขเดียวกับตอนเลือกจริงด้านบน ไม่งั้นจะตอบว่า "ยังวางได้"
+                  // ทั้งที่ติดเพดาน maxLayers แล้ว → วนซ้ำมาร์ค segment ตายไปเรื่อยๆ โดยไม่เปิดพาเลทใหม่
+                  if(s.x1-s.x0>=cj.P.bL&&cj.P.bW<=across&&s.z+cj.P.bH<=capOf(pallets.length-1)
+                     &&palLayersUsed(cj,pallets.length-1,s.z)<cj.P.nH){ fitsSomewhere=true; break; }
                 }
               }
             }
@@ -2493,24 +2540,27 @@ function packLayout(result){
           blocks.push({x0:palX+q.x0,y0:palY+q.y0,z0:palD0+q.z0,L:q.L,W:q.W,H:q.H,
             nL:q.nL,nW:q.nW,nH:1,color:q.color});
         });
-        palFrames.push({x0:palX,y0:palY,L:along,W:across,H:palD0+topZ,num:pi+1});
+        palFrames.push({x0:palX,y0:palY,L:along,W:across,H:palD0+topZ,num:palNumBase+pi+1});
       });
-      result._palletFrames=palFrames;
+      palFramesAll=palFramesAll.concat(palFrames);
 
       offsetX+=Math.ceil(pallets.length/pRows)*along;
 
       // Build pallet manifest for display in results (one entry per physical pallet)
-      result._palletManifest=pallets.map(function(pal,pi){
+      palManifestAll=palManifestAll.concat(pallets.map(function(pal,pi){
         var gw=palTare, products=[];
         Object.keys(pal.counts).forEach(function(k){
           var e=pal.counts[k], wt=e.placed*e.P.perBoxWt; gw+=wt;
           products.push({idx:e.P.idx,name:e.P.it.name,color:e.P.it.color,placed:e.placed,
             pcs:e.placed*(e.P.it.pcsPerCtn||1),wt:wt});
         });
-        return{palIdx:pi+1,L:along,W:across,H:palD0+pal.topZ,tare:palTare,gw:gw,products:products};
-      });
+        return{palIdx:palNumBase+pi+1,L:along,W:across,H:palD0+pal.topZ,tare:palTare,gw:gw,products:products};
+      }));
+      palNumBase+=pallets.length;
     }
-  }
+  });
+  if(palFramesAll.length)result._palletFrames=palFramesAll;
+  if(palManifestAll.length)result._palletManifest=palManifestAll;
 
   // ─── Standard (non-pallet) items: global LAYER filling ───
   // Layer 1 fills the whole floor inner→door, then layer 2 the same way, and so on.
