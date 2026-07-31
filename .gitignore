@@ -20,3 +20,5 @@ ets_debug/
 scan_run*.log
 *.tmp
 *.log.1
+verify_runs.jsonl
+verify_runs.jsonl.1

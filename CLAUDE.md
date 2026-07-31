@@ -354,6 +354,68 @@ portOfLoading}` + `meta{filesProcessed,filesSkipped}` พร้อมอ้า�
 **bounded run** ✅ (rate limit/timeout/budget ครบ) — แต่ **source ยังขาด** (ข้อ 🔴 แรก) และ **plan/objective**
 ไม่มีที่เก็บ (ไม่ใช่ปัญหา เพราะงานสั่งจากคนทีละครั้ง ไม่ใช่ระบบ autonomous)
 
+## ทำแล้ว: provenance + ความจำของการตรวจเอกสาร (2026-07-31)
+ลงมือตามข้อ 1-2 ของหัวข้อ "รีวิวด้วยหลัก loop/graph engineering" ด้านบน
+
+### 1. `_src` — ทุกค่าที่กรอกได้รู้ที่มา
+
+**เก็บอะไร:** `_src` เป็น object ต่อ record → `{ etd: 'verify:BL-COSU6391882.pdf@2026-07-31T10:40:53Z' }`
+สตริงสั้นต่อฟิลด์รูปแบบ `<origin>[:<ref>]@<iso>` **ไม่ใช่ object ซ้อน** (ไฟล์นี้ 550KB แล้ว)
+
+**stamp เมื่อไหร่:** เฉพาะฟิลด์ที่ **เปลี่ยนจริง** ในรอบนั้น (ใช้ `changed` ชุดเดียวกับที่ audit ใช้อยู่แล้ว)
+→ โตตามการแก้จริงของผู้ใช้ ไม่ใช่โตตามจำนวน record · ฟิลด์ที่ไม่ได้แตะคงที่มาเดิมไว้
+
+**origin ที่ใช้จริง:** `manual` (คนกรอกผ่านหน้าเว็บ — ค่า default) · `verify:<ชื่อไฟล์>` (สกัดจากเอกสาร)
+client ส่ง `_origin` มาได้ แต่ **ห้ามส่ง `_src` เอง** — server `delete merged._src` ทุกครั้ง
+(ยืนยันด้วยเทส: ส่ง `_src:{freight:'odoo-official@2020...'}` มา ผลที่บันทึกยังเป็น `manual@<now>`)
+`_origin` ก็ไม่ค้างในไฟล์ข้อมูล (`delete merged._origin`)
+
+**ฟิลด์ที่ติดตาม:** `PROVENANCE_FIELDS` — 26 ฟิลด์ (etd/eta/actualDate/bl/bl_awb/container/vessel/voyage/
+forwarder/origin/dest/mode/seaType/containerQty/courierCo/ค่าใช้จ่าย 6 ตัว/amount/cur/rate/stage/note/overReceipt)
+
+**หน้าเว็บแสดงยังไง:** `Row` รับ `src` + `hasValue` → มี `_src` แสดง `📄 จากเอกสาร <ไฟล์> · <วันที่>` (โทนเขียว)
+หรือ `กรอกเอง · <วันที่>` · **มีค่าแต่ไม่มี `_src` แสดง "ไม่ทราบที่มา"** ตรงๆ พร้อม tooltip อธิบาย
+ไม่เดาแทนผู้ใช้ — ยืนยันจริงกับ `KOBPO2604-07983`: โชว์ "ไม่ทราบที่มา" 6 จุด (ตู้/เรือ/ETD/Ship Mode ฯลฯ)
+`_src` อ่านจาก `this._overrides[poNo]._src` ตรงๆ **ไม่ merge เข้า shipment object** (applyOne คัดลอกเฉพาะ
+ฟิลด์ข้อมูล) และเพิ่ม `_src`/`_origin` เข้า `AUDIT_SKIP_FIELDS` ไม่ให้โผล่ในสรุปประวัติการแก้ไข
+
+> **ข้อมูลเดิม 1,027 record จงใจไม่ backfill** — การเดาที่มาย้อนหลังคือการสร้าง claim ที่ไม่มี source
+> ซึ่งผิดหลักที่กำลังแก้อยู่ · ปล่อยให้แสดง "ไม่ทราบที่มา" ตามความจริง แล้วค่าจะค่อยๆ ได้ provenance
+> เมื่อมีคนแก้หรือมีเอกสารมายืนยัน
+
+### 2. `verify_runs.jsonl` — ผลตรวจเอกสารไม่หายอีก
+
+**ก่อนแก้:** `verifyShipmentLocal()` คืน sections/shipmentInfo/meta ที่อ้างชื่อไฟล์ต้นทางครบ
+แต่ server เก็บกลับ **แค่ `etd` ฟิลด์เดียว** ที่เหลือหายไปกับ response
+
+**หลังแก้:**
+- `appendVerifyRun()` เขียน 1 บรรทัด/รอบ (append-only เหมือน `tracking_audit.jsonl`) เก็บ ts/po/mode/
+  status/counts/errors/review/correct/filesProcessed/filesSkipped/shipmentInfo/ip
+  **หมุนไฟล์ที่ 5MB** → `.1` (ต่างจาก audit log ที่บรรทัดสั้นคงที่ ไฟล์นี้เก็บข้อความผลตรวจซึ่งยาวกว่ามาก)
+- `GET /api/verify-runs?po=&limit=` (limit clamp 1-200) — ไม่ใส่ po = ทุกรอบล่าสุด
+- เขียนกลับ **3 ฟิลด์** แล้ว (etd + vessel + bl_awb) จากเดิม 1 · ทุกค่าติด `_src = verify:<ไฟล์>`
+- **ไม่ทับค่าที่มีอยู่แล้ว** — เติมเฉพาะช่องว่าง (คนกรอกไว้เองถือว่าตั้งใจ) คืน `fieldsSaved:[]` เมื่อไม่ได้เติม
+- แผงรายละเอียด shipment โชว์ผลตรวจล่าสุด: ✅/🟡/❌ + error 3 บรรทัดแรก + จำนวนรอบที่เคยตรวจ
+  หรือ "ยังไม่เคยตรวจเอกสารของ PO นี้" — **เชื่อมการตรวจเอกสารกับ record ของ shipment** ซึ่งเดิมแยกกันสิ้นเชิง
+- `verify_runs.jsonl` + `.1` เข้า `.gitignore` (เป็นข้อมูลปฏิบัติการ)
+
+### 3. บั๊กที่เจอจากการทดสอบฟีเจอร์นี้: Excel/CSV สกัด vessel/BL/invoice ไม่ได้เลย
+
+regex ของ `blAwb` / `invoiceNo` / vessel / portOfLoading ยอมรับตัวคั่นแค่ `\s` กับ `:-`
+แต่ `extractExcelText()` ใช้ `sheet_to_csv` ซึ่งคั่นเซลล์ด้วย **คอมมา** → `'B/L NO.,COSU6391882'`
+**สกัดไม่ได้เลยทั้งที่ .xlsx/.xls/.csv เป็น input ที่รองรับอยู่แล้ว** (`EXCEL_EXTS`)
+`checkPortSanity` แก้ปัญหานี้ไว้แล้วด้วย `SEP` ที่มีคอมมา แต่ 4 จุดนี้ตกหล่น
+→ เพิ่ม `,` และ `|` เข้าคลาสตัวคั่น (ผ่อนปรนขึ้นเท่านั้น ไม่กระทบเคส PDF เดิม)
+ยืนยัน: CSV `VESSEL,COSCO HARMONY V.042E` และ PDF `VESSEL: COSCO HARMONY` **เจอทั้งคู่**
+ผลจริง: `fieldsSaved` เปลี่ยนจาก `['etd']` → `['etd','vessel','bl_awb']`
+
+### ทดสอบแล้ว
+provenance: manual/verify stamp ถูกต้อง · `_origin` ไม่ค้าง · **client อ้างที่มาปลอมไม่ได้** ·
+ฟิลด์ที่ไม่ได้แตะคงที่มาเดิม · verify: เขียน 3 ฟิลด์ + ไม่ทับของเดิม (`fieldsSaved:[]`) ·
+`verify_runs.jsonl` อ่านกลับได้ทั้งแบบทุกรอบและกรองตาม PO · UI แสดง "ไม่ทราบที่มา" 6 จุดกับ record จริง ·
+0 pageerror · **packer suite 42 scenario = 0 violation** · endpoint 6 ตัวตอบ 200 ·
+ข้อมูลทดสอบเก็บกวาดครบ (1,040 record เท่าเดิม, verify_runs.jsonl ว่างพร้อมรับของจริง)
+
 ## ยังไม่แก้ (ตั้งใจ)
 - **pinwheel / tail rotation สำหรับพาเลท** — พิสูจน์แล้วว่าได้ 9 ใบแทน 8 ในตู้ 20'GP (ดูหัวข้อด้านบน)
   เป็นฟีเจอร์ใหม่ ต้องเขียน placement แบบผสมทิศ

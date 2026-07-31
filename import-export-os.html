@@ -309,7 +309,7 @@ const AUDIT_FIELD_LABELS={cur:'สกุลเงิน',amount:'มูลค่
   forwarder:'ตัวแทนขนส่ง',note:'หมายเหตุ',overReceipt:'รับเกิน',dest:'ปลายทาง',origin:'ต้นทาง',party:'คู่ค้า',
   courierCo:'บริษัทขนส่ง',containerQty:'จำนวนตู้',expectedCost:'ต้นทุนที่คาดการณ์ไว้'};
 // เฉพาะฟิลด์ที่มีความหมายทางธุรกิจ — กรอง internal state ทิ้ง (ขึ้นต้น _ หรืออยู่ในลิสต์กันเอง)
-const AUDIT_SKIP_FIELDS=new Set(['po_so','id','_ts','_board','_edited','_rateIsThb','_synthetic','_splitBase','type','company','mode','seaType','bills']);
+const AUDIT_SKIP_FIELDS=new Set(['po_so','id','_ts','_src','_origin','_board','_edited','_rateIsThb','_synthetic','_splitBase','type','company','mode','seaType','bills']);
 function auditEntrySummary(e){
   if(e.action==='create')return 'สร้างรายการใหม่';
   if(e.action==='delete')return 'ลบรายการ';
@@ -440,7 +440,7 @@ class App extends Component {
       const saved=localStorage.getItem('kobTheme');
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
@@ -511,6 +511,20 @@ class App extends Component {
       this.setState({auditLog:j.entries,auditLoading:false});
     }catch(e){this.setState({auditLoading:false});}
   }
+  // ── ประวัติการตรวจเอกสารของ PO นี้ (artifact ที่ server เก็บไว้ต่อรอบ) ──
+  // ก่อนหน้านี้ผลตรวจถูกทิ้งหลังปิดหน้า ทำให้ตรวจซ้ำก็เริ่มจากศูนย์ — ตอนนี้ดึงมาโชว์ในแผงรายละเอียด
+  // ได้ว่า shipment ใบนี้เคยตรวจเมื่อไหร่ เจอปัญหาอะไร โดยไม่ต้องอัปโหลดไฟล์ซ้ำ
+  async loadVerifyRuns(poNo){
+    if(!poNo)return;
+    if(this.state.verifyRunsPo===poNo&&this.state.verifyRuns)return;
+    this.setState({verifyRunsPo:poNo,verifyRuns:null});
+    try{
+      const r=await fetchTimeout('/api/verify-runs?limit=5&po='+encodeURIComponent(poNo),{headers:{Accept:'application/json'}},12000);
+      const j=await r.json();
+      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      if(this.state.verifyRunsPo===poNo)this.setState({verifyRuns:j.runs||[]});
+    }catch(e){ if(this.state.verifyRunsPo===poNo)this.setState({verifyRuns:[]}); }
+  }
   // เปิด PO/SO ที่คลิกจาก audit log — หาใน shipment ปัจจุบันด้วย poNo แล้วสลับ tab+เปิด detail
   jumpToAuditEntry(poSo){
     const found=this.allShipments().find(s=>s.poNo===poSo);
@@ -532,7 +546,7 @@ class App extends Component {
   componentDidUpdate(prevProps,prevState){
     if(this.state.detailId&&this.state.detailId!==prevState.detailId){
       const sel=this.allShipments().find(s=>s.id===this.state.detailId);
-      if(sel)this.loadPoLines(sel);
+      if(sel){this.loadPoLines(sel);this.loadVerifyRuns(sel._splitBase||sel.poNo);}
     }
   }
   // PO ที่แยกเป็น shipment ย่อย (_synthetic) ไม่มี PO จริงคู่กัน — โชว์รายการสินค้าของ PO ต้นฉบับแทน
@@ -2049,9 +2063,18 @@ class App extends Component {
             </div>
             <SectionTitle>ข้อมูลขนส่ง</SectionTitle>
             <div style={{display:'flex',flexDirection:'column',gap:'11px',marginBottom:'16px'}}>
-              {[['Ship Mode',shipModeLabel(sel)],['BL / AWB',sel.bl],['ตู้คอนเทนเนอร์',sel.container],['เรือ / เที่ยว',sel.vessel],['ตัวแทนขนส่ง',sel.forwarder],['ETD (ออกเดินทาง)',fmtDate(sel.etd)],['ETA (ประมาณ)',fmtDate(sel.eta)],[sel._board==='export'?'วันที่ถึงปลายทางจริง':'วันที่รับเข้าคลังจริง',fmtDate(sel.actualDate)]].map(([l,v])=>(
-                <Row key={l} label={l} value={v||'—'}/>
-              ))}
+              {/* ส่ง provenance ของแต่ละฟิลด์เข้าไปด้วย — _src เก็บที่ override ไม่ได้ merge เข้า shipment
+                  object (applyOne คัดลอกเฉพาะฟิลด์ข้อมูล) จึงอ่านจาก this._overrides ตรงนี้ */}
+              {(()=>{const ov=(this._overrides||{})[sel.poNo]||{};const src=ov._src||{};
+                return [['Ship Mode',shipModeLabel(sel),null,true],
+                  ['BL / AWB',sel.bl,src.bl_awb||src.bl,!!sel.bl],
+                  ['ตู้คอนเทนเนอร์',sel.container,src.container,!!sel.container],
+                  ['เรือ / เที่ยว',sel.vessel,src.vessel,!!sel.vessel],
+                  ['ตัวแทนขนส่ง',sel.forwarder,src.forwarder,!!sel.forwarder],
+                  ['ETD (ออกเดินทาง)',fmtDate(sel.etd),src.etd,!!sel.etd],
+                  ['ETA (ประมาณ)',fmtDate(sel.eta),src.eta,!!sel.eta],
+                  [sel._board==='export'?'วันที่ถึงปลายทางจริง':'วันที่รับเข้าคลังจริง',fmtDate(sel.actualDate),src.actualDate,!!sel.actualDate]
+                ].map(([l,v,sc,hv])=>(<Row key={l} label={l} value={v||'—'} src={sc} hasValue={hv}/>));})()}
             </div>
             {(()=>{const ti=transitInfo(sel);if(!ti)return null;
               const variance=ti.kpi?ti.days-ti.kpi.days:null;
@@ -2088,6 +2111,37 @@ class App extends Component {
             })()}
             {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginBottom:'18px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
             {sel.note&&<div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}>{sel.note}</div>}
+            {(()=>{
+              // ผลตรวจเอกสารล่าสุดของ PO นี้ — เชื่อม "การตรวจเอกสาร" กับ "record ของ shipment"
+              // ซึ่งเดิมแยกกันสิ้นเชิง (ตรวจแล้วผลหายไป ไม่มีร่องรอยที่ตัว shipment)
+              const runs=this.state.verifyRuns;
+              if(this.state.verifyRunsPo!==(sel._splitBase||sel.poNo))return null;
+              if(!runs)return null;
+              if(!runs.length)return <div style={{marginBottom:'18px'}}>
+                <SectionTitle>ผลตรวจเอกสาร</SectionTitle>
+                <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่เคยตรวจเอกสารของ PO นี้ — ไปที่เมนู "ตรวจเอกสาร Shipment" แล้วใส่เลข PO นี้</div>
+              </div>;
+              const last=runs[0];
+              const bad=(last.counts&&last.counts.errors)||0;
+              return <div style={{marginBottom:'18px'}}>
+                <SectionTitle>ผลตรวจเอกสาร</SectionTitle>
+                <div style={{background:bad?'var(--color-danger-soft)':'var(--color-success-soft)',border:'1px solid '+(bad?'var(--color-danger-border)':'var(--color-success-border)'),borderRadius:'var(--radius)',padding:'10px 12px'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',gap:'8px',fontSize:'12px',fontWeight:500,color:bad?'var(--color-danger-text)':'var(--color-success-text)'}}>
+                    <span>{bad?('พบต้องแก้ไข '+bad+' จุด'):'ผ่านทุกข้อที่ตรวจได้'}</span>
+                    <span style={{color:'var(--color-text-muted)',fontWeight:400}}>{new Date(last.ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</span>
+                  </div>
+                  <div style={{fontSize:'11px',color:'var(--color-text-tertiary)',marginTop:'4px'}}>
+                    ✅ {last.counts?last.counts.correct:0} · 🟡 {last.counts?last.counts.review:0} · ❌ {bad} · จากไฟล์ที่อ่านได้ {last.filesProcessed} ไฟล์{runs.length>1?(' · ตรวจมาแล้ว '+runs.length+' รอบ'):''}
+                  </div>
+                  {bad>0&&<div style={{display:'flex',flexDirection:'column',gap:'4px',marginTop:'8px'}}>
+                    {(last.errors||[]).slice(0,3).map((e,i)=>(
+                      <div key={i} style={{fontSize:'11px',color:'var(--color-danger-text)',lineHeight:1.45}}>• {e}</div>
+                    ))}
+                    {(last.errors||[]).length>3&&<div style={{fontSize:'10.5px',color:'var(--color-text-muted)'}}>และอีก {(last.errors||[]).length-3} จุด</div>}
+                  </div>}
+                </div>
+              </div>;
+            })()}
             <SectionTitle>ไทม์ไลน์</SectionTitle>
             <div style={{display:'flex',flexDirection:'column'}}>
               {timeline.map(s=>(
@@ -2480,7 +2534,13 @@ class App extends Component {
         </div>}
         {verifyResult.shipmentInfo&&verifyResult.shipmentInfo.etd&&<div style={{marginTop:'14px',padding:'10px 12px',borderRadius:'var(--radius-sm)',background:verifyResult.etdSaved?'var(--color-success-soft)':'var(--color-surface-muted)',fontSize:'11.5px',color:verifyResult.etdSaved?'var(--color-success-text)':'var(--color-text-secondary)'}}>
           ดึง ETD จาก B/L ได้: <b>{verifyResult.shipmentInfo.etd}</b>{verifyResult.shipmentInfo.vessel?' ('+verifyResult.shipmentInfo.vessel+')':''}
-          {verifyResult.etdSaved?' — บันทึกให้ '+verifyResult.po+' แล้ว':(verifyResult.po?' — บันทึกไม่สำเร็จ':' — ใส่เลข PO ด้านบนก่อนตรวจ ถ้าต้องการบันทึกอัตโนมัติ')}
+          {Array.isArray(verifyResult.fieldsSaved)&&verifyResult.fieldsSaved.length
+            ? ' — บันทึกให้ '+verifyResult.po+' แล้ว ('+verifyResult.fieldsSaved.join(', ')+') พร้อมบันทึกที่มาว่ามาจากเอกสารใบนี้'
+            : (verifyResult.po
+                ? (Array.isArray(verifyResult.fieldsSaved)
+                    ? ' — ไม่ได้ทับของเดิม (ช่องเหล่านี้มีค่าอยู่แล้ว)'
+                    : ' — บันทึกไม่สำเร็จ')
+                : ' — ใส่เลข PO ด้านบนก่อนตรวจ ถ้าต้องการบันทึกอัตโนมัติ')}
         </div>}
       </div>}
     </div>;
@@ -2530,10 +2590,31 @@ class App extends Component {
 function SectionTitle({children}){
   return <div className="kobEyebrow" style={{fontSize:'12px',color:'var(--color-text-tertiary)',paddingBottom:'9px',borderBottom:'1px solid var(--color-border)',marginBottom:'13px'}}>{children}</div>;
 }
-function Row({label,value}){
-  return <div style={{display:'flex',justifyContent:'space-between',gap:'12px'}}>
-    <span style={{fontSize:'12.5px',color:'var(--color-text-tertiary)'}}>{label}</span>
-    <span style={{fontSize:'12.5px',color:'var(--color-text)',fontWeight:500,textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{value}</span>
+// แปลง provenance tag `<origin>[:<ref>]@<iso>` เป็นข้อความไทยสั้นๆ ที่คนอ่านรู้เรื่อง
+// origin ที่เจอจริง: manual (คนกรอกผ่านหน้าเว็บ) · verify:<ไฟล์> (สกัดจากเอกสารที่อัปโหลด)
+function srcLabel(tag){
+  if(!tag)return null;
+  const at=String(tag).lastIndexOf('@');
+  const origin=at>0?String(tag).slice(0,at):String(tag);
+  const iso=at>0?String(tag).slice(at+1):'';
+  const when=iso?new Date(iso):null;
+  const date=(when&&!isNaN(when))?when.toLocaleDateString('th-TH',{day:'numeric',month:'short'}):'';
+  if(origin.startsWith('verify:'))return {kind:'doc',text:'จากเอกสาร '+origin.slice(7),date};
+  if(origin==='manual')return {kind:'manual',text:'กรอกเอง',date};
+  return {kind:'other',text:origin,date};
+}
+// Row ที่บอก "ที่มาของค่า" ได้ — src=null แล้วมีค่า = ไม่ทราบที่มา (ข้อมูลก่อนเริ่มเก็บ provenance)
+// จงใจแสดงตรงๆ ว่าไม่ทราบ ไม่เดาแทนผู้ใช้ (98.8% ของ record เดิมอยู่ในสถานะนี้)
+function Row({label,value,src,hasValue}){
+  const s=srcLabel(src);
+  const unknown=hasValue&&!s;
+  return <div style={{display:'flex',justifyContent:'space-between',gap:'12px',alignItems:'baseline'}}>
+    <span style={{fontSize:'12.5px',color:'var(--color-text-tertiary)',flexShrink:0}}>{label}</span>
+    <span style={{textAlign:'right',minWidth:0}}>
+      <span style={{fontSize:'12.5px',color:'var(--color-text)',fontWeight:500,fontVariantNumeric:'tabular-nums'}}>{value}</span>
+      {s&&<span title={'ที่มา: '+s.text+(s.date?' ('+s.date+')':'')} style={{display:'block',fontSize:'10px',marginTop:'1px',color:s.kind==='doc'?'var(--color-success-text)':'var(--color-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.kind==='doc'?'📄 ':''}{s.text}{s.date?' · '+s.date:''}</span>}
+      {unknown&&<span title="ค่านี้มีอยู่ในระบบก่อนที่จะเริ่มบันทึกที่มา จึงไม่ทราบว่ามาจากเอกสารใบไหนหรือใครกรอก" style={{display:'block',fontSize:'10px',marginTop:'1px',color:'var(--color-text-muted)'}}>ไม่ทราบที่มา</span>}
+    </span>
   </div>;
 }
 
