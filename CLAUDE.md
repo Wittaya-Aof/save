@@ -244,7 +244,8 @@ fuzz 800 เคส = 0 violation** (ยืนยันว่า restyle ไม�
 ข้อมูลตัวอย่างทุกครั้งที่ `shipments` ยังไม่ใช่ array **รวมถึงช่วง `loading`** (รอ MCP bridge หลายวินาที)
 ซึ่งเดิมโชว์ตัวเลขปลอมโดยไม่มีอะไรเตือน → เปลี่ยนเงื่อนไขเป็น `!Array.isArray(shipments)` + ข้อความแยก 2 กรณี
 
-## ธีม UI ปัจจุบัน: Mintlify design system (2026-07-31 รอบ 4 — ทับธีม Mural)
+## ธีม UI รอบก่อน: Mintlify (2026-07-31 รอบ 4 — **ถูกทับด้วย Supabase แล้ว**)
+เก็บไว้เป็นบันทึกเหตุผล ถ้าจะย้อนใช้ `backups/*.pre-supabase.html`
 ปรับใช้ `C:/Users/User/Projects/mintlify.design.md` แทนธีม Mural ของรอบก่อน
 backup ก่อนเปลี่ยน: `backups/*.pre-mintlify.html` (ธีม Mural อยู่ใน `backups/*.pre-mural.html`)
 
@@ -302,6 +303,62 @@ toast) เปลี่ยนไปใช้โทนเข้ม `*-text` เป
 **ทดสอบแล้ว**: light/dark = 0 pageerror · Inter/Geist Mono ถูกใช้จริง (ตรวจจาก computed style) ·
 ชื่อหน้า/แบรนด์แสดงครบ · ข้อมูลจริง 327/106 · เลข PO 327 ใบไม่ตัดบรรทัด · calculator ใน iframe รับ
 token ชุดเดียวกัน · **packer suite 42 scenario + fuzz 600 เคส = 0 violation** · endpoint หลักตอบ 200
+
+## ธีม UI ปัจจุบัน: Supabase design system (2026-07-31 รอบ 5 — ทับ Mintlify)
+ปรับใช้ `C:/Users/User/Projects/supabase.design.md`
+backup: `backups/*.pre-supabase.html` (ลำดับธีม: pre-mural → pre-mintlify → pre-supabase)
+
+**ท่าเด่น 3 อย่างที่ทำให้ตรง**
+1. **emerald `#3ecf8e` เป็นสีเดียวในหน้า** — spec: "the only chromatic event across the entire page"
+   ที่เหลือเป็นเกรย์สเกลล้วน ไล่จาก `#ededed` ถึง ink `#171717`
+2. **อักษรบนปุ่มเขียวเป็น "เกือบดำ" ไม่ใช่ขาว** — spec: "near-black #171717 text on the emerald
+   button (not white) — the green reads as a 'lit' surface with dark type, which is the brand's
+   idiosyncratic choice" · **วัดจริง: ink บน emerald = 8.98 / ขาวบน emerald = 2.00** สเปคถูกกว่าชัดเจน
+3. **ปุ่ม 6px ห้ามเป็น pill** — spec: "square-ish and technical, never pill-shaped" (ตรงข้ามกับ 2 ธีมก่อน
+   ที่ CTA เป็น pill ทั้งคู่) · `--radius` เปลี่ยนจาก 8px → **6px** ทั้งระบบ, pill สงวนให้ tag/avatar
+
+**⚠ ข้อจำกัดที่วัดได้และต้องระวังเวลาแก้ต่อ: emerald บนพื้นขาว = 2.00**
+ตกทั้งเกณฑ์ข้อความ (4.5) และกราฟิก (3.0) → **ห้ามใช้ `--color-brand` เป็นสีตัวอักษรหรือเส้นขอบบนพื้นสว่าง**
+ใช้ได้แค่ 3 แบบตามที่ spec ระบุ: **พื้นปุ่ม CTA / จุด accent / ตัวชี้สถานะเป็นครั้งคราว**
+จึงตั้ง `--color-brand-text` = ink (ไม่ใช่ emerald) และสถานะ active ทั้งหมดเป็น ink
+ตอน dark mode ใช้ `primary-soft #4ade80` ของ spec แทน (บน `#1c1c1c` = 9.78 ผ่านสบาย)
+
+**`--color-on-brand` = `#171717` ทั้งสองธีม** (ต่างจากธีม Mintlify ที่ต้องพลิกขาว↔ดำ) เพราะปุ่มเขียว
+มีอักษรเกือบดำเสมอ — ปุ่มยังต้องใช้ `color:var(--color-on-brand)` ห้ามฮาร์ดโค้ด
+
+**ยกมาตรงตาม spec (อื่นๆ)**
+| ส่วน | ค่า |
+|---|---|
+| ink | `#171717` — spec ย้ำ "near-black, never pure black" |
+| ไล่โทนอักษร | ink `#171717` → ink-secondary `#212121` → ink-mute `#707070` → ink-mute-2 `#9a9a9a` |
+| พื้น | canvas `#fff` / canvas-soft `#fafafa` / hairline-cool `#ededed` |
+| เส้น | hairline `#dfdfdf` + hairline-strong `#c7c7c7` |
+| **น้ำหนักตัวอักษร** | **มีแค่ 400 (body) กับ 500 (display/button)** — spec ไม่มี 600/700 เลย ("display weights capped at 500") → แปลง 600→500 (**111 จุด**) และ 700→500 (**32 จุด**) ทั้งสองไฟล์ |
+| ฟอนต์ | Circular เป็น proprietary — **spec แนะนำตัวแทนเอง**: "use Inter at weight 500" → ใช้ Inter ต่อจากรอบก่อน |
+| code/mono | `typography.code` เป็น **system mono stack** (ui-monospace/Menlo/Monaco/Consolas) ไม่ใช่ webfont → ตัด Geist Mono ออก **ได้ผลพลอยได้: แคบกว่า เลข PO บนการ์ดไม่ตัดบรรทัด (327 ใบ อยู่บรรทัดเดียว)** |
+| radius | 4 / 6 / 8 / 12 / 16 / pill · การ์ด 12px · ปุ่ม+อินพุต 6px |
+| เงา | spec ไม่ระบุเงาเลย ใช้ "subtle 1px hairlines" → `--shadow-card:none` เหลือเงาเฉพาะแผงลอย |
+
+**ส่วนขยาย / จุดที่เบี่ยงจาก spec (พร้อมเหตุผล)**
+1. **dark mode** — spec Known Gap: "the marketing site commits to white; the inverse mapping ...
+   isn't captured" → สร้างจากโทนเข้มที่ spec มีจริง (ใช้กับ code block / featured tier / mockup):
+   ink `#171717` เป็นพื้นล่างสุด, canvas-night `#1c1c1c` เป็นการ์ด, canvas-night-soft `#202020` เป็นพื้นรอง
+2. **สีสถานะ danger/success/warn** — spec Known Gap: "Toast and inline-alert system — semantic
+   info/success/warning/error treatments aren't represented" (และ `accent-*` ของ spec สงวนไว้ให้
+   กราฟ/โลโก้) → **คงชุดที่ผ่านเกณฑ์ contrast จากรอบก่อน ไม่คิดค่าใหม่แบบเดา**
+3. **จุดสีบอกสถานะ shipment 6 ขั้น (เทา→ฟ้า→น้ำเงิน→อำพัน→เขียว) ยังเป็นสี** — เบี่ยงจาก
+   "only chromatic event" อย่างตั้งใจ เพราะ (ก) มันเข้ารหัสสถานะงานที่ผู้ใช้อ่านจากบอร์ดด้วยสายตา
+   ไม่ใช่การตกแต่ง (ข) spec เองระบุว่า `accent-*` "reserved for chart and logo work" คือการเข้ารหัสข้อมูล
+   (ค) ถ้า remap ไปใช้ accent ของ spec จะได้ `accent-yellow #ffdb13` บนจุด 7px = contrast 1.2 มองไม่เห็น
+4. **focus ring** — spec Known Gap ("not the focus-ring color") + emerald ใช้เป็นเส้นไม่ได้ → ใช้ ink
+5. **`--color-text-muted` = ink-mute-2 `#9a9a9a` ได้ contrast 2.81** บนพื้นขาว — เป็นจุดเดียวที่ความ
+   ซื่อตรงต่อ spec แลกมาด้วย contrast ที่ต่ำลง (ธีมก่อนใช้ `#888888` = 3.54) ใช้กับ caption เล็กเท่านั้น
+   **ถ้าอ่านยากให้เปลี่ยนบรรทัดเดียว**: `--color-text-muted:#707070` (ink-mute = 4.95)
+   ส่วน `ink-faint #b2b2b2` (2.12) จงใจไม่ใช้เลย
+
+**ทดสอบแล้ว**: light/dark = 0 pageerror · น้ำหนักที่เรนเดอร์จริงเหลือ **400/500 เท่านั้น** · ปุ่ม emerald
+ทั้ง 2 ปุ่ม อักษร `rgb(23,23,23)` radius `6px` contrast **8.98** ทั้งสองธีม · เลข PO 327 ใบไม่ตัด/ไม่ถูกตัดขอบ ·
+ข้อมูลจริง 327/106 · **packer suite 42 scenario + fuzz 600 เคส = 0 violation** · endpoint หลักตอบ 200
 
 ## ยังไม่แก้ (ตั้งใจ)
 - **pinwheel / tail rotation สำหรับพาเลท** — พิสูจน์แล้วว่าได้ 9 ใบแทน 8 ในตู้ 20'GP (ดูหัวข้อด้านบน)
