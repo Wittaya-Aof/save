@@ -226,6 +226,8 @@ canvas{display:block;width:100%;background:#fff}
 .pm-card{background:var(--color-surface-muted);border:1px solid var(--color-border);border-radius:var(--radius);padding:12px 14px}
 .pm-card-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .pm-card-num{font-size:12.5px;font-weight:500;color:var(--color-brand)}
+.pm-rot{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:4px;font-size:11px;
+  font-weight:500;background:#fef3c7;color:#92400e;border:1px solid #fbbf24;cursor:help;vertical-align:1px}
 .pm-card-gw{font-size:12px;font-weight:500;color:var(--color-text)}
 .pm-card-dims{font-size:11px;color:var(--color-text-tertiary);margin-bottom:8px}
 .pm-product-row{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--color-text-secondary);margin-bottom:3px}
@@ -523,6 +525,7 @@ var I18N={
     inside_dims:'ขนาดภายใน', cont_vol:'ปริมาตรตู้', cont_cap:'รับน้ำหนัก', view3d:'มุมมอง 3D',
     col_name:'ชื่อ', col_pkg:'แพ็คเกจ', col_pcs:'จำนวนชิ้น', col_vol:'ปริมาตร (ม³)', col_wt:'น้ำหนัก (กก.)', col_total:'รวม',
     col_acrossW:'ตามกว้าง', col_alongL:'ตามยาว', col_layers:'ชั้นซ้อน',
+    pm_rot:'หันขวาง', pm_rot_hint:'พาเลทใบนี้ต้องหันขวาง 90° กับใบอื่น ถ้าวางทิศเดียวกันหมดจะใส่ไม่ครบตามแผน',
     pm_title:'รายละเอียดพาเลท', pm_pallet:'พาเลทที่', pm_dims:'ขนาด (ยาว×กว้าง×สูง มม.)', pm_gw:'G.W. (กก.)', pm_tare:'น้ำหนักพาเลท', pm_products:'สินค้า', pm_pcs:'ชิ้น',
     export_pdf:'ส่งออกเป็น PDF', copy_req:'คัดลอกคำขอ', copied:'คัดลอกคำขอแล้ว', copy_fail:'คัดลอกไม่สำเร็จ',
     export_cipl:'Export ข้อมูลสำหรับ CI/PL', cipl_exported:'ดาวน์โหลดไฟล์ข้อมูล CI/PL แล้ว — นำไฟล์นี้ไปให้ Claude เพื่อกรอกข้อมูลการค้าที่เหลือและสร้างเอกสารจริง',
@@ -577,6 +580,7 @@ var I18N={
     inside_dims:'Internal size', cont_vol:'Container volume', cont_cap:'Capacity', view3d:'3D View',
     col_name:'Name', col_pkg:'Packages', col_pcs:'Qty (PCS)', col_vol:'Volume (m³)', col_wt:'Weight (kg)', col_total:'Total',
     col_acrossW:'Across W', col_alongL:'Along L', col_layers:'Layers',
+    pm_rot:'turn 90°', pm_rot_hint:'This pallet must be turned 90° relative to the others — loading them all the same way will not fit the planned quantity',
     pm_title:'Pallet details', pm_pallet:'Pallet', pm_dims:'Dimensions (L×W×H mm)', pm_gw:'G.W. (kg)', pm_tare:'Pallet tare', pm_products:'Products', pm_pcs:'pcs',
     export_pdf:'Export PDF', copy_req:'Copy request', copied:'Request copied', copy_fail:'Copy failed',
     export_cipl:'Export CI/PL data', cipl_exported:'CI/PL data file downloaded — bring it to Claude to fill in remaining trade details and generate the actual documents',
@@ -1688,8 +1692,21 @@ function calcBox(it,c){
         // แถวพาเลทต้อง "ใส่ได้จริง" ตามความกว้างตู้ — ดูเหตุผลที่เลิกใช้ PAL_TOL ใน packLayout
         var perRow=Math.floor(c.L/d[0]), pRows=Math.floor(c.W/d[1]);
         if(perRow<1||pRows<1)return;
+        // กล่องต่อพาเลท 1 ใบ ในทิศพาเลทนี้ (บนพาเลทที่ยาว d[0] กว้าง d[1])
         var bpp=Math.floor(d[0]/bL)*Math.floor(d[1]/bW)*nz;
-        if(perRow*pRows*bpp>bestP)bestP=perRow*pRows*bpp;
+        // ── B) ตำแหน่งพาเลทที่ท้ายตู้ วางสลับทิศ ──
+        // grid ทิศเดียวมักเหลือที่ท้ายตู้ที่สั้นกว่าด้านยาวของพาเลท แต่ยาวพอสำหรับด้านสั้น
+        // วัดจริง: 20'GP + พาเลท 1200×1000 grid ได้ 8 ใบ เหลือท้าย 1,095mm วางสลับทิศได้อีก 1 ใบ = 9
+        // ได้เพิ่ม 7 จาก 30 คู่ (ตู้ × พาเลท): 20'GP ทั้ง 3 preset · T18W+us · T10W+euro · T6WL+standard/euro
+        // 40'HC ไม่ได้เพราะท้ายเหลือแค่ 2-192mm — ดูตารางเต็มที่ tests/pack-capacity.mjs
+        // พาเลทที่หันขวางมีด้านยาว/กว้างสลับกัน จำนวนกล่องต่อใบจึงต่างจาก grid ต้องคิดแยก (bppT)
+        var tail=c.L-perRow*d[0], extra=0, bppT=0;
+        if(rotH&&tail>=d[1]&&d[0]<=c.W){
+          extra=Math.floor(c.W/d[0]);
+          bppT=Math.floor(d[1]/bL)*Math.floor(d[0]/bW)*nz;
+        }
+        var total=perRow*pRows*bpp+extra*bppT;
+        if(total>bestP)bestP=total;
       });
       n=bestP;
     }else{
@@ -1860,7 +1877,7 @@ function renderResults(results){
           <div class="pm-grid">
             ${manifest.map(pm=>`<div class="pm-card">
               <div class="pm-card-hdr">
-                <span class="pm-card-num">${t('pm_pallet')} ${pm.palIdx}</span>
+                <span class="pm-card-num">${t('pm_pallet')} ${pm.palIdx}${pm.rot?` <span class="pm-rot" title="${t('pm_rot_hint')}">↻ ${t('pm_rot')}</span>`:''}</span>
                 <span class="pm-card-gw">G.W. ${pm.gw.toFixed(2)} ${t('unit_kg')}</span>
               </div>
               <div class="pm-card-dims">${pm.L}×${pm.W}×${pm.H} ${t('unit_mm')} &nbsp;|&nbsp; ${t('pm_tare')}: ${pm.tare.toFixed(2)} ${t('unit_kg')}</div>
@@ -2348,12 +2365,56 @@ function packLayout(result){
     // พาเลทเปล่ายังไม่พ้นความสูงตู้ (เช่น กระบะสูง 500mm) → วางบนพาเลทไม่ได้เลย ไม่ต้องสร้างพาเลท
     if(cfg&&availH<=0)cfg=null;
     if(cfg){
-      var along=cfg.along, across=cfg.across, pRows=cfg.rows, maxPallets=cfg.n;
+      var along=cfg.along, across=cfg.across, pRows=cfg.rows;
       // row Y positions: แถวแรกชิดผนังด้านหนึ่ง แถวสุดท้ายชิดผนังอีกด้าน ที่เหลือกระจายเท่ากัน
       // (ตอนนี้ปลอดภัยแล้วเพราะ pRows*across <= c.W รับประกันว่าไม่ทับกัน)
       var rowY=function(row){ return pRows>1 ? Math.round(row*(c.W-across)/(pRows-1)) : 0; };
 
-      function makePal(){ return {sky:[{x0:0,x1:along,z:0}],places:[],counts:{}}; }
+      // ── slot = ตำแหน่งพาเลท 1 ใบ พร้อม "เรขาคณิตของตัวเอง" ──
+      // เดิม along/across เป็นค่าเดียวกันทุกใบทั้งโซน แต่ข้อ B ทำให้ใบท้ายตู้หันขวาง (along/across สลับกัน)
+      // จึงต้องผูกขนาดไว้กับ slot แต่ละอัน แล้วให้ตัว pallet พา along/across ของตัวเองไปด้วย
+      var slots=[];
+      for(var _col=0;_col<cfg.perRow;_col++)for(var _row=0;_row<pRows;_row++)
+        slots.push({x:offsetX+_col*along,y:rowY(_row),along:along,across:across,rot:false});
+      // ── B) เติม slot ที่ท้ายตู้ด้วยพาเลทที่หันขวาง ──
+      var _usedLen=cfg.perRow*along, _tail=(c.L-offsetX)-_usedLen;
+      // พาเลทที่หันขวางทำให้ด้านกล่องที่เคยหันตามความยาวตู้ ไปหันตามความกว้างตู้แทน
+      // = การสลับ L↔W บนพื้น "เทียบกับตู้" ซึ่งคือสิ่งที่ธง rotH คุมอยู่ (ดู allPerms {p:[1,0,2],req:['rotH']})
+      // ถ้ามี SKU ไหนในกลุ่มห้ามหมุน ไม่เปิด slot ท้ายตู้ให้ทั้งกลุ่ม — เลือกทางที่รายงานต่ำกว่าเสมอ
+      var _rotOK=palItems.every(function(P){ return P.it.rotH!==false; });
+      if(_rotOK&&_tail>=across&&along<=c.W){
+        var _tRows=Math.floor(c.W/along);
+        var _tRowY=function(r){ return _tRows>1 ? Math.round(r*(c.W-along)/(_tRows-1)) : 0; };
+        for(var _tr=0;_tr<_tRows;_tr++)
+          slots.push({x:offsetX+_usedLen,y:_tRowY(_tr),along:across,across:along,rot:true});
+      }
+
+      function makePal(slot){ return {sky:[{x0:0,x1:slot.along,z:0}],places:[],counts:{},slot:slot,along:slot.along,across:slot.across,_bo:{}}; }
+      // ── A) เลือกทิศกล่องให้เหมาะกับ "พาเลท" ไม่ใช่ "ตู้" ──
+      // calcBox เลือกทิศกล่องโดยให้คะแนนจากการวางในตู้ แล้วเดิม packLayout เอาทิศนั้นมาวางบนพาเลทตรงๆ
+      // ทั้งที่สัดส่วนพาเลทต่างจากตู้ · หมุนได้เฉพาะเมื่อผู้ใช้อนุญาต rotH (สลับ L↔W บนพื้น)
+      // bH ไม่เปลี่ยน เพราะหมุนรอบแกนตั้ง จึงคืนแค่ {bL,bW} — ห้ามอ่าน .bH จากค่าที่คืน
+      //
+      // ⚠ ตอน qty สูง ฟังก์ชันนี้ "ไม่ทำอะไรเลย" — calcBox วน allPerms ทั้ง 6 แบบ (รวม {p:[1,0,2]}
+      // ที่สลับ L↔W) แล้วเก็บค่าสูงสุด ทิศที่ส่งมาจึงดีที่สุดสำหรับพาเลทอยู่แล้ว
+      // (ยืนยันด้วยการถอดออกเทียบ: qty สูง 300/300 เคสผลเหมือนกันเป๊ะ)
+      //
+      // ที่มันมีค่าคือ **ตอน qty ต่ำ** — ของไม่เต็มตู้ dispO เลือก "ทิศตามที่กรอก" ซึ่งอาจไม่เหมาะกับพาเลท
+      // วัดจริง (sweep 300 เคส qty 10-70): ใช้พาเลทน้อยลง 46 เคส · แย่ลง 0 เคส
+      // พาเลทน้อยลง = ค่าพาเลท+ฟิล์มพันหุ้ม+ค่าแรงยกน้อยลง แม้ความจุตู้ไม่เพิ่ม
+      function palBox(P,pAlong,pAcross){
+        var a={bL:P.bL,bW:P.bW};
+        if(P.it.rotH===false)return a;
+        var b={bL:P.bW,bW:P.bL};
+        var na=(a.bW<=pAcross)?Math.floor(pAlong/a.bL)*Math.floor(pAcross/a.bW):0;
+        var nb=(b.bW<=pAcross)?Math.floor(pAlong/b.bL)*Math.floor(pAcross/b.bW):0;
+        return nb>na?b:a;
+      }
+      // cache ต่อ (พาเลท, SKU) — ทิศต้องคงที่ภายในพาเลทใบเดียว ไม่งั้นกองจะสลับทิศมั่วในใบเดียว
+      function palBoxFor(pal,P){
+        if(!pal._bo[P.idx])pal._bo[P.idx]=palBox(P,pal.along,pal.across);
+        return pal._bo[P.idx];
+      }
       function palTop(pal){ var t=0; pal.places.forEach(function(q){ if(q.z0+q.H>t)t=q.z0+q.H; }); return t; }
       function palAddCount(pal,P,n){
         if(!pal.counts[P.idx])pal.counts[P.idx]={P:P,placed:0};
@@ -2395,8 +2456,8 @@ function packLayout(result){
       // CURRENT pallet and lets the first-fitting active SKU (priority = array order)
       // claim it immediately — a segment only gets skipped when NOTHING fits it right
       // now, and a new pallet only opens when NOTHING fits ANYWHERE in the current one.
-      function fillPalletsGreedy(pallets,actives,maxCount,capOf){
-        if(!pallets.length)pallets.push(makePal());
+      function fillPalletsGreedy(pallets,actives,slotList,capOf){
+        if(!pallets.length)pallets.push(makePal(slotList[0]));
         var guard=0;
         while(actives.some(function(a){return a.remaining>0;})&&guard++<200000){
           var cur=pallets[pallets.length-1];
@@ -2406,9 +2467,10 @@ function packLayout(result){
           var openA=null;
           for(i=0;i<actives.length;i++){ if(actives[i].remaining>0&&actives[i].openCol){ openA=actives[i]; break; } }
           if(openA){
-            var oc=openA.openCol, bW=openA.P.bW, nWp=Math.max(1,Math.floor(across/bW));
+            // ทิศกล่องต้องอ่านจากพาเลทที่คอลัมน์นั้นอยู่ (oc.pal) ไม่ใช่พาเลทปัจจุบัน — อาจต่างใบกันได้
+            var oc=openA.openCol, ob=palBoxFor(oc.pal,openA.P), bW=ob.bW, nWp=Math.max(1,Math.floor(oc.pal.across/bW));
             var fill=Math.min(openA.remaining,nWp-oc.cy);
-            oc.pal.places.push({idx:openA.P.idx,color:openA.P.it.color,x0:oc.x,y0:oc.cy*bW,z0:oc.z,L:openA.P.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
+            oc.pal.places.push({idx:openA.P.idx,color:openA.P.it.color,x0:oc.x,y0:oc.cy*bW,z0:oc.z,L:ob.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
             oc.cy+=fill; openA.remaining-=fill; openA.placedHere+=fill; palAddCount(oc.pal,openA.P,fill);
             openA.zSeen[(pallets.indexOf(oc.pal))+':'+oc.z]=1;
             if(oc.cy>=nWp)openA.openCol=null;
@@ -2422,10 +2484,11 @@ function packLayout(result){
             for(i=0;i<actives.length;i++){
               var c2=actives[i];
               if(c2.remaining<=0)continue;
-              if(seg.x1-seg.x0<c2.P.bL)continue;
+              var c2b=palBoxFor(cur,c2.P);
+              if(seg.x1-seg.x0<c2b.bL)continue;
               // กล่องต้องวางตามความกว้างพาเลท (across) ได้อย่างน้อย 1 ใบ ไม่งั้นจะล้นออกนอกพาเลท
               // — nWp ด้านล่างใช้ Math.max(1,…) ซึ่งจะบังคับวาง 1 ใบแม้กล่องกว้างเกิน จึงต้องกันที่นี่
-              if(c2.P.bW>across)continue;
+              if(c2b.bW>cur.across)continue;
               if(seg.z+c2.P.bH>capOf(pallets.length-1))continue;
               // เพดานจำนวนชั้นต่อ SKU (P.nH = min(ชั้นที่ความสูงรับได้, maxLayers ที่ผู้ใช้ตั้ง))
               // เดิม pallet packer ไม่เช็คข้อนี้เลย มีแต่เพดานความสูง (capOf) → ผู้ใช้ตั้ง "ซ้อนไม่เกิน 2 ชั้น"
@@ -2447,17 +2510,19 @@ function packLayout(result){
                   if(cj.remaining<=0)continue;
                   // ต้องเช็คเพดานชั้นด้วยเงื่อนไขเดียวกับตอนเลือกจริงด้านบน ไม่งั้นจะตอบว่า "ยังวางได้"
                   // ทั้งที่ติดเพดาน maxLayers แล้ว → วนซ้ำมาร์ค segment ตายไปเรื่อยๆ โดยไม่เปิดพาเลทใหม่
-                  if(s.x1-s.x0>=cj.P.bL&&cj.P.bW<=across&&s.z+cj.P.bH<=capOf(pallets.length-1)
+                  var cjb=palBoxFor(cur,cj.P);
+                  if(s.x1-s.x0>=cjb.bL&&cjb.bW<=cur.across&&s.z+cj.P.bH<=capOf(pallets.length-1)
                      &&palLayersUsed(cj,pallets.length-1,s.z)<cj.P.nH){ fitsSomewhere=true; break; }
                 }
               }
             }
             if(fitsSomewhere){ seg.z=1e15; continue; }   // dead segment only -- try the next lowest
-            if(pallets.length>=maxCount)break;             // no room anywhere, no pallets left to open
-            pallets.push(makePal());
+            if(pallets.length>=slotList.length)break;      // no room anywhere, no slots left to open
+            pallets.push(makePal(slotList[pallets.length]));
             continue;
           }
-          var bL=a.P.bL,bW=a.P.bW,bH=a.P.bH,nWp=Math.max(1,Math.floor(across/bW));
+          var ab=palBoxFor(cur,a.P);
+          var bL=ab.bL,bW=ab.bW,bH=a.P.bH,nWp=Math.max(1,Math.floor(cur.across/bW));
           var colsFit=Math.floor((seg.x1-seg.x0)/bL);
           var take=Math.min(a.remaining,colsFit*nWp);
           var fullCols=Math.floor(take/nWp), lastCol=take-fullCols*nWp;
@@ -2476,9 +2541,11 @@ function packLayout(result){
 
       var pallets=[];
       var actives=palItems.map(function(P){ return {P:P,remaining:P.placed,placedHere:0,openCol:null,zSeen:{}}; });
-      fillPalletsGreedy(pallets,actives,maxPallets,function(){ return availH; });
+      fillPalletsGreedy(pallets,actives,slots,function(){ return availH; });
       actives.forEach(function(a){
-        stats[a.P.idx]={across:Math.max(1,Math.floor(across/a.P.bW)),along:Math.max(1,Math.floor(along/a.P.bL)),
+        // รายงานกริดของพาเลทแบบ grid (ใบส่วนใหญ่) ด้วยทิศกล่องที่เลือกให้พาเลทจริง
+        var gb=palBox(a.P,along,across);
+        stats[a.P.idx]={across:Math.max(1,Math.floor(across/gb.bW)),along:Math.max(1,Math.floor(along/gb.bL)),
           layers:Object.keys(a.zSeen).length,placed:a.placedHere};
       });
       pallets=pallets.filter(function(pal){ return pal.places.length>0; });
@@ -2488,7 +2555,11 @@ function packLayout(result){
       // 1-layer pallet is unstable and wastes wrapping/handling).
       if(pallets.length>=2){
         var hPrev=palTop(pallets[pallets.length-2]), hLast=palTop(pallets[pallets.length-1]);
-        if(hLast<hPrev*0.7){
+        // ห้าม rebalance ถ้าสองใบนั้นเรขาคณิตไม่เหมือนกัน (ใบท้ายตู้หันขวางตามข้อ B)
+        // การเกลี่ยของข้ามพาเลทที่ยาว/กว้างต่างกันทำให้เป้าความสูงกับความจุคนละฐาน
+        var _geoSame=pallets[pallets.length-1].along===pallets[pallets.length-2].along
+                   &&pallets[pallets.length-1].across===pallets[pallets.length-2].across;
+        if(hLast<hPrev*0.7&&_geoSame){
           var B=pallets.pop(), A=pallets.pop();
           var combo=[];
           palItems.forEach(function(P){
@@ -2498,13 +2569,14 @@ function packLayout(result){
           });
           var totH=0;
           combo.forEach(function(e){
-            var cap=Math.floor(along/e.P.bL)*Math.floor(across/e.P.bW);
+            var eb=palBox(e.P,A.along,A.across);
+            var cap=Math.floor(A.along/eb.bL)*Math.floor(A.across/eb.bW);
             if(cap>0)totH+=Math.ceil(e.count/cap)*e.P.bH;
           });
           var targetH=Math.min(availH,Math.ceil(totH/2));
           var two=[];
           var actives2=combo.map(function(e){ return {P:e.P,remaining:e.count,placedHere:0,openCol:null,zSeen:{}}; });
-          fillPalletsGreedy(two,actives2,2,function(i){ return i===0?targetH:availH; });
+          fillPalletsGreedy(two,actives2,[A.slot,B.slot],function(i){ return i===0?targetH:availH; });
           var ok=actives2.every(function(a,idx){ return a.placedHere>=combo[idx].count; });
           two=two.filter(function(pal){ return pal.places.length>0; });
           if(ok&&two.length<=2){ pallets=pallets.concat(two); }
@@ -2522,7 +2594,7 @@ function packLayout(result){
         entries.sort(function(a,b){ return b.placed-a.placed; });
         var re=[];
         var actives3=entries.map(function(e){ return {P:e.P,remaining:e.placed,placedHere:0,openCol:null,zSeen:{}}; });
-        fillPalletsGreedy(re,actives3,1,function(){ return availH; });
+        fillPalletsGreedy(re,actives3,[pal.slot],function(){ return availH; });
         var ok2=actives3.every(function(a,idx){ return a.placedHere>=entries[idx].placed; });
         return (ok2&&re.length===1)?re[0]:pal;   // keep original order if re-pack doesn't fit
       });
@@ -2544,25 +2616,31 @@ function packLayout(result){
       });
       palItems.forEach(function(P){ if(stats[P.idx])stats[P.idx].layers=layersPerSku[P.idx]||0; });
 
-      // Generate 3D blocks + a wireframe outline per pallet. Position pi fills
-      // across the width first (row), then advances along the length (col).
+      // Generate 3D blocks + a wireframe outline per pallet.
+      // พิกัด+ขนาดมาจาก slot ของใบนั้นเอง — เดิมคำนวณจาก col=floor(pi/pRows), row=pi%pRows
+      // ซึ่งใช้ได้เฉพาะกริดทิศเดียว · ข้อ B ทำให้ใบท้ายตู้มี along/across สลับกันและอยู่คนละแถว
+      // (ลำดับการเติมยังเป็น "ตามความกว้างก่อน แล้วขยับตามความยาว" ตามลำดับที่สร้าง slots ไว้)
       var palFrames=[];
       pallets.forEach(function(pal,pi){
-        var col=Math.floor(pi/pRows), row=pi%pRows;
-        var palX=offsetX+col*along, palY=rowY(row), topZ=0;
+        var palX=pal.slot.x, palY=pal.slot.y, topZ=0;
         pal.places.forEach(function(q){ if(q.z0+q.H>topZ)topZ=q.z0+q.H; });
         pal.topZ=topZ;
-        blocks.push({x0:palX,y0:palY,z0:0,L:along,W:across,H:palD0,
+        blocks.push({x0:palX,y0:palY,z0:0,L:pal.along,W:pal.across,H:palD0,
           nL:1,nW:1,nH:1,color:palItems[0].palColor,isPallet:true});
         pal.places.forEach(function(q){
           blocks.push({x0:palX+q.x0,y0:palY+q.y0,z0:palD0+q.z0,L:q.L,W:q.W,H:q.H,
             nL:q.nL,nW:q.nW,nH:1,color:q.color});
         });
-        palFrames.push({x0:palX,y0:palY,L:along,W:across,H:palD0+topZ,num:palNumBase+pi+1});
+        // rot = ใบนี้ต้องหันขวางกับใบอื่น ต้องบอกคนโหลด ไม่งั้นวางทิศเดียวหมดแล้วไม่ได้จำนวนตามแผน
+        palFrames.push({x0:palX,y0:palY,L:pal.along,W:pal.across,H:palD0+topZ,
+          num:palNumBase+pi+1,rot:!!pal.slot.rot});
       });
       palFramesAll=palFramesAll.concat(palFrames);
 
-      offsetX+=Math.ceil(pallets.length/pRows)*along;
+      // โซนถัดไปเริ่มหลังขอบขวาสุดที่ใช้จริง (รวม slot ที่ท้ายตู้ด้วย)
+      var _right=offsetX;
+      pallets.forEach(function(pal){ if(pal.slot.x+pal.along>_right)_right=pal.slot.x+pal.along; });
+      offsetX=_right;
 
       // Build pallet manifest for display in results (one entry per physical pallet)
       palManifestAll=palManifestAll.concat(pallets.map(function(pal,pi){
@@ -2572,7 +2650,8 @@ function packLayout(result){
           products.push({idx:e.P.idx,name:e.P.it.name,color:e.P.it.color,placed:e.placed,
             pcs:e.placed*(e.P.it.pcsPerCtn||1),wt:wt});
         });
-        return{palIdx:palNumBase+pi+1,L:along,W:across,H:palD0+pal.topZ,tare:palTare,gw:gw,products:products};
+        return{palIdx:palNumBase+pi+1,L:pal.along,W:pal.across,H:palD0+pal.topZ,tare:palTare,gw:gw,
+          products:products,rot:!!pal.slot.rot};
       }));
       palNumBase+=pallets.length;
     }
@@ -2736,16 +2815,19 @@ function drawPalletFrames(ctx,result,st){
     edges.forEach(function(e){ctx.beginPath();ctx.moveTo(v[e[0]].sx,v[e[0]].sy);ctx.lineTo(v[e[1]].sx,v[e[1]].sy);ctx.stroke();});
     ctx.setLineDash([]);
     // pallet number badge above the front-top edge
+    // ใบที่ fr.rot=true ต้องหันขวาง 90° กับใบอื่น — ทำป้ายสี amber + สัญลักษณ์ ↻ ให้เห็นชัด
+    // ถ้าคนโหลดวางทิศเดียวกันหมดตามความเคยชิน จะใส่ไม่ครบตามจำนวนที่แผนคำนวณไว้
     var lp=P(fr.x0+fr.L/2, fr.y0, z1);
+    var lbl='P'+fr.num+(fr.rot?' ↻':'');
     ctx.font='bold 13px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-    var tw=ctx.measureText('P'+fr.num).width;
-    ctx.fillStyle='#5d3a23';
+    var tw=ctx.measureText(lbl).width;
+    ctx.fillStyle=fr.rot?'#b45309':'#5d3a23';
     ctx.beginPath();
     if(ctx.roundRect)ctx.roundRect(lp.sx-tw/2-6,lp.sy-22,tw+12,17,4);
     else ctx.rect(lp.sx-tw/2-6,lp.sy-22,tw+12,17);
     ctx.fill();
     ctx.fillStyle='#fff';
-    ctx.fillText('P'+fr.num, lp.sx, lp.sy-13);
+    ctx.fillText(lbl, lp.sx, lp.sy-13);
   });
   ctx.textAlign='start';ctx.textBaseline='alphabetic';
 }
