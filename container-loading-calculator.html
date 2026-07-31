@@ -1231,9 +1231,13 @@ var PALLET_PRESETS=[
   {key:'custom',   th:'พาเลทกำหนดเอง',           en:'Custom pallet',           L:1200,W:800},
 ];
 var PALLET_PRESET={presetKey:'standard',L:1200,W:1000,H:2000,D:150,maxW:1500,tare:5.2,color:'#8d6e63'};
-// Width squeeze allowance for pallet fitting (mm) — real-world loaders accept
-// 2×1200mm pallets across a 2350mm container (20'GP standard practice = 10 pallets).
-var PAL_TOL=60;
+// หมายเหตุ (เดิมมีค่า PAL_TOL=60 อยู่ตรงนี้ — ถูกถอดออกแล้ว):
+// เจตนาเดิมคืออ้างตัวเลขหน้างานว่า "20'GP ใส่พาเลทได้ 10 ใบ" แล้วบวก tolerance 60mm เข้ากับความกว้างตู้
+// เพื่อให้สูตร grid คำนวณได้ 10 — แต่ตัวเลข 9-10 ใบของจริงมาจากการวางแบบ "สลับทิศ (pinwheel)" ไม่ใช่
+// grid ทิศเดียว การบวก tolerance จึงไม่ได้ทำให้พาเลทใส่ได้จริง แค่ทำให้ระบบเชื่อว่าใส่ได้แล้ววาดทับกัน
+// (ตู้ 20'GP กว้าง 2350mm พาเลท 1200mm สองแถวต้องใช้ 2400mm) ตอนนี้คำนวณตามที่ใส่ได้จริงด้วย grid
+// ทิศเดียว = 8 ใบ (1200 ตามยาว 4 ช่อง × 1000 ตามกว้าง 2 แถว) ถ้าต้องการ 9-10 ใบต้องเขียน pinwheel
+// packer เพิ่ม (วางบางใบสลับทิศในช่องท้ายตู้) ซึ่งเป็นฟีเจอร์ใหม่ ไม่ใช่การแก้บั๊ก
 function togglePallet(gid){
   var g=groups.find(g=>g.id===gid); if(!g)return;
   g.usePallet=!g.usePallet;
@@ -1660,10 +1664,11 @@ function calcBox(it,c){
     var n;
     if(it.usePallet&&it.pallet){
       // Capacity = pallet positions in container × boxes per pallet.
-      // Try both pallet orientations; PAL_TOL allows the real-world width squeeze.
+      // Try both pallet orientations.
       var pL=it.pallet.L||1200, pW=it.pallet.W||1000, bestP=0;
       [[pL,pW],[pW,pL]].forEach(function(d){
-        var perRow=Math.floor(c.L/d[0]), pRows=Math.floor((c.W+PAL_TOL)/d[1]);
+        // แถวพาเลทต้อง "ใส่ได้จริง" ตามความกว้างตู้ — ดูเหตุผลที่เลิกใช้ PAL_TOL ใน packLayout
+        var perRow=Math.floor(c.L/d[0]), pRows=Math.floor(c.W/d[1]);
         if(perRow<1||pRows<1)return;
         var bpp=Math.floor(d[0]/bL)*Math.floor(d[1]/bW)*nz;
         if(perRow*pRows*bpp>bestP)bestP=perRow*pRows*bpp;
@@ -2278,19 +2283,29 @@ function packLayout(result){
     var palMaxH=pal0.H||2000, palTare=pal0.tare||5.2;
     var availH=palMaxH-palD0;
 
-    // Pick the pallet orientation that fits the most positions in the container
-    // (with PAL_TOL width squeeze). 20'GP + 1200×1000 → 1000-side along the length:
-    // 2 rows × 5 per row = 10 positions. Placement is capped at this count — anything
-    // beyond it is reported as NOT loaded (partial), never drawn outside the container.
+    // Pick the pallet orientation that fits the most positions in the container.
+    // Placement is capped at this count — anything beyond it is reported as NOT loaded
+    // (partial), never drawn outside the container.
+    //
+    // ⚠ pRows ต้องใช้ floor(c.W / across) ตรงๆ ห้ามบวก tolerance เข้าไปในความกว้าง
+    // เดิมเป็น floor((c.W + PAL_TOL) / across) โดยตั้งใจให้เผื่อ "การอัดพาเลทให้ชิดกันแบบหน้างาน"
+    // แต่ผลที่ได้คือระบบเชื่อว่าใส่ได้ 2 แถวในกรณีที่ใส่ไม่ได้จริง แล้ว rowY() ก็ดันแถวแรกชิดผนัง
+    // ด้านหนึ่งและแถวสุดท้ายชิดผนังอีกด้าน → พาเลทสองแถว "ทับกันเอง" ในเชิงเรขาคณิต
+    // ตัวอย่างจริง: ตู้ 20'GP กว้าง 2350mm กับพาเลท 1200mm สองแถว = ต้องใช้ 2400mm เกินมา 50mm
+    // ทำให้ deck ทับกัน 1000×50mm ทุกคู่แถว และกล่องบนพาเลทคนละแถวทะลุกัน 37 คู่ (วัดจริงแล้ว)
+    // — นี่คือสาเหตุที่ภาพ 3D ดู "แปลก" ตรงพาเลท ทั้งที่การจัดเรียงกล่อง *ภายใน* พาเลทถูกต้องหมด
+    // (ตรวจแล้วซ้อนกันภายในพาเลทเดียวกัน 0 คู่) tolerance แบบนี้ไม่มีทางถูก เพราะมันจะ "ช่วย" ก็
+    // ต่อเมื่อพาเลทใส่ไม่ได้จริงเท่านั้น (ถ้าใส่ได้จริงก็ไม่ต้องพึ่ง tolerance อยู่แล้ว) จึงตัดออก
     var cfg=null;
     [[pL0,pW0],[pW0,pL0]].forEach(function(d){
-      var perRow=Math.floor(c.L/d[0]), pRows=Math.floor((c.W+PAL_TOL)/d[1]);
+      var perRow=Math.floor(c.L/d[0]), pRows=Math.floor(c.W/d[1]);
       if(perRow<1||pRows<1)return;
       if(!cfg||perRow*pRows>cfg.n)cfg={along:d[0],across:d[1],perRow:perRow,rows:pRows,n:perRow*pRows};
     });
     if(cfg){
       var along=cfg.along, across=cfg.across, pRows=cfg.rows, maxPallets=cfg.n;
-      // row Y positions: first row hugs y=0, last row hugs the far wall (absorbs PAL_TOL)
+      // row Y positions: แถวแรกชิดผนังด้านหนึ่ง แถวสุดท้ายชิดผนังอีกด้าน ที่เหลือกระจายเท่ากัน
+      // (ตอนนี้ปลอดภัยแล้วเพราะ pRows*across <= c.W รับประกันว่าไม่ทับกัน)
       var rowY=function(row){ return pRows>1 ? Math.round(row*(c.W-across)/(pRows-1)) : 0; };
 
       function makePal(){ return {sky:[{x0:0,x1:along,z:0}],places:[],counts:{}}; }
@@ -2339,7 +2354,7 @@ function packLayout(result){
           if(openA){
             var oc=openA.openCol, bW=openA.P.bW, nWp=Math.max(1,Math.floor(across/bW));
             var fill=Math.min(openA.remaining,nWp-oc.cy);
-            oc.pal.places.push({color:openA.P.it.color,x0:oc.x,y0:oc.cy*bW,z0:oc.z,L:openA.P.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
+            oc.pal.places.push({idx:openA.P.idx,color:openA.P.it.color,x0:oc.x,y0:oc.cy*bW,z0:oc.z,L:openA.P.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
             oc.cy+=fill; openA.remaining-=fill; openA.placedHere+=fill; palAddCount(oc.pal,openA.P,fill);
             openA.zSeen[(pallets.indexOf(oc.pal))+':'+oc.z]=1;
             if(oc.cy>=nWp)openA.openCol=null;
@@ -2381,10 +2396,10 @@ function packLayout(result){
           var colsFit=Math.floor((seg.x1-seg.x0)/bL);
           var take=Math.min(a.remaining,colsFit*nWp);
           var fullCols=Math.floor(take/nWp), lastCol=take-fullCols*nWp;
-          if(fullCols>0)cur.places.push({color:a.P.it.color,x0:seg.x0,y0:0,z0:seg.z,L:fullCols*bL,W:nWp*bW,H:bH,nL:fullCols,nW:nWp});
+          if(fullCols>0)cur.places.push({idx:a.P.idx,color:a.P.it.color,x0:seg.x0,y0:0,z0:seg.z,L:fullCols*bL,W:nWp*bW,H:bH,nL:fullCols,nW:nWp});
           var xEnd=seg.x0+fullCols*bL;
           if(lastCol>0){
-            cur.places.push({color:a.P.it.color,x0:xEnd,y0:0,z0:seg.z,L:bL,W:lastCol*bW,H:bH,nL:1,nW:lastCol});
+            cur.places.push({idx:a.P.idx,color:a.P.it.color,x0:xEnd,y0:0,z0:seg.z,L:bL,W:lastCol*bW,H:bH,nL:1,nW:lastCol});
             a.openCol={pal:cur,x:xEnd,z:seg.z,cy:lastCol};
             xEnd+=bL;
           }
@@ -2446,6 +2461,23 @@ function packLayout(result){
         var ok2=actives3.every(function(a,idx){ return a.placedHere>=entries[idx].placed; });
         return (ok2&&re.length===1)?re[0]:pal;   // keep original order if re-pack doesn't fit
       });
+
+      // ── คอลัมน์ "ชั้น" ต่อ SKU: นับจำนวนชั้นบนพาเลท "หนึ่งใบ" (มากสุดที่ SKU นั้นวางได้)
+      // คำนวณจาก layout สุดท้ายหลัง rebalance/re-pack เสร็จแล้ว ไม่ใช่จากรอบแรก
+      // เดิมใช้ Object.keys(a.zSeen).length โดยที่ key เป็น "<พาเลทที่>:<z>" → ได้ค่า
+      // "จำนวนชั้น × จำนวนพาเลท" (เช่น 7 ชั้นบน 7 พาเลท ได้ 50) แล้วเอาไปแสดงในตารางผลลัพธ์ตรงๆ
+      // ผู้ใช้จึงเห็น "50 ชั้น" ทั้งที่ความสูงพาเลทจำกัดให้ซ้อนได้จริงแค่ 7 ชั้น
+      // (ฝั่ง std ไม่มีปัญหานี้เพราะ key เป็น z เปล่าๆ — ดู a.zSeen[seg.z]=1 ในส่วน std)
+      var layersPerSku={};
+      pallets.forEach(function(pal){
+        var byIdx={};
+        pal.places.forEach(function(q){ if(q.idx==null)return; (byIdx[q.idx]=byIdx[q.idx]||{})[q.z0]=1; });
+        Object.keys(byIdx).forEach(function(k){
+          var n=Object.keys(byIdx[k]).length;
+          if(!layersPerSku[k]||n>layersPerSku[k])layersPerSku[k]=n;
+        });
+      });
+      palItems.forEach(function(P){ if(stats[P.idx])stats[P.idx].layers=layersPerSku[P.idx]||0; });
 
       // Generate 3D blocks + a wireframe outline per pallet. Position pi fills
       // across the width first (row), then advances along the length (col).
