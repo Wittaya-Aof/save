@@ -192,7 +192,8 @@ node tests/pack-fuzz.mjs 3000       # สุ่ม 3000 เคส (มี seed �
 ยืนยันภาพ 3D: โซนพาเลทใหญ่ (deck 150mm) → โซนพาเลทเล็ก (deck 100mm, 3 แถว) → ของไม่ขึ้นพาเลท
 แยกกันชัด ไม่ทับกัน และ manifest รายงานขนาด/tare ตรงตามที่ตั้งไว้จริงทั้งสองสเปค
 
-## ธีม UI ใหม่ตาม Mural design system (2026-07-31 รอบ 3)
+## ธีม UI รอบก่อน: Mural design system (2026-07-31 รอบ 3 — **ถูกทับด้วย Mintlify แล้ว**)
+เก็บไว้เป็นบันทึกเหตุผล/บทเรียน ถ้าจะย้อนกลับใช้ `backups/*.pre-mintlify.html`
 ปรับใช้ `C:/Users/User/Projects/mural.design.md` (DESIGN.md ของ Mural จาก shadcn.io)
 แก้ที่ **design token ที่ `:root` จุดเดียว** ทั้งแอปหลักและ calculator จึงเปลี่ยนยกทั้งระบบ
 backup ก่อนเปลี่ยน: `backups/*.pre-mural.html`
@@ -242,6 +243,65 @@ fuzz 800 เคส = 0 violation** (ยืนยันว่า restyle ไม�
 **แก้พ่วงไปด้วย**: แถบเตือน "ข้อมูลตัวอย่าง" เดิมผูกกับ `dataSource==='sample'` แต่ `allShipments()` คืน
 ข้อมูลตัวอย่างทุกครั้งที่ `shipments` ยังไม่ใช่ array **รวมถึงช่วง `loading`** (รอ MCP bridge หลายวินาที)
 ซึ่งเดิมโชว์ตัวเลขปลอมโดยไม่มีอะไรเตือน → เปลี่ยนเงื่อนไขเป็น `!Array.isArray(shipments)` + ข้อความแยก 2 กรณี
+
+## ธีม UI ปัจจุบัน: Mintlify design system (2026-07-31 รอบ 4 — ทับธีม Mural)
+ปรับใช้ `C:/Users/User/Projects/mintlify.design.md` แทนธีม Mural ของรอบก่อน
+backup ก่อนเปลี่ยน: `backups/*.pre-mintlify.html` (ธีม Mural อยู่ใน `backups/*.pre-mural.html`)
+
+**ทำไมเข้ากับแอปนี้ดีกว่า Mural:** Mintlify เป็น "dual-mode" — มีทั้งโหมด marketing และ
+**documentation tier** (sidebar 240px / prose 720px / TOC 200px, body 14px line-height 1.50,
+sidebar nav 8px rhythm) ซึ่งเป็นโครงเดียวกับ dashboard นี้อยู่แล้ว จึงไม่ต้องดัดแปลงมากเท่ารอบก่อน
+ที่ต้องย่อ hero serif 80px ลงมา 3 เท่า
+
+**ยกมาตรงตาม spec**
+| ส่วน | ค่า |
+|---|---|
+| primary action | **ดำ `#0a0a0a`** + อักษรขาว + pill (`components.button-primary`) |
+| accent | mint `#00d4a4` ใช้ประหยัดมากตามที่ spec ย้ำ ("never on body text", "even one mint accent per viewport carries weight") → เฉพาะ **จุดสถานะเชื่อมต่อ + วงโฟกัส input** (`text-input-focused` = 2px mint) |
+| active state | ink ทั้งหมด (`segmented-tab-active` border+text = ink, `pill-tab-active` bg = primary) |
+| ตัวอักษร | **Inter** ทุก UI prose + **Geist Mono** เฉพาะรหัส (ทั้งคู่มีบน Google Fonts จริง ตรวจแล้ว) |
+| body | Inter **400** / 14px / line-height **1.50** · display Inter **600** tracking ติดลบ |
+| eyebrow | `micro-uppercase` 11px/600/tracking .045em |
+| ไล่โทนอักษร | ink `#0a0a0a` → slate `#3a3a3c` → steel `#5a5a5c` → stone `#888888` |
+| พื้น | canvas `#fff` / surface `#f7f7f7` / hairline `#e5e5e5` + `#ededed` |
+| chrome | **สว่าง** ตาม documentation layout (`sidebar-nav-item` text=steel, active bg=surface) |
+| radius | **ladder 7 ขั้น**: 4 / 6 / 8 / **12 (การ์ด)** / 16 / 24 / pill — ตรงข้ามกับ Mural ที่ห้ามมี 12-16px |
+| เงา | แทบไม่ใช้ (แยกชั้นด้วย hairline) · `--shadow-pop` = `rgba(0,0,0,.12) 0 24px 48px -8px` ของ `hero-product-mockup` |
+| สีสถานะ | ใช้ค่าจาก spec เอง: `brand-error #d45656` / `brand-annotate #1ba673` / `brand-warn #c37d0d` |
+
+**⭐ กลไกที่ต้องรู้: `--color-brand` พลิกค่าตามธีม + ต้องมี `--color-on-brand` คู่กัน**
+spec มี `components.button-on-dark` (bg = on-dark, text = primary) = "white pills invert on dark hero
+bands" → ธีมนี้ทำตาม: light `--color-brand:#0a0a0a` + `--color-on-brand:#ffffff`, dark สลับกลับ
+**ปุ่มทุกปุ่มที่ใช้พื้น brand ต้องใช้ `color:var(--color-on-brand)`** ห้ามฮาร์ดโค้ด `#fff` หรือ `#000`
+ไม่งั้นจะได้ขาวบนขาว (dark) หรือดำบนดำ (light) — toast โหมด info ก็ใช้คู่นี้
+
+**สิ่งที่ปรับ / ขยายจาก spec**
+1. **อักษรไทย**: Inter ไม่มี glyph ไทย → เพิ่ม **Noto Sans Thai** (400/500/600) คู่กัน เบราว์เซอร์เลือก
+   ต่อ glyph: ละติน+เลข = Inter, ไทย = Noto Sans Thai · คู่นี้กลืนกันดีกว่ากรณี serif ของรอบก่อน
+   เพราะทั้งสองเป็น neutral grotesque x-height ใกล้กัน
+2. **ย่อ display tier**: hero 72px/600 → ใช้ **24px** (ชื่อหน้า) / **18px** (หัวแผง = `heading-5`) /
+   **32px** (ตัวเลข KPI) / 26px (ตัวเลขแผง) — ยืมจาก tier ที่ spec มีอยู่แล้วสำหรับ documentation
+   ไม่ได้คิดค่าใหม่ และคงน้ำหนัก 600 + tracking ติดลบไว้ครบ
+3. **dark mode** = ส่วนขยาย (spec ระบุใน Known Gaps ว่า "the brand has not yet shipped a published
+   dark-mode palette") แต่สร้างจาก token ฝั่งเข้มที่ spec มีจริงทั้งหมด ไม่คิดค่าใหม่:
+   `canvas-dark #0a0a0a` / `charcoal #1c1c1e` / `hairline-dark #1f1f1f` / `on-dark #fff` /
+   `on-dark-muted #b3b3b3` / `muted #a8a8aa` / `stone #888888`
+4. **พื้นจางของสถานะใช้ rgba 12%** ตามแบบ `badge-tag` ของ spec (`rgba(55,114,207,.15)`) — ข้อดีคือ
+   ทับพื้นสว่างได้จางๆ และทับพื้นเข้มตอน dark mode ก็ยังเป็นโทนเข้ม ไม่ต้องมีชุดค่าแยกสองธีม
+5. **คง IBM Plex Mono เป็น fallback** หลัง Geist Mono และเลข PO บนการ์ด kanban ต้องคุมเป็น
+   `10.5px + tracking -.02em + nowrap` เพราะ **Geist Mono กว้างกว่า IBM Plex Mono ที่ขนาดเท่ากัน**
+   ทำให้เลข PO ตัดเป็น 2 บรรทัด (วัดแล้ว: ก่อนแก้ทับ 2 บรรทัดหลายใบ / หลังแก้ 327 ใบอยู่บรรทัดเดียว
+   ไม่มีตัวไหนถูกตัดแนวนอน)
+
+**แก้เรื่อง contrast ที่พบตอนวัดจริง**: อักษรขาวบนสีสถานะของ spec ตกเกณฑ์เมื่อเป็นตัวอักษรเล็ก —
+ขาวบน `success #1ba673` = **3.11**, บน `warn #c37d0d` = **3.35**, บน `danger #d45656` = **3.99**
+(spec ใช้คู่หลังใน `badge-required` เอง) → จุดที่เป็น **ตัวอักษร** (ป้ายนับแจ้งเตือน 10px, ปุ่มยืนยันลบ,
+toast) เปลี่ยนไปใช้โทนเข้ม `*-text` เป็นพื้นแทน ได้ **4.9-6.0** โดยคงเฉดเดิม
+ส่วนไอคอนกระดิ่งสีอำพันบนพื้นขาว = 3.35 **ปล่อยไว้** เพราะเป็นกราฟิก เกณฑ์ WCAG 1.4.11 คือ ≥3.0
+
+**ทดสอบแล้ว**: light/dark = 0 pageerror · Inter/Geist Mono ถูกใช้จริง (ตรวจจาก computed style) ·
+ชื่อหน้า/แบรนด์แสดงครบ · ข้อมูลจริง 327/106 · เลข PO 327 ใบไม่ตัดบรรทัด · calculator ใน iframe รับ
+token ชุดเดียวกัน · **packer suite 42 scenario + fuzz 600 เคส = 0 violation** · endpoint หลักตอบ 200
 
 ## ยังไม่แก้ (ตั้งใจ)
 - **pinwheel / tail rotation สำหรับพาเลท** — พิสูจน์แล้วว่าได้ 9 ใบแทน 8 ในตู้ 20'GP (ดูหัวข้อด้านบน)
