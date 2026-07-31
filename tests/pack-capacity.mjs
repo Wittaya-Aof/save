@@ -52,14 +52,42 @@ const res = await p.evaluate((PRESETS) => {
     rows.push({ cont: c.id, pal: pal.k, wantGrid: best.n, wantExtra: extra,
       got: run(true), gotNoRot: run(false) });
   }));
-  return rows;
+
+  // ── slot ท้ายตู้ต้องไม่แย่งพื้นที่จากคิวถัดไป ──
+  // slot ท้ายตู้กินความยาวที่เหลือทั้งหมดแต่ใช้ความกว้างแค่บางส่วน แล้ว offsetX ข้ามไปหมด
+  // ถ้าเปิดให้กลุ่มที่ไม่ใช่คิวสุดท้าย กลุ่มถัดไป/ของที่ไม่ขึ้นพาเลทจะเสียพื้นที่ไปฟรีๆ
+  // เคสจริงที่เคยถอยหลัง: 20'GP พาเลท A 1200×1000 + B 800×600 → B ได้ 3 ใบ กลายเป็น 0 ใบ
+  const palOf = (L, W, D, tare) => ({ presetKey: 'x', L, W, H: 2000, D, maxW: 999999, tare, color: '#8d6e63' });
+  const mkX = (n, L, W, H, qty, pl) => ({ type: 'box', name: n, L, W, H, D: 20, weight: 5, pieces: 1,
+    pcsPerCtn: 1, qty, color: '#e11d48', rotL: true, rotW: true, rotH: true, maxLayers: 0, maxH2: 0,
+    maxWt: 0, hexPack: false, usePallet: !!pl, pallet: pl || null });
+  const queue = [];
+  ['20GP', 'T6WL', 'T10W', 'T18W'].forEach(cid => {
+    const c = CONTAINERS.find(x => x.id === cid);
+    const shot = items => {
+      const r = buildResult(c, items, 1);
+      const man = r._palletManifest || [];
+      const groups = {};
+      man.forEach(m => m.products.forEach(q => { groups[q.name] = (groups[q.name] || 0) + q.placed; }));
+      const std = (r.items || []).filter(x => !x.item.usePallet).reduce((a, x) => a + x.packed, 0);
+      return { pallets: man.length, rot: man.filter(m => m.rot).length, groups, std };
+    };
+    queue.push({ cont: cid, kind: 'พาเลท 2 สเปค',
+      got: shot([mkX('A', 40, 30, 25, 600, palOf(1200, 1000, 150, 5.2)),
+                 mkX('B', 30, 25, 20, 400, palOf(800, 600, 100, 3.0))]) });
+    queue.push({ cont: cid, kind: 'พาเลท + ของไม่ขึ้นพาเลท',
+      got: shot([mkX('P', 40, 30, 25, 600, palOf(1200, 1000, 150, 5.2)),
+                 mkX('S', 35, 28, 22, 900, null)]) });
+  });
+  return { rows, queue };
 }, PRESETS);
 await b.close();
+const { rows: capRows, queue } = res;
 
 let fail = 0, gained = 0;
 console.log('ตู้     พาเลท                 คาด(grid+ท้าย)  ได้จริง  ขวาง   rotH=false   ผล');
 console.log('-'.repeat(84));
-for (const r of res) {
+for (const r of capRows) {
   const want = r.wantGrid + r.wantExtra;
   const errs = [];
   // ความจุต้องไม่ต่ำกว่าที่เรขาคณิตรองรับ (สูงกว่าไม่ได้เช่นกัน — พาเลทจะทับกัน)
@@ -79,6 +107,24 @@ for (const r of res) {
     (errs.length ? '✗ ' + errs.join('; ') : '✓'));
 }
 console.log('-'.repeat(84));
-console.log('รวม ' + res.length + ' คู่ (ตู้ × พาเลท) · ได้พาเลทเพิ่มจากใบท้ายตู้ ' + gained + ' คู่ · ล้มเหลว ' + fail);
+console.log('รวม ' + capRows.length + ' คู่ (ตู้ × พาเลท) · ได้พาเลทเพิ่มจากใบท้ายตู้ ' + gained + ' คู่ · ล้มเหลว ' + fail);
+
+console.log('\nslot ท้ายตู้ต้องไม่แย่งพื้นที่จากคิวถัดไป');
+console.log('-'.repeat(84));
+for (const q of queue) {
+  const errs = [];
+  if (q.got.rot !== 0) errs.push('มีใบหันขวาง ' + q.got.rot + ' ใบ ทั้งที่ยังมีคิวถัดไป');
+  if (q.kind === 'พาเลท 2 สเปค' && !(q.got.groups.B > 0))
+    errs.push('กลุ่ม B ไม่ได้พาเลทเลย (ถูกกลุ่ม A กินที่ท้ายตู้ไป)');
+  if (q.kind === 'พาเลท + ของไม่ขึ้นพาเลท' && !(q.got.std > 0))
+    errs.push('ของที่ไม่ขึ้นพาเลทวางไม่ได้เลย');
+  if (errs.length) fail++;
+  console.log(q.cont.padEnd(7) + q.kind.padEnd(26) + ('พาเลท ' + q.got.pallets + ' ใบ/ขวาง ' + q.got.rot).padEnd(20) +
+    (q.kind === 'พาเลท 2 สเปค' ? ('A=' + (q.got.groups.A || 0) + ' B=' + (q.got.groups.B || 0)).padEnd(15)
+                                : ('บนพาเลท=' + (q.got.groups.P || 0) + ' นอก=' + q.got.std).padEnd(15)) +
+    (errs.length ? '✗ ' + errs.join('; ') : '✓'));
+}
+console.log('-'.repeat(84));
+console.log('รวม ' + queue.length + ' เคสคิวต่อ · ล้มเหลวสะสมทั้งไฟล์ ' + fail);
 console.log('pageerrors: ' + (pageErrs.join(' | ') || '(none)'));
 process.exit(fail ? 1 : 0);

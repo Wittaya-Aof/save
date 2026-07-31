@@ -2326,8 +2326,14 @@ function packLayout(result){
     (palSpecGroups[k]=palSpecGroups[k]||[]).push(P);
   });
   var palFramesAll=[], palManifestAll=[], palNumBase=0;
-  Object.keys(palSpecGroups).forEach(function(_specKey){
+  var _specKeys=Object.keys(palSpecGroups);
+  _specKeys.forEach(function(_specKey,_gi){
     var palItems=palSpecGroups[_specKey];
+    // slot ท้ายตู้กิน "ความยาวที่เหลือทั้งหมด" แต่ใช้ความกว้างแค่บางส่วน แล้ว offsetX ข้ามไปหมด
+    // → ถ้ายังมีกลุ่มพาเลทอื่นหรือของที่ไม่ขึ้นพาเลทต่อคิว พวกนั้นจะเสียพื้นที่ไปฟรีๆ
+    // วัดจริง (20'GP, พาเลท A 1200×1000 + B 800×600): ถ้าให้กลุ่ม A กินท้ายตู้ กลุ่ม B ได้ 3 ใบ → 0 ใบ
+    // รวมวางได้ 684 → 600 กล่อง = ถอยหลัง · จึงเปิด slot ท้ายตู้ให้เฉพาะคิวสุดท้ายเท่านั้น
+    var _lastInLine=(_gi===_specKeys.length-1)&&stdItems.length===0;
     var pal0=palItems[0].it.pallet;
     var pL0=pal0.L||1200, pW0=pal0.W||1000, palD0=pal0.D||150;
     var palMaxH=pal0.H||2000, palTare=pal0.tare||5.2;
@@ -2382,7 +2388,7 @@ function packLayout(result){
       // = การสลับ L↔W บนพื้น "เทียบกับตู้" ซึ่งคือสิ่งที่ธง rotH คุมอยู่ (ดู allPerms {p:[1,0,2],req:['rotH']})
       // ถ้ามี SKU ไหนในกลุ่มห้ามหมุน ไม่เปิด slot ท้ายตู้ให้ทั้งกลุ่ม — เลือกทางที่รายงานต่ำกว่าเสมอ
       var _rotOK=palItems.every(function(P){ return P.it.rotH!==false; });
-      if(_rotOK&&_tail>=across&&along<=c.W){
+      if(_lastInLine&&_rotOK&&_tail>=across&&along<=c.W){
         var _tRows=Math.floor(c.W/along);
         var _tRowY=function(r){ return _tRows>1 ? Math.round(r*(c.W-along)/(_tRows-1)) : 0; };
         for(var _tr=0;_tr<_tRows;_tr++)
