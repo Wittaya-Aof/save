@@ -249,6 +249,111 @@ backup ก่อนเปลี่ยนธีมถูกลบทิ้งต�
 ทั้ง 2 ปุ่ม อักษร `rgb(23,23,23)` radius `6px` contrast **8.98** ทั้งสองธีม · เลข PO 327 ใบไม่ตัด/ไม่ถูกตัดขอบ ·
 ข้อมูลจริง 327/106 · **packer suite 42 scenario + fuzz 600 เคส = 0 violation** · endpoint หลักตอบ 200
 
+## รีวิวด้วยหลัก loop/graph engineering (2026-07-31)
+อ้าง `Karpathy-Graph-Engineering-Systems.pdf` · skill `agentic-architecture` · wiki
+`agentic-architecture-ladder` / `karpathy-ratchet-loop` / `graph-as-shared-memory`
+
+หลักที่ใช้ตัดสิน: **คอขวดมักไม่ใช่ "โมเดลเรียกครั้งถัดไป" แต่คือเราวางความจำกับการประเมินไว้ที่ไหน**
+
+### ✅ สิ่งที่โปรเจกต์นี้ทำถูกอยู่แล้ว (ไม่ต้องแก้)
+
+| หลักการ | ที่ทำไว้แล้ว |
+|---|---|
+| **Complexity budget** — ประกาศเพดานก่อนเพิ่ม worker | rate limit (verify 10/นาที, integrity 6/นาที) · MCP retry throttle 60s · circuit breaker window 2.5 นาที · `MAX_JSON_BODY_BYTES` 10MB · `PO_LINE_CACHE_MAX` 500 · `MCP_PAGE` 120 · PDF worker timeout 20s · guard 200,000 รอบใน packer |
+| **Artifact plane แยกจาก transcript** | `tracking_data.json` (atomic write) · `odoo_snapshot.json` · `doc_scan_seen.json` (ledger กัน re-scan) · backup รายวันเก็บ 14 วัน |
+| **Reversibility** | atomic temp+rename ทุกไฟล์ · git · `restart-server.ps1` · backup ก่อนแก้ธีม |
+| **Chain ที่มี ledger** | `scan-shipment-docs.mjs` = chain (สแกน→สกัด→ETS→บันทึก) + `doc_scan_seen.json` + `acquireLock` กัน 2 process ชนกัน — ตรงตามแบบ "chain externalizes task order" |
+| **Evaluation plane** | `tests/pack-invariants.mjs` (42 scenario) + `tests/pack-fuzz.mjs` (PRNG มี seed ทำซ้ำได้) = deterministic check ที่แยกจากโค้ดที่มันตรวจ |
+| **ไม่ยัด graph ทั้งที่ไม่ต้อง** | ใช้ JSON + ตาราง relational ตอบทุกคำถามของบอร์ด/dashboard ได้จริง |
+
+### ⭐ จุดที่หลักการนี้ใช้ได้จริงและคุ้มที่สุด: ratchet loop กับ packer
+
+**ครบ 4 เงื่อนไขพอดี** (เงื่อนไขที่เอกสารบอกว่าขาดข้อใดข้อหนึ่งห้ามเริ่ม autonomy):
+
+| เงื่อนไข | สถานะในโปรเจกต์นี้ |
+|---|---|
+| ผลลัพธ์วัดได้ | ✅ `volPct` (ใช้พื้นที่ตู้กี่ %), จำนวนพาเลท, `unitsNeeded`, invariant 0 violation |
+| การกระทำย้อนได้ | ✅ git + ไฟล์เดียว (`container-loading-calculator.html`) |
+| ขอบเขตเวลาสั้น | ✅ ชุดเทสรันจบในไม่กี่สิบวินาที |
+| สภาพแวดล้อมมีขอบ | ✅ พื้นผิวที่แก้ = `calcBox`/`calcDrum`/`packLayout` เท่านั้น |
+
+**metric ที่จะไล่:** ตอนนี้ 20'GP + พาเลท 1200×1000 ได้ **8 ใบ** แต่พิสูจน์เรขาคณิตแล้วว่า **9 ใบใส่ได้จริง**
+(ท้ายตู้เหลือ 1095mm วางพาเลทสลับทิศ 1000×1200 ได้อีก 1 ใบ) → ช่องว่างนี้คือ metric ที่ ratchet ไล่ได้
+**guard rail ที่ห้ามถอด** (เอกสารเตือนเรื่อง metric gaming ตรงๆ): invariant 6 ข้อต้องผ่าน 100% ทุกรอบ —
+ถ้า "เพิ่มจำนวนพาเลท" ทำให้ของทับกัน = revert ทันที ไม่ใช่ปรับปรุง
+
+> เท่ากับว่า **harness มีอยู่แล้วครบ** เหลือแค่เขียน `program.md` (ไฟล์แก้ได้/ห้ามแก้, metric+ทิศทาง,
+> งบรอบ, กฎ revert) กับตัววน — นี่คือจุดเดียวในโปรเจกต์ที่ "autoresearch" ใช้ได้ตรงรูปแบบ
+
+### 🔴 ช่องว่างที่ใหญ่ที่สุด: provenance — "ทุก claim ต้องมี source"
+
+invariant ข้อ 1 ของเอกสาร: *every claim has a source or is marked inference* · วัดจริงในไฟล์ข้อมูล:
+
+| ตัวชี้วัด | ค่าจริง |
+|---|---|
+| record ทั้งหมดใน `tracking_data.json` | **1,040** |
+| record ที่**ไม่มี** `_ts` (ไม่รู้ว่าใครใส่/เมื่อไหร่) | **1,027** (98.8%) |
+| record ที่มีเลข BL/AWB | 181 |
+| record ที่มี ETD | 139 |
+| record ที่มีชื่อเรือ | 131 |
+
+ทั้ง 181 เลข BL / 139 ETD / 131 ชื่อเรือ **ไม่มีที่ไหนบอกว่าค่านั้นมาจากไหน** — คนกรอกมือ / สกัดจาก
+B/L PDF / seed มาจากชุดข้อมูลเก่า? แยกไม่ออกเลย · `_edited`/`_synthetic`/`_rateIsThb` เป็น provenance
+แค่บางส่วนและมีแค่ 13 record
+
+**ผลกระทบจริง:** เวลาตัวเลขไม่ตรงกับเอกสาร ไม่มีทางรู้ว่าควรเชื่ออันไหน — ต้องเปิดไฟล์เทียบมือทุกครั้ง
+
+**ทางแก้ที่ถูกขนาด (ไม่ใช่ graph):** เพิ่มฟิลด์เดียวต่อค่าที่กรอกได้ เช่น
+`_src: {etd:'bl-pdf:COSU6391882.pdf', bl_awb:'manual', forwarder:'odoo'}` — เขียนตอน upsert
+ซึ่งมี hook อยู่แล้ว (`auditLog` รู้ว่าฟิลด์ไหนเปลี่ยน) · **ไม่ต้องมี knowledge graph** ตาราง/JSON พอ
+
+### 🔴 ช่องว่างที่สอง: verify-shipment ลืมทุกอย่างที่มันเจอ
+
+`verifyShipmentLocal()` คืน `sections{correct,review,errors}` + `shipmentInfo{etd,vessel,blOrAwbNo,
+portOfLoading}` + `meta{filesProcessed,filesSkipped}` พร้อมอ้างชื่อไฟล์ต้นทางทุกบรรทัด
+แต่ server **เก็บกลับแค่ `etd` ฟิลด์เดียว** (บรรทัด ~1619-1628) — ที่เหลือหายไปกับ response
+
+ตรงกับประโยค **"the agent forgets, the graph does not"** เป๊ะ · ผลคือ:
+- ตรวจ shipment เดิมซ้ำ = เริ่มจากศูนย์ทุกครั้ง ไม่รู้ว่ารอบก่อนเจออะไร
+- ไม่มีทางถามว่า "shipment ไหนเคยตรวจแล้วเจอ error" หรือ "เลขตู้นี้มาจากไฟล์ไหน"
+- `vessel`/`blOrAwbNo` ที่สกัดได้สำเร็จก็ทิ้ง ทั้งที่ผู้ใช้กรอกเองแค่ 131/181 record
+
+**ทางแก้ที่ถูกขนาด:** เก็บผลตรวจเป็น artifact ต่อรอบ (`verify_runs.jsonl` — append-only เหมือน
+`tracking_audit.jsonl` ที่ทำไว้ดีอยู่แล้ว) + เขียน `vessel`/`bl_awb` กลับพร้อม `_src` ชี้ไฟล์ต้นทาง
+ได้ทั้ง provenance และความจำข้ามรอบด้วยของถูก
+
+### ⚪ จุดที่ "ดูเหมือนควรมี graph" แต่ตรวจแล้วยังไม่คุ้ม
+
+**การกันบิลนับซ้ำ** — `renderBillPicker` คำนวณ `usedBy[billId] → poNo` ด้วยการ **scan override ทุกตัว
+ทุกครั้งที่เปิด picker** (บรรทัด 2244-2245) ซึ่งเป็น edge `bill --used_by--> shipment` ที่คำนวณสดแทนที่จะเก็บ
+→ เป็น graph shape จริง **แต่** n ยังเล็ก (1,040 record) และ scan เร็วพอ
+**ยังไม่คุ้มทำ index** จนกว่าจะช้าจริงหรือต้องถามย้อนทาง ("บิลนี้ถูกใช้ที่ไหนบ้าง") จากหลายหน้าจอ
+
+### ❌ สิ่งที่ **ไม่ควร** ทำในโปรเจกต์นี้ (ใช้เกณฑ์ "เมื่อไม่ควรใช้ graph" ของเอกสารเอง)
+
+| ข้อเสนอที่ดูดีแต่ไม่คุ้ม | เหตุผลตามเกณฑ์ของเอกสาร |
+|---|---|
+| ทำ knowledge graph ให้ core tracking | ความสัมพันธ์**นิ่งและตื้น** (PO→shipment→เอกสาร) · **ตาราง relational ตอบได้ทุกคำถาม**ของบอร์ด/dashboard · error จากการสกัดจะมากกว่าประโยชน์จาก traverse |
+| แตก agent ขนานมาช่วยรีวิวโค้ดแอปนี้ | งาน refactor ที่ผูกกันแน่น (token + inline style กระจาย 2,500 บรรทัด) = **fragmentation ลดคุณภาพ** ตามที่เอกสารเตือน |
+| commit DAG สำหรับตัวแอป | git ทำหน้าที่นี้อยู่แล้ว · ไม่มีการทดลองหลายสายที่ต้องอยู่ขนานกัน (ยกเว้น packer tuning ข้างบน) |
+| Dynamic workflow 1,000 sub-agent | ไม่มีงานที่ขนานขนาดนั้น · เอกสารเตือนว่า 1,000 sub-agent = ค่าใช้จ่ายหลายสิบดอลลาร์ต่อรอบ |
+| ให้ AI แก้ Odoo production เอง | ขาดเงื่อนไข "ย้อนได้" — เขียนเข้า ERP จริงย้อนยาก (และตอนนี้**ไม่มี code path ไหนเขียนกลับเข้า Odoo แล้ว** ตั้งแต่ลบ dead code รอบ 2026-07-31 ซึ่งถูกทางอยู่แล้ว) |
+
+### ลำดับที่แนะนำ
+
+1. **provenance `_src`** — ของถูก แก้จุดที่เจ็บจริง (98.8% ของ record ไม่รู้ที่มา) ไม่ต้องมีสถาปัตยกรรมใหม่
+2. **เก็บผล verify-shipment เป็น artifact** — ต่อยอดจาก `tracking_audit.jsonl` ที่มีอยู่ ได้ความจำข้ามรอบ
+3. **ratchet loop สำหรับ packer** — harness ครบแล้ว มี metric ชัด (8→9 พาเลท) แต่ต้องเขียน `program.md` + guard ว่า invariant ต้องผ่าน 100% ก่อนปล่อยให้วนเอง
+4. *(ยังไม่ต้อง)* index สำหรับ bill↔shipment · knowledge graph · swarm
+
+### ประโยคทดสอบของเอกสาร ใช้กับโปรเจกต์นี้
+
+> ทุก output ที่สำคัญต้องสาวกลับได้ถึง: objective, plan, artifact, source, เส้นทางใน graph, การตัดสินของ evaluator, บันทึกการรันที่มีขอบเขต
+
+ตอนนี้ทำได้: **artifact** ✅ (snapshot/backup/audit) · **evaluator decision** ✅ (integrity findings + packer tests) ·
+**bounded run** ✅ (rate limit/timeout/budget ครบ) — แต่ **source ยังขาด** (ข้อ 🔴 แรก) และ **plan/objective**
+ไม่มีที่เก็บ (ไม่ใช่ปัญหา เพราะงานสั่งจากคนทีละครั้ง ไม่ใช่ระบบ autonomous)
+
 ## ยังไม่แก้ (ตั้งใจ)
 - **pinwheel / tail rotation สำหรับพาเลท** — พิสูจน์แล้วว่าได้ 9 ใบแทน 8 ในตู้ 20'GP (ดูหัวข้อด้านบน)
   เป็นฟีเจอร์ใหม่ ต้องเขียน placement แบบผสมทิศ
