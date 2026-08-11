@@ -17,6 +17,7 @@ const ROOT = __dirname;
 const TRACKING_FILE = path.join(ROOT, 'tracking_data.json');
 const AUDIT_FILE    = path.join(ROOT, 'tracking_audit.jsonl');
 const VERIFY_RUNS_FILE = path.join(ROOT, 'verify_runs.jsonl');
+const SHIPMENT_RUNS_FILE = path.join(ROOT, 'shipment_runs.jsonl'); // เขียนโดย scan-shipment-docs.mjs
 const BACKUP_DIR    = path.join(ROOT, 'backups');
 const INTEGRITY_SEEN_FILE = path.join(ROOT, 'integrity_seen.json');
 const INTEGRITY_DIGEST_FILE = path.join(ROOT, 'integrity_digest.json');
@@ -1572,6 +1573,35 @@ const server = http.createServer(async (req, res) => {
           if (bad) { rejected.push({ po_so: key, field: bad, value: r[bad] }); return; }
           const idx    = byKey.has(key) ? byKey.get(key) : -1;
           const before = idx >= 0 ? data[idx] : null;
+          // ── โหมด "เติมเฉพาะช่องว่าง" (_fillEmptyOnly) ────────────────────────────────
+          // ใช้กับการเขียนอัตโนมัติจาก scan-shipment-docs.mjs — เติมได้เฉพาะฟิลด์ที่ยังว่างอยู่
+          // ห้ามทับค่าที่มีอยู่แล้วเด็ดขาด เพราะ PO เดียวอาจแบ่งส่งหลายชิปเม้น (คนละ B/L/เรือ/ตู้)
+          // แล้ว record เก็บได้ชุดเดียว — ถ้าทับ จะกลายเป็นข้อมูลของชิปเม้นอื่นเงียบๆ
+          // ทำฝั่ง server เพื่อให้ตรวจกับค่าล่าสุดในไฟล์แบบ atomic (ฝั่ง client จะมี race)
+          if (r._fillEmptyOnly) {
+            delete r._fillEmptyOnly;
+            if (before) {
+              const isEmpty = v => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+              // ⚠ "เติมเฉพาะช่องว่าง" อย่างเดียวยังไม่พอ — ช่องที่ว่างอยู่ก็รับข้อมูลของ "คนละชิปเม้น" ได้
+              // (เจอจริง 2026-08-11: KOBPO2501-00085 เป็นชิปเม้นเรือ CNC SATURN แต่ช่อง ETA ที่ว่างอยู่
+              //  ถูกเติมด้วย ETA ของเรือ LITTLE ATHINA ซึ่งเป็นอีกชิปเม้นในโฟลเดอร์เดียวกัน)
+              // ถ้า record มีตัวระบุชิปเม้นอยู่แล้ว (B/L หรือชื่อเรือ) และไม่ตรงกับที่กำลังจะเขียน
+              // = คนละชิปเม้น ห้ามแตะ record นี้เลยแม้แต่ช่องที่ว่าง
+              const same = (a, b) => { const n = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); return n(a) && n(b) && (n(a) === n(b) || n(a).includes(n(b)) || n(b).includes(n(a))); };
+              const idMismatch = ['bl_awb', 'vessel'].some(k =>
+                !isEmpty(before[k]) && !isEmpty(r[k]) && !same(before[k], r[k]));
+              if (idMismatch) {
+                console.log(`[Upsert] ${key} ข้ามทั้ง record — เป็นคนละชิปเม้น (ในระบบ bl=${before.bl_awb || '-'}/เรือ=${before.vessel || '-'} · ที่ส่งมา bl=${r.bl_awb || '-'}/เรือ=${r.vessel || '-'})`);
+                return;
+              }
+              const skipped = [];
+              Object.keys(r).forEach(k => {
+                if (k === 'po_so' || k.startsWith('_')) return;
+                if (!isEmpty(before[k]) && JSON.stringify(before[k]) !== JSON.stringify(r[k])) { skipped.push(k); delete r[k]; }
+              });
+              if (skipped.length) console.log(`[Upsert] ${key} โหมดเติมช่องว่าง — ไม่ทับ: ${skipped.join(', ')}`);
+            }
+          }
           // _origin / _src เป็น metadata ของ "การเขียน" ไม่ใช่ข้อมูล shipment — ห้ามให้ client
           // เขียน _src เองตรงๆ (ไม่งั้นอ้างที่มาปลอมได้) และห้าม _origin ค้างอยู่ในไฟล์ข้อมูล
           const changed = before
@@ -1676,6 +1706,35 @@ const server = http.createServer(async (req, res) => {
         }
         jsonOk(res, { ok: true, count: runs.length, runs });
       } catch (e) { jsonErrEx(res, 500, 'verify-runs', e); }
+      return;
+    }
+
+    // ── ชิปเม้นที่สแกนเจอจากเอกสาร — GET /api/shipment-runs?po=<เลข PO>&limit=20 ──
+    // การ์ด 1 ใบเก็บได้ชิปเม้นเดียว แต่ PO เดียวแบ่งส่งได้หลายชิปเม้น (คนละ B/L/เรือ/ตู้)
+    // endpoint นี้คืน "ทุกชิปเม้นที่เอกสารบอก" ของ PO นั้น เพื่อให้หน้าเว็บเห็นว่ามีชิปเม้นที่ยัง
+    // ไม่มีการ์ด แล้วกดสร้างการ์ดจากข้อมูลนั้นได้เลยโดยไม่ต้องพิมพ์ใหม่
+    // ค้นด้วย base PO (ตัด " (n)" ออก) จึงเห็นชิปเม้นของพี่น้องทุกใบในกลุ่มเดียวกัน
+    if (reqUrl === '/api/shipment-runs' && method === 'GET') {
+      const params = new URL('http://x' + req.url).searchParams;
+      const po     = (params.get('po') || '').trim().replace(/\s*\(\d+\)\s*$/, '').toUpperCase();
+      const limit  = Math.min(Math.max(parseInt(params.get('limit')) || 20, 1), 200);
+      try {
+        let runs = [];
+        if (fs.existsSync(SHIPMENT_RUNS_FILE)) {
+          runs = fs.readFileSync(SHIPMENT_RUNS_FILE, 'utf8').split('\n').filter(Boolean)
+            .map(l => { try { return JSON.parse(l); } catch (e) { return null; } })
+            .filter(Boolean);
+          if (po) runs = runs.filter(r => String(r.base || r.po || '').toUpperCase() === po);
+          // ยุบให้เหลือชิปเม้นละรายการ (สแกนซ้ำหลายรอบจะได้ B/L เดิม) เก็บรอบล่าสุดของแต่ละใบ
+          const byShip = new Map();
+          for (const r of runs) {
+            const k = String(r.bl_awb || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || (r.vessel || '') + (r.voyage || '');
+            byShip.set(k, r);
+          }
+          runs = [...byShip.values()].slice(-limit).reverse();
+        }
+        jsonOk(res, { ok: true, count: runs.length, runs });
+      } catch (e) { jsonErrEx(res, 500, 'shipment-runs', e); }
       return;
     }
 

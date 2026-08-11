@@ -22,3 +22,6 @@ scan_run*.log
 *.log.1
 verify_runs.jsonl
 verify_runs.jsonl.1
+shipment_runs.jsonl
+shipment_runs.jsonl.1
+tracking_data.json.before-revert

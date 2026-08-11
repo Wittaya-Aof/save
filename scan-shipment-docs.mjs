@@ -13,7 +13,7 @@ import path from 'path';
 import http from 'http';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import XLSX from 'xlsx';
 import { openEtsSession, closeEtsSession, searchVesselActualDate } from './lib/ets-lookup.mjs';
 
@@ -37,13 +37,28 @@ const LOG_FILE = path.join(ROOT, 'doc_scan.log');
 const LOCK_FILE = path.join(ROOT, 'scan.lock');
 const ALLOWED_EXT = new Set(['.pdf', '.xlsx', '.xls', '.png', '.jpg', '.jpeg']);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
-// เพดานรวม raw ของไฟล์ที่ส่งให้ Claude — base64 บวม ~1.33x จึงตั้ง 24MB ให้อยู่ใต้เพดาน 32MB base64 ของ Claude
+// เพดานรวม raw ของไฟล์ที่ส่งให้ AI — base64 บวม ~1.33x จึงตั้ง 24MB ให้อยู่ใต้เพดาน 32MB ของ request
 // (เดิมไม่มี cap รวม โฟลเดอร์ PDF หลายไฟล์รวมเกิน → API call ล้มทุกรอบ → retry ไม่รู้จบ + เปลือง cost/memory)
 const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
 const MAX_FOLDERS_PER_RUN = 20; // กันรันแรกที่มี backlog เยอะกินเวลา/ค่าใช้จ่าย AI ทีเดียวมากเกินไป
-const MODEL = process.env.VERIFY_MODEL || 'claude-sonnet-5';
+const MODEL = process.env.VERIFY_MODEL || 'gpt-5.4-mini';
+// OpenAI จำกัดจำนวนหน้า PDF ต่อ 1 request — โฟลเดอร์จริงที่หนาสุดที่วัดได้มี 107 หน้า จึงต้องมี guard
+// (ฝั่ง Anthropic เดิมไม่มีเพดานนี้ มีแต่เพดานขนาดไบต์)
+const MAX_PDF_PAGES = 100;
+// --dry-run   : วางแผนอย่างเดียว ไม่เรียก AI ไม่ upsert ไม่แตะ doc_scan_seen.json
+// --no-write  : รันของจริงทุกขั้น (AI + ETS) แต่ไม่เขียนอะไรเลย — ใช้ทดสอบ/backtest
+// --only=<คำ> : จำกัดเฉพาะโฟลเดอร์ที่ชื่อมีคำนี้ (ไม่สนตัวพิมพ์ใหญ่เล็ก)
+const DRY_RUN = process.argv.includes('--dry-run');
+const NO_WRITE = process.argv.includes('--no-write');
+const ONLY = (process.argv.find(a => a.startsWith('--only=')) || '').slice(7).toUpperCase();
+// --overwrite : ยอมให้ทับค่าที่มีอยู่แล้ว (default = เติมเฉพาะช่องว่าง ปลอดภัยกว่า)
+const OVERWRITE = process.argv.includes('--overwrite');
 const IMAGE_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
-const PO_MATCH_RE = /(?:KOB|BTV)PO\d{4}-\d{5}/gi;
+// จับเลข PO พร้อม "เลขลำดับชุด" ที่ต่อท้ายในชื่อโฟลเดอร์ เช่น "KOBPO2605-09063 (2)"
+// วัดจริง: 30 จาก 198 โฟลเดอร์ใช้รูปแบบนี้ และตรงกับ key ที่ปุ่มแยก shipment ในแอปสร้าง
+// (import-export-os.html splitShipment → po_so = "<PO> (n)" · strip() = ตัด " (n)" ท้ายออก)
+const PO_MATCH_RE = /((?:KOB|BTV)PO\d{4}-\d{5})(?:\s*\((\d+)\))?/gi;
+const stripPoIndex = (k) => (k || '').replace(/\s*\(\d+\)\s*$/, '').trim(); // ให้ตรงกับ strip() ฝั่งหน้าเว็บ
 
 const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate เมื่อเกิน 5MB (เดิม doc_scan.log โตไม่จำกัด)
 function rotateLogIfNeeded() {
@@ -117,9 +132,41 @@ function saveSeen(seen) {
   } catch (e) { log('[Seen] save error: ' + e.message); }
 }
 
+// คืน [{ key, base, idx }] — key คือ po_so ที่จะเขียนจริง
+// "(1)" = การ์ดตัวหลักของ PO นั้น (ตรงกับแอป: การ์ดแรกใช้เลข PO เปล่า ตัวที่แยกออกมาเริ่มที่ "(2)")
+// "(2)" ขึ้นไป = การ์ดชิปเม้นย่อย ต้องมี _splitBase ชี้กลับไปที่ PO ฐาน
 function extractPoNumbers(name) {
-  const matches = [...name.matchAll(PO_MATCH_RE)];
-  return [...new Set(matches.map(m => m[0].toUpperCase()))];
+  const out = new Map();
+  for (const m of name.matchAll(PO_MATCH_RE)) {
+    const base = m[1].toUpperCase();
+    const idx = m[2] ? parseInt(m[2], 10) : null;
+    const key = (idx && idx > 1) ? `${base} (${idx})` : base;
+    if (!out.has(key)) out.set(key, { key, base, idx });
+  }
+  return [...out.values()];
+}
+
+// ─── artifact: บันทึกทุก shipment ที่สแกนเจอ แบบ append-only ────────────────────────────
+// เหตุผล: การ์ด 1 ใบเก็บได้ชิปเม้นเดียว แต่ PO เดียวแบ่งส่งได้หลายชิปเม้น — ข้อมูลของชิปเม้นที่
+// ไม่ตรงกับการ์ดจะถูกปฏิเสธตอน upsert (ถูกต้องแล้ว) แต่ต้องไม่หายไปเฉยๆ เก็บไว้ที่นี่เพื่อให้
+// หน้าเว็บเอาไปแสดง และให้ปุ่ม "แยก shipment" ดึงไปกรอกการ์ดใหม่ได้โดยไม่ต้องพิมพ์เอง
+// (แบบแผนเดียวกับ verify_runs.jsonl — append-only + หมุนไฟล์เมื่อโต)
+const SHIPMENT_RUNS_FILE = path.join(ROOT, 'shipment_runs.jsonl');
+const SHIPMENT_RUNS_MAX_BYTES = 5 * 1024 * 1024;
+function appendShipmentRun(rec) {
+  try {
+    if (fs.existsSync(SHIPMENT_RUNS_FILE) && fs.statSync(SHIPMENT_RUNS_FILE).size > SHIPMENT_RUNS_MAX_BYTES) {
+      fs.renameSync(SHIPMENT_RUNS_FILE, SHIPMENT_RUNS_FILE + '.1');
+    }
+    fs.appendFileSync(SHIPMENT_RUNS_FILE, JSON.stringify(rec) + '\n', 'utf8');
+  } catch (e) { log('[ShipmentRuns] เขียนไม่สำเร็จ: ' + e.message); }
+}
+
+// อ่าน tracking_data.json ตรงจากดิสก์ (สคริปต์นี้รันบนเครื่องเดียวกับ server และไฟล์เขียนแบบ atomic)
+// ใช้ดูว่าการ์ดเป้าหมายมีอยู่แล้วหรือยัง และดึงข้อมูลบริษัท/คู่ค้า/สกุลเงิน จากการ์ดฐานมาตั้งต้น
+function loadTrackingLocal() {
+  try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'tracking_data.json'), 'utf8')); }
+  catch (e) { log('[WARN] อ่าน tracking_data.json ไม่ได้: ' + e.message); return []; }
 }
 
 function discoverYearFolders() {
@@ -210,16 +257,29 @@ function dumpExcelText(name, buffer) {
 // pdfText คือข้อความดิบที่ดึงได้จาก PDF (สำหรับ free regex fallback) — เอกสารจริงที่ทดสอบ
 // (B/L, CI) มีตัวอักษรให้ดึงจริง ไม่ใช่รูปสแกน แต่ label ของฟิลด์ (เช่น "Port of Loading")
 // มักเป็นภาพ/template คงที่ ไม่ใช่ text จึงดึงมาได้แต่ "ค่า" ไม่มี label กำกับ
-// needDocumentBlocks: เข้ารหัส base64 เก็บไว้ส่งให้ Claude เฉพาะตอนมี AI ใช้งานจริงเท่านั้น —
+// needDocumentBlocks: เข้ารหัส base64 เก็บไว้ส่งให้ AI เฉพาะตอนมี AI ใช้งานจริงเท่านั้น —
 // โหมดฟรีไม่เคยแตะ documentBlocks เลย เข้ารหัส/เก็บไว้เฉยๆ เปลืองความจำโดยเปล่าประโยชน์ (เจอจริง
 // 2026-07-22: โฟลเดอร์ที่มี PDF ~16 ไฟล์พร้อมกัน เข้ารหัส base64 ทั้งหมดโดยไม่จำเป็นทำให้
 // process ใช้ความจำหนักจนดูเหมือนค้าง)
+// นับหน้า PDF จาก buffer โดยไม่ต้อง parse เต็มรูปแบบ — ใช้แค่กัน request เกินเพดานหน้าของ OpenAI
+// นับเกินจริงได้บ้าง (ปลอดภัยกว่านับขาด เพราะนับขาดแล้ว request จะถูกปฏิเสธทั้งก้อน)
+function countPdfPages(buffer) {
+  try {
+    const s = buffer.toString('latin1');
+    const m = s.match(/\/Type\s*\/Page[^s]/g);
+    if (m && m.length) return m.length;
+    const c = s.match(/\/Count\s+(\d+)/);
+    return c ? parseInt(c[1], 10) : 1;
+  } catch (e) { return 1; }
+}
+
 async function convertFiles(filePaths, needDocumentBlocks) {
   const documentBlocks = [];
   const excelTextParts = [];
   const pdfTextParts = [];
   const usedNames = [];
-  let totalDocBytes = 0; // นับ raw ของไฟล์ที่ใส่ documentBlocks (ส่งให้ Claude) — กันรวมเกินเพดาน
+  let totalDocBytes = 0; // นับ raw ของไฟล์ที่ใส่ documentBlocks (ส่งให้ AI) — กันรวมเกินเพดาน
+  let totalPdfPages = 0; // นับหน้า PDF รวม — OpenAI มีเพดานหน้าต่อ request แยกจากเพดานไบต์
   for (const fp of filePaths) {
     const ext = path.extname(fp).toLowerCase();
     let stat;
@@ -230,11 +290,19 @@ async function convertFiles(filePaths, needDocumentBlocks) {
       if (ext === '.pdf') {
         if (!buffer.slice(0, 5).toString('latin1').startsWith('%PDF-')) continue;
         if (needDocumentBlocks) {
+          const pages = countPdfPages(buffer);
           if (totalDocBytes + buffer.length > MAX_TOTAL_BYTES) {
             log(`  [skip-ai] ${path.basename(fp)} — รวมไฟล์ส่ง AI เกิน ${MAX_TOTAL_BYTES / 1024 / 1024}MB ข้ามไฟล์นี้ (ยังดึงข้อความ PDF ต่อได้)`);
+          } else if (totalPdfPages + pages > MAX_PDF_PAGES) {
+            log(`  [skip-ai] ${path.basename(fp)} — รวมหน้า PDF เกิน ${MAX_PDF_PAGES} หน้า (ไฟล์นี้ ${pages} หน้า) ข้ามไฟล์นี้ (ยังดึงข้อความ PDF ต่อได้)`);
           } else {
-            documentBlocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } });
+            documentBlocks.push({
+              type: 'input_file',
+              filename: path.basename(fp),
+              file_data: `data:application/pdf;base64,${buffer.toString('base64')}`,
+            });
             totalDocBytes += buffer.length;
+            totalPdfPages += pages;
           }
         }
         const pdfResult = extractPdfTextIsolated(fp);
@@ -246,7 +314,7 @@ async function convertFiles(filePaths, needDocumentBlocks) {
           if (totalDocBytes + buffer.length > MAX_TOTAL_BYTES) {
             log(`  [skip-ai] ${path.basename(fp)} — รวมไฟล์ส่ง AI เกิน ${MAX_TOTAL_BYTES / 1024 / 1024}MB ข้ามรูปนี้`);
           } else {
-            documentBlocks.push({ type: 'image', source: { type: 'base64', media_type: IMAGE_MIME[ext], data: buffer.toString('base64') } });
+            documentBlocks.push({ type: 'input_image', image_url: `data:${IMAGE_MIME[ext]};base64,${buffer.toString('base64')}` });
             totalDocBytes += buffer.length;
           }
         }
@@ -260,9 +328,14 @@ async function convertFiles(filePaths, needDocumentBlocks) {
   return { documentBlocks, excelText: excelTextParts.join('\n\n'), pdfText: pdfTextParts.join('\n\n'), usedNames };
 }
 
-const RESPONSE_SCHEMA = {
+// โครงเดิมคืน shipment เดียวต่อโฟลเดอร์ แล้วเขียนค่าชุดนั้นลงทุก PO ในชื่อโฟลเดอร์ — ผิดกับของจริง
+// (ยืนยันจากข้อมูลจริง 2026-08-11: โฟลเดอร์ "10. KOBPO2501-00008 (2), KOBPO2501-00085 (1)" มี
+//  3 shipment คนละ B/L กันหมด) ตอนนี้คืนเป็น "รายการ shipment" แล้วจับคู่เข้า PO ทีละใบ
+const SHIPMENT_ITEM_SCHEMA = {
   type: 'object',
   properties: {
+    poNumbers: { type: 'array', items: { type: 'string' }, description: 'เลข PO ที่ shipment นี้ครอบคลุม (KOBPOxxxx-xxxxx / BTVPOxxxx-xxxxx) — array ว่างถ้าระบุไม่ได้' },
+    invoiceNo: { type: ['string', 'null'], description: 'เลข Commercial Invoice ของผู้ขายสำหรับ shipment นี้ — ใช้ยืนยันว่าเป็นคนละ shipment' },
     etd: { type: ['string', 'null'], description: "YYYY-MM-DD วันที่ Shipped on Board (B/L) หรือวันเที่ยวบิน (AWB) — null ถ้าเป็น draft ที่ยังไม่มีวันที่จริง" },
     vessel: { type: ['string', 'null'], description: 'ชื่อเรือจาก B/L — null ถ้าขนส่งทางอากาศ' },
     voyage: { type: ['string', 'null'], description: "เลข voyage (มักติดกับชื่อเรือ เช่น 'V.2627S')" },
@@ -274,35 +347,103 @@ const RESPONSE_SCHEMA = {
     portOfDischarge: { type: ['string', 'null'], description: "ท่าเรือ/สนามบินปลายทางที่สินค้าขึ้นจากเรือ (Port of Discharge หรือ Port of Delivery ใน B/L, Airport of Destination ใน AWB) รูปแบบ 'ชื่อท่าเรือ, ประเทศ' เช่น 'LAEM CHABANG, THAILAND'" },
     mode: { type: 'string', enum: ['sea', 'air', 'unknown'] },
   },
-  required: ['etd', 'vessel', 'voyage', 'forwarder', 'blNumber', 'awbNumber', 'containerNumbers', 'portOfLoading', 'portOfDischarge', 'mode'],
+  required: ['poNumbers', 'invoiceNo', 'etd', 'vessel', 'voyage', 'forwarder', 'blNumber', 'awbNumber', 'containerNumbers', 'portOfLoading', 'portOfDischarge', 'mode'],
+  additionalProperties: false,
+};
+
+const RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    shipments: { type: 'array', items: SHIPMENT_ITEM_SCHEMA, description: 'รายการ shipment ที่แยกจากกันในโฟลเดอร์นี้ — ปกติมี 1 รายการ แต่ถ้าเลข B/L หรือ AWB ต่างกันให้แยกเป็นคนละรายการ' },
+  },
+  required: ['shipments'],
   additionalProperties: false,
 };
 
 const SYSTEM_PROMPT = `คุณช่วยดึงข้อมูล shipment จากเอกสารนำเข้า (Commercial Invoice, Packing List, Bill of
 Lading/AWB, Purchase Order ฯลฯ) ที่แนบมา ดึงเฉพาะข้อมูลที่ระบุไว้ชัดเจนในเอกสารเท่านั้น ห้ามเดา/
 ประมาณค่าใดๆ — ถ้าเอกสารไม่มีข้อมูลนั้นให้ส่ง null (หรือ array ว่างสำหรับ containerNumbers) เสมอ
-ถ้าเอกสารในชุดนี้มีหลาย B/L (เช่น shipment แยกส่ง) ให้เลือกฉบับที่ล่าสุด/สมบูรณ์ที่สุด (surrendered/
-final ดีกว่า draft) ตอบกลับผ่าน tool ที่กำหนดเท่านั้น`;
 
-async function extractFields(anthropic, documentBlocks, excelText) {
-  const content = [...documentBlocks];
-  if (excelText) content.push({ type: 'text', text: excelText });
-  content.push({ type: 'text', text: 'ดึงข้อมูล shipment จากเอกสารข้างต้น แล้วเรียก tool report_fields พร้อมผลลัพธ์' });
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 2000,
-    system: SYSTEM_PROMPT,
-    tools: [{ name: 'report_fields', description: 'รายงานข้อมูล shipment ที่ดึงได้', input_schema: RESPONSE_SCHEMA }],
-    tool_choice: { type: 'tool', name: 'report_fields' },
-    messages: [{ role: 'user', content }],
-  });
-  const toolUse = response.content.find(b => b.type === 'tool_use' && b.name === 'report_fields');
-  if (!toolUse) throw new Error('AI ไม่ได้ส่งผลลัพธ์ในรูปแบบที่คาดไว้');
-  return toolUse.input;
+**สำคัญที่สุด: โฟลเดอร์เดียวอาจมีเอกสารของหลาย shipment ที่ถูกส่งแยกกันคนละรอบ**
+(เช่น PO ใบเดียวเร่งบางส่วนมาทางอากาศ ที่เหลือมาทางเรือ หรือแบ่งส่งหลายล็อต)
+ให้แยกกลุ่มเอกสารเป็น shipment แล้วคืนมาเป็นรายการใน shipments โดยใช้หลักนี้:
+- **เกณฑ์หลักคือ "เที่ยวเรือ/เที่ยวบิน"**: ชื่อเรือ + เลข voyage ต่างกัน (หรือเลขเที่ยวบินต่างกัน)
+  = คนละ shipment · ถ้าเรือ/voyage/ตู้เดียวกัน = **shipment เดียวกันเสมอ** แม้เอกสารจะมีหลายฉบับ
+- ⚠ **ห้ามแยกเพราะเลข B/L ต่างกันเพียงอย่างเดียว** — shipment เดียวปกติมีทั้ง Master B/L (ของสายเรือ)
+  และ House B/L (ของ freight forwarder) ซึ่งเลขคนละเลขกันเป็นเรื่องปกติ ให้ถือเป็น shipment เดียว
+  แล้วรายงาน Master B/L (MBL) · draft กับ final ของเลขเดียวกันก็ shipment เดียวกัน ใช้ฉบับ final
+- ถ้าเอกสารทั้งโฟลเดอร์เป็น shipment เดียว ให้คืน shipments ที่มีสมาชิกเพียง 1 รายการ (กรณีปกติที่พบบ่อยสุด)
+- **ห้ามคืน shipment ซ้ำ** — แต่ละเที่ยวเรือ/เที่ยวบินต้องปรากฏเพียงรายการเดียวเท่านั้น
+
+แต่ละ shipment ให้ระบุ poNumbers = เลข PO ที่ shipment นั้นครอบคลุม (รูปแบบ KOBPOxxxx-xxxxx หรือ
+BTVPOxxxx-xxxxx ที่ปรากฏใน Commercial Invoice / Packing List / PO ของ shipment นั้น) ถ้าระบุไม่ได้ให้ส่ง array ว่าง`;
+
+// API ตอบ 400 เมื่อมีไฟล์แนบที่อ่านไม่ออก แต่ "ไม่บอกว่าไฟล์ไหน" — เจอจริงตอน backtest 2026-08-11
+// (BTVPO2510-01940: "The file you uploaded is badly formatted or corrupted")
+// ผลเดิมคือทั้งโฟลเดอร์ล้มแล้ววนลองใหม่ทุกรอบไม่จบ เพราะไฟล์เสียก็ยังเสียอยู่วันยังค่ำ
+function isBadFileError(e) {
+  const msg = String(e && (e.message || e)) || '';
+  return (e?.status === 400 || /\b400\b/.test(msg))
+    && /badly formatted|corrupt|unsupported (file|image)|could not (be )?process|invalid.*(file|image|pdf)/i.test(msg);
+}
+
+async function extractFields(openai, documentBlocks, excelText, pdfText) {
+  // ใช้ Responses API + structured output (strict) แทน forced tool-use ของ Anthropic เดิม —
+  // RESPONSE_SCHEMA เดิมเข้าเงื่อนไข strict อยู่แล้ว (required ครบทุกฟิลด์ + additionalProperties:false)
+  // max_output_tokens ต้องเผื่อ reasoning token ของโมเดลตระกูล gpt-5 ด้วย จึงตั้งสูงกว่า 2000 เดิม
+  const callOnce = async (blocks, extraText) => {
+    const content = [...blocks];
+    if (extraText) content.push({ type: 'input_text', text: extraText });
+    if (excelText) content.push({ type: 'input_text', text: excelText });
+    if (!content.length) throw new Error('ไม่มีเนื้อหาให้ส่งเข้า AI เลย');
+    content.push({ type: 'input_text', text: 'ดึงข้อมูล shipment จากเอกสารข้างต้น แล้วตอบเป็น JSON ตาม schema ที่กำหนด' });
+    const response = await openai.responses.create({
+      model: MODEL,
+      instructions: SYSTEM_PROMPT,
+      input: [{ role: 'user', content }],
+      text: { format: { type: 'json_schema', name: 'report_fields', strict: true, schema: RESPONSE_SCHEMA } },
+      max_output_tokens: 4000,
+    });
+    if (response.status === 'incomplete') {
+      throw new Error(`AI ตอบไม่จบ (${response.incomplete_details?.reason || 'ไม่ทราบสาเหตุ'}) — ลองเพิ่ม max_output_tokens`);
+    }
+    const out = response.output_text;
+    if (!out) throw new Error('AI ไม่ได้ส่งผลลัพธ์กลับมา (output_text ว่าง)');
+    try { return JSON.parse(out); }
+    catch (e) { throw new Error('AI ตอบกลับไม่ใช่ JSON ที่อ่านได้: ' + out.slice(0, 200)); }
+  };
+
+  try {
+    return await callOnce(documentBlocks, null);
+  } catch (e) {
+    if (!isBadFileError(e) || !documentBlocks.length) throw e;
+
+    // ชั้นที่ 1 — ตัดไฟล์ทีละใบเพื่อหาว่าใบไหนเสีย (ทำเฉพาะตอนไฟล์ไม่เยอะ ไม่งั้นเปลืองเกินคุ้ม)
+    if (documentBlocks.length <= 8) {
+      for (let i = 0; i < documentBlocks.length; i++) {
+        const kept = documentBlocks.filter((_, j) => j !== i);
+        if (!kept.length) break;
+        try {
+          const r = await callOnce(kept, null);
+          const bad = documentBlocks[i];
+          log(`  [BADFILE] ตัด "${bad.filename || 'รูปภาพ'}" ออกแล้วสำเร็จ — ไฟล์นี้เสีย/อ่านไม่ออก`);
+          return r;
+        } catch (e2) { if (!isBadFileError(e2)) throw e2; }
+      }
+    }
+
+    // ชั้นที่ 2 — ยังไม่ผ่าน ถอยไปใช้ข้อความที่ดึงจาก PDF/Excel แทนการแนบไฟล์ทั้งหมด
+    // ได้ข้อมูลน้อยลง (ไม่เห็นเลย์เอาต์/ตราประทับ) แต่ดีกว่าทั้งโฟลเดอร์ล้มแล้ว retry ไม่รู้จบ
+    if (pdfText || excelText) {
+      log('  [BADFILE] มีไฟล์แนบที่ AI อ่านไม่ออก — ถอยไปใช้เฉพาะข้อความที่ดึงได้จากเอกสาร (ความแม่นลดลง)');
+      return await callOnce([], pdfText);
+    }
+    throw e;
+  }
 }
 
 // ─── Free fallback (regex-based, ไม่เรียก AI เลย) ──────────────────────────────────────
-// ใช้ตอนไม่มี ANTHROPIC_API_KEY จริง — ตรวจเอกสารจริงหลายฉบับ (24 ก.ค. 2569: HBL ของ Freight Links
+// ใช้ตอนไม่มี OPENAI_API_KEY จริง — ตรวจเอกสารจริงหลายฉบับ (24 ก.ค. 2569: HBL ของ Freight Links
 // Express, Marine Cargo Policy ฯลฯ) พบว่า vessel/voyage/B/L no./forwarder ส่วนใหญ่เป็นค่าลอยไม่มี
 // label กำกับ (label เป็นภาพ/template คงที่ ไม่ใช่ text) และตำแหน่งต่างกันไปตาม forwarder แต่ละเจ้า
 // จึงใช้ pattern เชิงโครงสร้างที่พบซ้ำในเอกสารจริงแทน label ตรงๆ:
@@ -458,6 +599,27 @@ function extractFieldsFree(text) {
   };
 }
 
+// ─── ชี้ขาดว่าโฟลเดอร์นี้เป็นชิปเม้นทางอากาศหรือทางเรือ ──────────────────────────────────
+// AOF ยืนยัน 2026-08-11: PO เดียวกันแบ่งส่งได้ทั้ง air และ sea และถือเป็น "คนละชิปเม้น"
+// ลำดับความน่าเชื่อถือ: ชื่อโฟลเดอร์ > ชนิดเอกสารที่มีในโฟลเดอร์ > ที่ AI เดามาจากเนื้อเอกสาร
+// วัดจริงจากโฟลเดอร์ทั้งหมด: 185 PO · 27 PO กระจายหลายโฟลเดอร์ · 5 PO มีทั้ง air และ sea
+function detectModeFromFolder(folderName) {
+  const u = folderName.toUpperCase();
+  if (/\bBY\s*AIR\b|\bAIR\s*FREIGHT\b|\bAIR\b/.test(u)) return 'air';
+  if (/\bBY\s*SEA\b|\bSEA\s*FREIGHT\b|\bSEA\b/.test(u)) return 'sea';
+  return null; // 22 จาก 27 PO ที่ซ้ำ มีอย่างน้อย 1 โฟลเดอร์ที่ชื่อไม่ระบุ → ตกไปดูเอกสารแทน
+}
+// ดูจาก "ชนิดเอกสารที่มีอยู่ในโฟลเดอร์" ไม่ใช่เนื้อความ — Air Waybill = ทางอากาศ, Bill of Lading = ทางเรือ
+// ใช้ทั้งชื่อไฟล์และเนื้อ PDF เพราะบางชุดตั้งชื่อไฟล์เป็นเลขเอกสารล้วน ไม่มีคำว่า B/L หรือ AWB
+function detectModeFromDocs(fileNames, pdfText) {
+  const hay = (fileNames.join(' ') + ' ' + (pdfText || '')).toUpperCase();
+  const hasAwb = /AIR\s*WAY\s*-?\s*BILL|AIRWAYBILL|\bAWB\b|\bHAWB\b|\bMAWB\b/.test(hay);
+  const hasBl  = /BILL\s*OF\s*LADING|SEA\s*WAY\s*-?\s*BILL|\bHBL\b|\bMBL\b|\bB\/L\b/.test(hay);
+  if (hasAwb && !hasBl) return 'air';
+  if (hasBl && !hasAwb) return 'sea';
+  return null; // เจอทั้งคู่ หรือไม่เจอเลย = ตัดสินไม่ได้ ไม่เดา
+}
+
 function upsertTracking(payload) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);
@@ -493,17 +655,59 @@ async function main() {
   const yearFolders = discoverYearFolders();
   log(`ปีที่สแกน: ${yearFolders.join(', ')}`);
 
-  let anthropic = null;
-  if (process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY.includes('...')) {
-    anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 120000, maxRetries: 2 });
-    log('ใช้โหมด AI (ANTHROPIC_API_KEY ตั้งค่าแล้ว) — ดึงได้ครบทุกฟิลด์');
+  // ── โหมด --dry-run: วางแผนอย่างเดียว ไม่เรียก AI ไม่เขียนอะไรทั้งสิ้น ──────────────────
+  // การตัดสินใจว่าจะ "สร้างการ์ดใหม่หรือไม่" ขึ้นกับชื่อโฟลเดอร์ (เลข PO + ลำดับชุด) กับชนิดเอกสาร
+  // เท่านั้น ไม่ต้องพึ่ง AI เลย → dry-run จึงฟรีและเร็ว และตอบคำถามได้ตรงว่าจะเกิดการ์ดอะไรบ้าง
+  // *สำคัญ*: ห้ามแตะ doc_scan_seen.json ในโหมดนี้ ไม่งั้นรอบจริงจะข้ามโฟลเดอร์ที่ยังไม่ได้ประมวลผล
+  if (DRY_RUN) {
+    const tracking = loadTrackingLocal();
+    const byPo = new Map(tracking.map(r => [(r.po_so || '').toUpperCase(), r]));
+    const plan = { update: 0, create: 0, noBase: 0, folders: 0 };
+    log('=== DRY RUN — ไม่เขียนข้อมูลใดๆ ทั้งสิ้น ===');
+    for (const yearFolder of yearFolders) {
+      let folders = [];
+      try { folders = discoverShipmentFolders(yearFolder); } catch (e) { continue; }
+      for (const folderName of folders) {
+        const targets = extractPoNumbers(folderName);
+        if (!targets.length) continue;
+        const dir = path.join(IMPORT_ROOT, yearFolder, folderName);
+        const files = walkFiles(dir).map(f => path.basename(f));
+        const mode = detectModeFromFolder(folderName) || detectModeFromDocs(files, '') || '?';
+        const lines = [];
+        for (const t of targets) {
+          const exists = byPo.has(t.key.toUpperCase());
+          const baseExists = byPo.has(t.base.toUpperCase());
+          if (exists) { plan.update++; lines.push(`      อัปเดตการ์ดเดิม  ${t.key}`); }
+          else if (t.key !== t.base && baseExists) {
+            plan.create++;
+            const b = byPo.get(t.base.toUpperCase());
+            lines.push(`   ⭐ สร้างการ์ดใหม่   ${t.key}  (_splitBase=${t.base} · ${b.company || '?'}/${b.party || '?'} · ค่าใช้จ่ายเริ่มที่ 0)`);
+          } else if (t.key !== t.base) { plan.noBase++; lines.push(`   ⚠️  ข้าม ${t.key} — ไม่มีการ์ดฐาน ${t.base} ในระบบ`); }
+          else { plan.noBase++; lines.push(`   ⚠️  ข้าม ${t.key} — ไม่มีการ์ดนี้ในระบบ และไม่ใช่ชิปเม้นย่อย`); }
+        }
+        if (lines.some(l => l.includes('⭐') || l.includes('⚠️'))) {
+          plan.folders++;
+          log(`[${mode}] ${folderName}`);
+          lines.forEach(l => log(l));
+        }
+      }
+    }
+    log(`=== สรุป DRY RUN: อัปเดตการ์ดเดิม ${plan.update} · สร้างการ์ดใหม่ ${plan.create} · ข้าม ${plan.noBase} ===`);
+    return;
+  }
+
+  let openai = null;
+  if (process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.includes('...')) {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 120000, maxRetries: 2 });
+    log(`ใช้โหมด AI (OPENAI_API_KEY ตั้งค่าแล้ว, โมเดล ${MODEL}) — ดึงได้ครบทุกฟิลด์`);
   } else {
-    log('[NOTE] ไม่มี ANTHROPIC_API_KEY จริง — ใช้โหมดฟรี (regex+heuristic เท่านั้น) container/AWB/port/ETD แม่นยำสูง ส่วน vessel/voyage/B-L/forwarder เป็น best-effort (จับ pattern โครงสร้างเอกสาร ไม่ใช่ label) อาจผิดได้ในบางเอกสารที่โครงสร้างต่างไปมาก');
+    log('[NOTE] ไม่มี OPENAI_API_KEY จริง — ใช้โหมดฟรี (regex+heuristic เท่านั้น) container/AWB/port/ETD แม่นยำสูง ส่วน vessel/voyage/B-L/forwarder เป็น best-effort (จับ pattern โครงสร้างเอกสาร ไม่ใช่ label) อาจผิดได้ในบางเอกสารที่โครงสร้างต่างไปมาก');
   }
 
   let etsSession = null;
   let processed = 0;
   let skippedBacklog = 0;
+  const writtenThisRun = new Map(); // po → { folder, mode } กันสองโฟลเดอร์ของ PO เดียวกันทับกันในรอบเดียว
 
   try {
   for (const yearFolder of yearFolders) {
@@ -511,6 +715,7 @@ async function main() {
     try { shipmentFolders = discoverShipmentFolders(yearFolder); }
     catch (e) { log(`[WARN] อ่านโฟลเดอร์ปี ${yearFolder} ไม่ได้ (${e.message}) — ข้ามปีนี้`); continue; }
     for (const folderName of shipmentFolders) {
+      if (ONLY && !folderName.toUpperCase().includes(ONLY)) continue;
       const poNumbers = extractPoNumbers(folderName);
       const fullDir = path.join(IMPORT_ROOT, yearFolder, folderName);
       const allFiles = walkFiles(fullDir);
@@ -520,24 +725,82 @@ async function main() {
         const prev = seen[fp];
         return !prev || prev.mtimeMs !== stat.mtimeMs || prev.size !== stat.size;
       });
-      if (!newFiles.length) continue; // ไฟล์ไม่เปลี่ยน ข้าม ไม่เรียก AI ซ้ำ
+      // ไฟล์ไม่เปลี่ยน ข้าม ไม่เรียก AI ซ้ำ — ยกเว้นตอนเจาะจงโฟลเดอร์ด้วย --only (สั่งทดสอบเอง)
+      if (!newFiles.length && !ONLY) continue;
 
       // จำกัดจำนวนโฟลเดอร์/รอบเฉพาะตอนใช้ AI (มีค่าใช้จ่ายจริง) — โหมดฟรี (regex local) เร็ว/ไม่มี
       // ค่าใช้จ่าย ประมวลผล backlog ทั้งหมดในรอบเดียวได้เลย ไม่ต้องจำกัด
-      if (anthropic && processed >= MAX_FOLDERS_PER_RUN) { skippedBacklog++; continue; }
+      if (openai && processed >= MAX_FOLDERS_PER_RUN) { skippedBacklog++; continue; }
       processed++;
 
-      log(`[${folderName}] PO: ${poNumbers.join(', ')} — ไฟล์ใหม่/เปลี่ยน ${newFiles.length}/${allFiles.length}`);
+      log(`[${folderName}] PO: ${poNumbers.map(t => t.key).join(', ')} — ไฟล์ใหม่/เปลี่ยน ${newFiles.length}/${allFiles.length}`);
       try {
         // แปลงไฟล์ "ทั้งหมด" ในโฟลเดอร์เสมอ (ไม่ใช่แค่ไฟล์ใหม่) เพราะต้องเห็นเอกสารครบชุด
         // ถึงจะตัดสินใจถูก (เช่น B/L เดิมที่ไม่เปลี่ยน + CI ใหม่ที่เพิ่งมา)
-        const { documentBlocks, excelText, pdfText } = await convertFiles(allFiles, !!anthropic);
+        const { documentBlocks, excelText, pdfText, usedNames } = await convertFiles(allFiles, !!openai);
         if (!documentBlocks.length && !excelText && !pdfText) { log('  ไม่มีไฟล์ที่อ่านได้เลย ข้าม'); continue; }
 
-        const result = anthropic
-          ? await extractFields(anthropic, documentBlocks, excelText)
-          : extractFieldsFree(pdfText + '\n' + excelText);
-        log(`  ดึงได้: etd=${result.etd} vessel=${result.vessel} voyage=${result.voyage} bl=${result.blNumber} forwarder=${result.forwarder} mode=${result.mode} pol=${result.portOfLoading} pod=${result.portOfDischarge} container=${(result.containerNumbers||[]).join('/')} awb=${result.awbNumber}`);
+        const raw = openai
+          ? await extractFields(openai, documentBlocks, excelText, pdfText)
+          : { shipments: [extractFieldsFree(pdfText + '\n' + excelText)] };
+        // กันซ้ำระดับโค้ดอีกชั้น — prompt สั่งห้ามคืนซ้ำแล้วแต่ยังเจอจริง (2026-08-11: โฟลเดอร์ "23."
+        // คืน B/L NBXCF2503021B มาสองรอบเหมือนกันเป๊ะ) คีย์ = เที่ยวเรือ+ตู้+invoice ตามเกณฑ์แยก shipment
+        const dedupKey = s => [s.vessel, s.voyage, (s.containerNumbers || []).join('|'), s.invoiceNo, s.blNumber || s.awbNumber]
+          .map(x => String(x || '').toUpperCase().replace(/[^A-Z0-9|]/g, '')).join('~');
+        // ── ตัด shipment ของบริษัทอื่นออกก่อนทุกขั้น ────────────────────────────────────
+        // ผู้ขายรายเดียวกันมักรวมของหลายบริษัทขึ้นเรือลำเดียวเที่ยวเดียว แล้วออก B/L แยกใบต่อบริษัท
+        // (AOF ยืนยัน 2026-08-11: โฟลเดอร์ "23." มี NBXCF2503021A ของ KOB กับ NBXCF2503021B ของ
+        //  Cosmonation ซึ่งไม่เกี่ยวกับ KOB เลย) ระบบนี้ติดตามเฉพาะ KOB กับ BTV เท่านั้น
+        // *ต้องตัดก่อนขั้นรวมเที่ยว* ไม่งั้น B/L ของบริษัทอื่นอาจถูกรวมแล้วชนะขึ้นมาเป็นค่าที่บันทึก
+        const isOwnPo = p => /^(KOB|BTV)PO/i.test(String(p || '').trim());
+        const ownShipments = (Array.isArray(raw.shipments) ? raw.shipments : []).filter(Boolean)
+          .map(s => ({ ...s, poNumbers: (s.poNumbers || []).filter(isOwnPo), _origPo: s.poNumbers || [] }))
+          .filter(s => {
+            if (s._origPo.length && !s.poNumbers.length) {
+              log(`  [SKIP-OTHER] B/L ${s.blNumber || s.awbNumber || '?'} เป็นของบริษัทอื่น (${s._origPo.join(', ')}) — ระบบนี้ติดตามเฉพาะ KOB/BTV`);
+              return false;
+            }
+            return true;
+          });
+
+        const seenShip = new Set();
+        const rawShipments = ownShipments.filter(Boolean)
+          .filter(s => { const k = dedupKey(s); if (seenShip.has(k)) { log(`  [DEDUP] ตัด shipment ซ้ำ (B/L ${s.blNumber || s.awbNumber || '?'})`); return false; } seenShip.add(k); return true; });
+
+        // ── รวม shipment ที่เป็น "เที่ยวเดียวกัน" เข้าด้วยกัน (บังคับด้วยโค้ด ไม่พึ่ง prompt) ──────
+        // ของขึ้นเรือลำเดียว เที่ยวเดียว = shipment เดียวเสมอ ต่อให้เอกสารจะมี B/L หลายฉบับ
+        // (MBL ของสายเรือ + HBL ของ forwarder เลขคนละเลข เป็นเรื่องปกติ) — เจอจริง 2026-08-11:
+        // โฟลเดอร์ "23." ถูกแยกเป็น 5 shipment ทั้งที่ทุกใบเป็น CA SAIGON เที่ยว V.2506S เหมือนกันหมด
+        // สั่งใน prompt แล้วโมเดลยังแยกอยู่ จึงต้องรวมเองหลังได้ผลลัพธ์
+        const tripKey = s => {
+          const n = x => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^V(?=\d)/, '');
+          if (s.mode === 'air' || (!s.vessel && s.awbNumber)) return 'AIR~' + n(s.awbNumber);
+          if (s.vessel && s.voyage) return 'SEA~' + n(s.vessel) + '~' + n(s.voyage);
+          return 'BL~' + n(s.blNumber || s.awbNumber) || Math.random().toString(36);
+        };
+        const merged = new Map();
+        for (const s of rawShipments) {
+          const k = tripKey(s);
+          const prev = merged.get(k);
+          if (!prev) { merged.set(k, { ...s, poNumbers: [...(s.poNumbers || [])], containerNumbers: [...(s.containerNumbers || [])] }); continue; }
+          prev.poNumbers = [...new Set([...prev.poNumbers, ...(s.poNumbers || [])])];
+          prev.containerNumbers = [...new Set([...prev.containerNumbers, ...(s.containerNumbers || [])])];
+          for (const f of ['etd', 'forwarder', 'blNumber', 'awbNumber', 'invoiceNo', 'portOfLoading', 'portOfDischarge']) {
+            if (!prev[f] && s[f]) prev[f] = s[f];
+          }
+        }
+        const shipments = [...merged.values()];
+        if (shipments.length < rawShipments.length) {
+          log(`  [MERGE] รวม ${rawShipments.length} รายการที่ AI แยกมา เหลือ ${shipments.length} shipment จริง (เที่ยวเรือ/เที่ยวบินเดียวกัน)`);
+        }
+        if (!shipments.length) { log('  ไม่พบข้อมูล shipment ในเอกสารชุดนี้'); continue; }
+        if (shipments.length > 1) log(`  ⚠ โฟลเดอร์นี้มี ${shipments.length} shipment แยกกัน (เลข B/L ต่างกัน) — จะแยกเขียนคนละการ์ด`);
+
+        const folderMode = detectModeFromFolder(folderName);
+        const claimedTargets = new Set(); // กัน shipment สองตัวเขียนลงการ์ดใบเดียวกัน
+
+        for (const result of shipments) {
+        log(`  ดึงได้: inv=${result.invoiceNo} etd=${result.etd} vessel=${result.vessel} voyage=${result.voyage} bl=${result.blNumber} forwarder=${result.forwarder} mode=${result.mode} pol=${result.portOfLoading} pod=${result.portOfDischarge} container=${(result.containerNumbers||[]).join('/')} awb=${result.awbNumber} po=${(result.poNumbers||[]).join('/')}`);
 
         const fields = {};
         if (result.etd) fields.etd = result.etd;
@@ -549,24 +812,105 @@ async function main() {
         if (result.containerNumbers && result.containerNumbers.length) fields.container = result.containerNumbers.join(', ');
         if (result.portOfLoading) fields.origin = result.portOfLoading;
         if (result.portOfDischarge) fields.dest = result.portOfDischarge;
-        if (result.mode && result.mode !== 'unknown') fields.mode = result.mode;
+
+        // mode: ชื่อโฟลเดอร์ชี้ขาดก่อน แล้วค่อยดูชนิดเอกสาร ท้ายสุดจึงใช้ที่ AI เดา
+        // (โฟลเดอร์ที่มีทั้งขาเรือและขาอากาศปนกัน ชื่อโฟลเดอร์จะระบุไม่ได้ → ต้องเชื่อ AI รายชิปเม้น)
+        const docMode = (shipments.length > 1 && result.mode && result.mode !== 'unknown' ? result.mode : null)
+          || folderMode || detectModeFromDocs(usedNames, pdfText)
+          || (result.mode && result.mode !== 'unknown' ? result.mode : null);
+        if (docMode) fields.mode = docMode;
+        if (folderMode && result.mode && result.mode !== 'unknown' && result.mode !== folderMode) {
+          log(`  [NOTE] ชื่อโฟลเดอร์บอก ${folderMode} แต่ AI อ่านเอกสารได้ ${result.mode} — ใช้ตามชื่อโฟลเดอร์`);
+        }
 
         if (result.vessel) {
           try {
             if (!etsSession) { log('  เปิด ETS session ครั้งแรก...'); etsSession = await openEtsSession(); }
-            const etaResult = await searchVesselActualDate(etsSession.page, result.vessel, result.mode === 'air' ? 'air' : 'sea', result.voyage);
-            log(`  ETA lookup (${result.vessel} voy=${result.voyage}): status=${etaResult.status} eta=${etaResult.eta} matchedVoyage=${etaResult.matchedVoyage} ของทั้งหมด ${etaResult.totalVoyagesFound} เที่ยว`);
+            // ส่ง etd ไปด้วยเพื่อให้ค้นในช่วงวันที่ของ shipment นี้จริงๆ ไม่ใช่ช่วงรอบ "วันนี้"
+            const etaResult = await searchVesselActualDate(etsSession.page, result.vessel, result.mode === 'air' ? 'air' : 'sea', result.voyage, result.etd);
+            log(`  ETA lookup (${result.vessel} voy=${result.voyage} etd=${result.etd}): status=${etaResult.status} eta=${etaResult.eta} matchedVoyage=${etaResult.matchedVoyage} ของทั้งหมด ${etaResult.totalVoyagesFound} เที่ยว${etaResult.reason ? ' — ' + etaResult.reason : ''}`);
             if (etaResult.eta) fields.eta = etaResult.eta;
           } catch (e) {
             log(`  [WARN] ETA lookup ล้มเหลว: ${e.message}`);
           }
         }
 
+        // ── เลือกว่า shipment นี้ต้องเขียนลงการ์ดใบไหน ──────────────────────────────────
+        // shipment เดียว = เขียนลงทุก PO ในชื่อโฟลเดอร์ (ของทั้งชุดมาด้วย B/L ใบเดียวกัน)
+        // หลาย shipment = จับคู่ตามเลข PO ที่ AI ระบุว่า shipment นั้นครอบคลุม จับคู่ไม่ได้ = ไม่เขียน
+        // (เดาแล้วเขียนผิดการ์ด อันตรายกว่าไม่เขียน — เป็นบทเรียนจากรอบที่ข้อมูลจริงเสียไปแล้ว)
+        let targets = poNumbers;
+        if (shipments.length > 1) {
+          const claims = (result.poNumbers || []).map(p => stripPoIndex(String(p).toUpperCase()));
+          targets = poNumbers.filter(t => !claimedTargets.has(t.key) && claims.includes(t.base));
+          if (!targets.length) {
+            log(`  [SKIP] shipment B/L ${result.blNumber || result.awbNumber || '?'} — จับคู่กับ PO ในโฟลเดอร์ไม่ได้ (AI ระบุ: ${claims.join(', ') || 'ไม่ระบุ'})`);
+            continue;
+          }
+        }
+        targets.forEach(t => claimedTargets.add(t.key));
+
+        // บันทึก shipment นี้ลง artifact ก่อนเขียนการ์ด — เก็บทุกใบไม่ว่าจะเขียนลงการ์ดได้หรือไม่
+        // (ชิปเม้นที่ upsert ปฏิเสธเพราะเป็นคนละชิปเม้น จะยังหาเจอที่นี่แล้วเอาไปสร้างการ์ดใหม่ได้)
+        if (!NO_WRITE) {
+          for (const t of targets) {
+            appendShipmentRun({
+              ts: new Date().toISOString(), po: t.key, base: t.base, folder: folderName,
+              invoiceNo: result.invoiceNo || null, bl_awb: result.blNumber || result.awbNumber || null,
+              vessel: result.vessel || null, voyage: result.voyage || null,
+              etd: result.etd || null, eta: fields.eta || null,
+              container: (result.containerNumbers || []).join(', ') || null,
+              origin: result.portOfLoading || null, dest: result.portOfDischarge || null,
+              mode: docMode || null, forwarder: result.forwarder || null,
+              shipmentsInFolder: shipments.length,
+            });
+          }
+        }
+
         if (Object.keys(fields).length) {
-          for (const po of poNumbers) {
+          for (const t of targets) {
+            const po = t.key;
+            // การ์ดชิปเม้นย่อยที่ยังไม่มีในระบบ → สร้างให้ในรูปแบบเดียวกับปุ่ม "แยก shipment" ในแอป
+            // (_synthetic + _splitBase + ค่าใช้จ่ายเริ่มที่ 0) โดยรับ บริษัท/คู่ค้า/สกุลเงิน จากการ์ดฐาน
+            // ไม่มีการ์ดฐาน = ไม่สร้าง เพราะจะได้การ์ดลอยที่ไม่รู้ว่าเป็นของใคร
+            // ⚠ ต้องเป็น payload ต่อ PO เสมอ ห้าม Object.assign ทับ `fields` ที่ใช้ร่วมกันทั้งโฟลเดอร์
+            // (บั๊กจริง 2026-08-11: โฟลเดอร์ที่มี 2 PO ทำให้ PO ใบที่สองรับ _synthetic/_splitBase/id
+            //  ของ PO ใบแรกไปด้วย → PO จริงจาก Odoo ถูกทำเป็นการ์ดชิปเม้นย่อยของ PO อื่น)
+            const payload = { ...fields };
+            if (t.key !== t.base) {
+              const tracking = loadTrackingLocal();
+              const has = tracking.some(r => (r.po_so || '').toUpperCase() === po.toUpperCase());
+              if (!has) {
+                const b = tracking.find(r => (r.po_so || '').toUpperCase() === t.base.toUpperCase());
+                if (!b) { log(`  [SKIP] ${po} — ไม่มีการ์ดฐาน ${t.base} ในระบบ ยังไม่สร้างชิปเม้นย่อย`); continue; }
+                Object.assign(payload, {
+                  id: 't_' + po, _board: b._board || 'import', _synthetic: true, _splitBase: t.base,
+                  _rateIsThb: true, type: b.type || 'import', company: b.company || 'KOB', party: b.party || '—',
+                  cur: b.cur || b.currency || 'THB', rate: b.rate || 1, amount: 0, stage: 'po',
+                  freight: 0, clearance: 0, insurance: 0, duty: 0, vat: 0, containerQty: 0, bills: [],
+                  note: `แยกจาก PO ${t.base} — ชุดที่ ${t.idx} (สร้างอัตโนมัติจากโฟลเดอร์ "${folderName}")`,
+                });
+                log(`  [CREATE] สร้างการ์ดชิปเม้นย่อย ${po} จากฐาน ${t.base}`);
+              }
+            }
+            // ── กันสองโฟลเดอร์ของ PO เดียวกันเขียนทับกัน ──────────────────────────────
+            // tracking_data.json เก็บ 1 record ต่อ 1 PO (ยืนยันแล้ว: 1,041 record ไม่มี po_so ซ้ำเลย
+            // และ /api/tracking/upsert หา record ด้วย po_so ตรงๆ) แต่ของจริงมี 5 PO ที่แบ่งส่ง
+            // ทั้ง air และ sea = คนละชิปเม้น ถ้าปล่อยไว้จะทับกันไปมาทุกรอบสแกน
+            // ระหว่างยังไม่ได้ตัดสินใจเรื่องแยก record → โฟลเดอร์แรกที่เขียนได้เป็นเจ้าของ
+            // ตัวถัดมาที่คนละ mode จะ "ไม่เขียนทับ" แต่ log ไว้ให้เห็นชัด (ไม่มีข้อมูล ดีกว่าข้อมูลผิด)
+            const prev = writtenThisRun.get(po);
+            if (prev && docMode && prev.mode && prev.mode !== docMode) {
+              log(`  [CONFLICT] ${po} เขียนไปแล้วจากโฟลเดอร์ "${prev.folder}" (${prev.mode}) — โฟลเดอร์นี้เป็น ${docMode} ซึ่งเป็นคนละชิปเม้น จึงไม่เขียนทับ`);
+              continue;
+            }
             try {
-              await upsertTracking({ po_so: po, ...fields });
-              log(`  upsert ${po} สำเร็จ: ${JSON.stringify(fields)}`);
+              if (NO_WRITE) { log(`  [NO-WRITE] จะ upsert ${po}: ${JSON.stringify(payload)}`); continue; }
+              // _fillEmptyOnly: การเขียนอัตโนมัติเติมได้เฉพาะช่องที่ยังว่าง ห้ามทับค่าที่มีอยู่แล้ว
+              // (ปิดโหมดนี้ได้ด้วย --overwrite เมื่อมั่นใจแล้ว — ดู OVERWRITE)
+              await upsertTracking({ po_so: po, ...payload, _origin: `scan:${folderName}`, ...(OVERWRITE ? {} : { _fillEmptyOnly: true }) });
+              writtenThisRun.set(po, { folder: folderName, mode: docMode });
+              log(`  upsert ${po} สำเร็จ: ${JSON.stringify(payload)}`);
             } catch (e) {
               log(`  [ERROR] upsert ${po} ล้มเหลว: ${e.message}`);
             }
@@ -574,8 +918,10 @@ async function main() {
         } else {
           log('  ไม่พบข้อมูลใหม่ที่ดึงได้เลย');
         }
+        } // จบลูป shipment ต่อโฟลเดอร์
 
         // mark seen เฉพาะตอนประมวลผลสำเร็จ (ไม่ throw) กันไฟล์ที่ error ค้างไม่ถูก retry รอบหน้า
+        if (NO_WRITE) continue; // โหมดทดสอบ: ห้ามแตะ ledger ไม่งั้นรอบจริงจะข้ามโฟลเดอร์นี้ไปเลย
         for (const fp of allFiles) {
           try { const st = fs.statSync(fp); seen[fp] = { mtimeMs: st.mtimeMs, size: st.size }; } catch (e) {}
         }

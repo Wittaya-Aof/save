@@ -440,7 +440,7 @@ class App extends Component {
       const saved=localStorage.getItem('kobTheme');
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
@@ -514,6 +514,19 @@ class App extends Component {
   // ── ประวัติการตรวจเอกสารของ PO นี้ (artifact ที่ server เก็บไว้ต่อรอบ) ──
   // ก่อนหน้านี้ผลตรวจถูกทิ้งหลังปิดหน้า ทำให้ตรวจซ้ำก็เริ่มจากศูนย์ — ตอนนี้ดึงมาโชว์ในแผงรายละเอียด
   // ได้ว่า shipment ใบนี้เคยตรวจเมื่อไหร่ เจอปัญหาอะไร โดยไม่ต้องอัปโหลดไฟล์ซ้ำ
+  // ชิปเม้นทั้งหมดที่การสแกนเอกสารเจอสำหรับ PO นี้ (รวมใบที่ยังไม่มีการ์ด)
+  async loadShipmentRuns(poNo){
+    if(!poNo)return;
+    if(this.state.shipRunsPo===poNo&&this.state.shipRuns)return;
+    this.setState({shipRunsPo:poNo,shipRuns:null});
+    try{
+      const c=new AbortController();const t=setTimeout(()=>c.abort(),12000);
+      const r=await fetch('/api/shipment-runs?limit=50&po='+encodeURIComponent(poNo),{signal:c.signal});
+      clearTimeout(t);
+      const j=await r.json();
+      if(this.state.shipRunsPo===poNo)this.setState({shipRuns:j.runs||[]});
+    }catch(e){ if(this.state.shipRunsPo===poNo)this.setState({shipRuns:[]}); }
+  }
   async loadVerifyRuns(poNo){
     if(!poNo)return;
     if(this.state.verifyRunsPo===poNo&&this.state.verifyRuns)return;
@@ -546,7 +559,7 @@ class App extends Component {
   componentDidUpdate(prevProps,prevState){
     if(this.state.detailId&&this.state.detailId!==prevState.detailId){
       const sel=this.allShipments().find(s=>s.id===this.state.detailId);
-      if(sel){this.loadPoLines(sel);this.loadVerifyRuns(sel._splitBase||sel.poNo);}
+      if(sel){this.loadPoLines(sel);this.loadVerifyRuns(sel._splitBase||sel.poNo);this.loadShipmentRuns(sel._splitBase||sel.poNo);}
     }
   }
   // PO ที่แยกเป็น shipment ย่อย (_synthetic) ไม่มี PO จริงคู่กัน — โชว์รายการสินค้าของ PO ต้นฉบับแทน
@@ -825,14 +838,17 @@ class App extends Component {
   // ── แยก PO ที่ถูกส่งเป็นหลายรอบออกเป็น shipment ย่อยบน Kanban ──
   // ตั้งชื่อ PO ต่อท้ายด้วย " (n)" (convention เดียวกับที่ strip()/applyOverrides ใช้จับคู่ PO เดิมอยู่แล้ว)
   // ค่ามูลค่า/ต้นทุนเริ่มที่ 0 เสมอ — ต้อง กรอกเองว่าล็อตนี้เป็นสัดส่วนเท่าไหร่ ไม่งั้นยอดจะนับซ้ำกับ PO ต้นฉบับ
-  splitShipment(){
+  // pre = ข้อมูลชิปเม้นที่การสแกนเอกสารเจอ (จาก /api/shipment-runs) — กรอกให้อัตโนมัติเพื่อไม่ต้องพิมพ์
+  // เอง เหลือแค่กรอกค่าใช้จ่ายของล็อตนั้น · เรียกโดยไม่ส่ง pre = การ์ดเปล่าเหมือนเดิม
+  splitShipment(pre){
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
     const base=this.strip(s._splitBase||s.poNo);
     const siblings=this.allShipments().filter(x=>this.strip(x._splitBase||x.poNo)===base);
     const n=siblings.length+1;
     const poNo=base+' ('+n+')';
     const id='t_'+poNo;
-    const o={po_so:poNo,id,_board:s._board,_edited:true,_synthetic:true,_rateIsThb:true,_splitBase:base,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:0,rate:s.rate,stage:s._board==='export'?'draft':'po',mode:s.mode||'sea',seaType:s.seaType||'',containerQty:0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:'',bl_awb:'',container:'',vessel:'',forwarder:'',etd:'',eta:s.eta||'',actualDate:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,bills:[],overReceipt:false,note:'แยกจาก PO '+base+' — ชุดที่ '+n};
+    const p=pre||{};
+    const o={po_so:poNo,id,_board:s._board,_edited:true,_synthetic:true,_rateIsThb:true,_splitBase:base,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:0,rate:s.rate,stage:s._board==='export'?'draft':'po',mode:p.mode||s.mode||'sea',seaType:s.seaType||'',containerQty:0,courierCo:s.courierCo||'',origin:p.origin||s.origin||'',dest:p.dest||s.dest||'',bl:p.bl_awb||'',bl_awb:p.bl_awb||'',container:p.container||'',vessel:[p.vessel,p.voyage].filter(Boolean).join(' / '),forwarder:p.forwarder||'',etd:p.etd||'',eta:p.eta||s.eta||'',actualDate:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,bills:[],overReceipt:false,note:'แยกจาก PO '+base+' — ชุดที่ '+n+(p.bl_awb?(' · จากเอกสารในโฟลเดอร์ "'+(p.folder||'')+'"'):'')};
     const ov={...this._overrides};ov[poNo]=o;this._overrides=ov;
     const ns=this.mapSynthetic(o);
     this.setState({shipments:[ns].concat(this.allShipments()),detailId:ns.id,tab:s._board,view:'kanban'},()=>this.startEdit());
@@ -2111,6 +2127,36 @@ class App extends Component {
             })()}
             {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginBottom:'18px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
             {sel.note&&<div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}>{sel.note}</div>}
+            {(()=>{
+              // ── ชิปเม้นที่เอกสารบอกว่ามี แต่ยังไม่มีการ์ดในระบบ ──────────────────────────
+              // การ์ด 1 ใบเก็บได้ชิปเม้นเดียว (1 B/L) แต่ PO เดียวแบ่งส่งได้หลายชิปเม้น ระบบจึง
+              // "ไม่เขียนทับ" ข้อมูลของชิปเม้นอื่นลงการ์ดนี้ (ดู _fillEmptyOnly ใน api-server.js)
+              // แต่ข้อมูลนั้นไม่หาย — เก็บไว้ที่ shipment_runs.jsonl แล้วโชว์ตรงนี้ให้กดสร้างการ์ดได้เลย
+              // ตั้งใจไม่สร้างการ์ดอัตโนมัติ เพราะการ์ดที่ยังไม่มีค่าใช้จ่ายต้องมีคนมากรอกอยู่ดี
+              const sr=this.state.shipRuns;
+              if(this.state.shipRunsPo===(sel._splitBase||sel.poNo)&&sr&&sr.length>1){
+                const norm=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+                const known=new Set(this.allShipments()
+                  .filter(x=>this.strip(x._splitBase||x.poNo)===this.strip(sel._splitBase||sel.poNo))
+                  .map(x=>norm(x.bl)).filter(Boolean));
+                const missing=sr.filter(r=>r.bl_awb&&!known.has(norm(r.bl_awb)));
+                if(missing.length)return <div style={{marginBottom:'18px'}}>
+                  <SectionTitle>ชิปเม้นที่ยังไม่มีการ์ด</SectionTitle>
+                  <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginBottom:'8px'}}>เอกสารของ PO นี้พบ {sr.length} ชิปเม้น (เลข B/L ต่างกัน = คนละเที่ยวเรือ) แต่ในระบบยังไม่มีการ์ดของ {missing.length} ใบ</div>
+                  {missing.map((r,i)=><div key={i} style={{background:'var(--color-warn-soft)',border:'1px solid var(--color-warn-border)',borderRadius:'var(--radius)',padding:'10px 12px',marginBottom:'6px'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+                      <div style={{fontSize:'12px',color:'var(--color-text-secondary)'}}>
+                        <div style={{fontWeight:500,fontFamily:'var(--font-mono)'}}>{r.bl_awb}</div>
+                        <div style={{marginTop:'2px'}}>{[r.vessel&&(r.vessel+(r.voyage?' / '+r.voyage:'')),r.etd&&('ETD '+fmtDate(r.etd)),r.eta&&('ETA '+fmtDate(r.eta)),r.container].filter(Boolean).join(' · ')||'—'}</div>
+                        {r.invoiceNo&&<div style={{marginTop:'2px',color:'var(--color-text-muted)'}}>Invoice {r.invoiceNo}</div>}
+                      </div>
+                      <button onClick={()=>this.splitShipment(r)} title="สร้างการ์ดใหม่พร้อมกรอกข้อมูลจัดส่งจากเอกสารให้อัตโนมัติ — เหลือแค่กรอกค่าใช้จ่าย" style={{padding:'6px 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand-text)',fontSize:'12px',fontWeight:500,cursor:'pointer',whiteSpace:'nowrap'}}>สร้างการ์ดจากชิปเม้นนี้</button>
+                    </div>
+                  </div>)}
+                </div>;
+              }
+              return null;
+            })()}
             {(()=>{
               // ผลตรวจเอกสารล่าสุดของ PO นี้ — เชื่อม "การตรวจเอกสาร" กับ "record ของ shipment"
               // ซึ่งเดิมแยกกันสิ้นเชิง (ตรวจแล้วผลหายไป ไม่มีร่องรอยที่ตัว shipment)
