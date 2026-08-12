@@ -965,6 +965,20 @@ async function main() {
     if (etsSession) await closeEtsSession(etsSession);
   }
   if (skippedBacklog) log(`[NOTE] เหลือ ${skippedBacklog} โฟลเดอร์ที่ยังไม่ได้สแกน (เกิน ${MAX_FOLDERS} โฟลเดอร์/รอบ) จะสแกนต่อรอบหน้า`);
+
+  // ── เก็บกวาด ledger: ตัด entry ของไฟล์ที่ไม่มีอยู่แล้ว (โฟลเดอร์ถูกเปลี่ยนชื่อ/ลบ) ─────────
+  // doc_scan_seen.json โตทางเดียว (891KB ณ 2026-08-12) — การเปลี่ยนชื่อโฟลเดอร์ทิ้ง entry ตายไว้
+  // ⚠ guard สำคัญ: ทำเฉพาะเมื่อ IMPORT_ROOT เข้าถึงได้จริง — ถ้าไดรฟ์ D: หลุดชั่วคราวแล้วเผลอ
+  // ตัดทั้ง ledger รอบถัดไปจะ re-scan ทั้ง backlog (เสียเงิน AI ซ้ำทั้งชุด)
+  if (!DRY_RUN && !NO_WRITE && fs.existsSync(IMPORT_ROOT)) {
+    let pruned = 0;
+    for (const fp of Object.keys(seen)) {
+      if (!fp.startsWith(IMPORT_ROOT)) continue; // ไม่ใช่ไฟล์ใต้ root นี้ ไม่ตัดสิน
+      if (!fs.existsSync(fp)) { delete seen[fp]; pruned++; }
+    }
+    if (pruned) { saveSeen(seen); log(`[Seen] ตัด entry ของไฟล์ที่ไม่มีอยู่แล้ว ${pruned} รายการออกจาก ledger`); }
+  }
+
   log(`=== จบการสแกน — ประมวลผล ${processed} โฟลเดอร์ ===`);
 }
 

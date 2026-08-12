@@ -644,7 +644,18 @@ class App extends Component {
     const idx={};Object.keys(ov).forEach(k=>{if(ov[k]._synthetic)return;const n=this.strip(k);if(!idx[n])idx[n]=ov[k];});
     const merged=rows.map(s=>{const o=ov[s.poNo]||idx[this.strip(s.poNo)];return o?this.applyOne(s,o):s;});
     // shipment ย่อยที่แยกออกจาก PO เดิม (ไม่มี PO จริงคู่กันใน Odoo) — ไม่ merge ทับ ต้องเพิ่มเป็นรายการใหม่ต่างหาก
-    const extra=Object.keys(ov).filter(k=>ov[k]._synthetic&&!rows.some(s=>s.poNo===k)).map(k=>this.mapSynthetic(ov[k]));
+    // สถานะรับของอ้างจาก "PO ต้นฉบับ" (_splitBase): Odoo บอก full = ทุกล็อตของ PO นั้นเข้าคลังแล้ว
+    // การ์ดแยกก็ต้องเป็น received ด้วย — เดิมการ์ดแยกใช้ stage ที่เก็บไว้ตายตัว ไม่มีวันขยับเอง
+    // (เจอจริง: การ์ดแยกค้าง 'po' ทั้งที่ ETA ผ่านมาเป็นปีและของเข้าคลังครบแล้ว)
+    const baseIdx={};rows.forEach(r=>{const n=this.strip(r.poNo);if(!baseIdx[n])baseIdx[n]=r;});
+    const extra=Object.keys(ov).filter(k=>ov[k]._synthetic&&!rows.some(s=>s.poNo===k)).map(k=>{
+      const ns=this.mapSynthetic(ov[k]);
+      const b=baseIdx[this.strip(ns._splitBase||ns.poNo)];
+      const rs=b&&b._receiptStatus;
+      if(rs==='full')ns.stage=ns._board==='export'?'arrived':'received';
+      else if(rs==='partial')ns.stage=ns._board==='export'?'shipped':'customs';
+      return ns;
+    });
     return merged.concat(extra);
   }
   // สร้าง shipment object เต็มจาก override ที่เป็นรายการสังเคราะห์ (แยก shipment/สร้างใหม่)
@@ -667,9 +678,13 @@ class App extends Component {
     if(o.overReceipt!=null)m.overReceipt=!!o.overReceipt;
     if(Array.isArray(o.bills))m.bills=o.bills;
     if(o.stage){
-      // Odoo ยืนยันรับของ/ส่งถึงแล้ว (terminal stage) → override เก่าห้ามดึงสถานะถอยหลัง
+      // Odoo ยืนยันการรับ/ส่งของแล้ว → สถานะจาก Odoo ชนะ override เสมอ กันการ์ดค้างสถานะเก่า
+      // (เดิม guard เฉพาะ terminal=full — เคส partial ยังถูก override เก่าดึงถอยหลังได้
+      //  เจอจริง 2026-08-12: การ์ดค้าง booking/transit ทั้งที่ Odoo บอกรับของแล้วบางส่วน)
       const terminal=s._board==='export'?'arrived':'received';
-      if(s.stage!==terminal||o.stage===terminal){m.stage=o.stage;m._stageManual=true;}
+      const rs=s._receiptStatus;
+      if(rs==='full'||rs==='partial'){/* คงสถานะที่ derive จาก Odoo (received/customs หรือ arrived/shipped) */}
+      else if(s.stage!==terminal||o.stage===terminal){m.stage=o.stage;m._stageManual=true;}
     }
     m._edited=true; return m;
   }
