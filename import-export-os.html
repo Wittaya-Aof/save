@@ -2149,12 +2149,22 @@ class App extends Component {
               // แต่ข้อมูลนั้นไม่หาย — เก็บไว้ที่ shipment_runs.jsonl แล้วโชว์ตรงนี้ให้กดสร้างการ์ดได้เลย
               // ตั้งใจไม่สร้างการ์ดอัตโนมัติ เพราะการ์ดที่ยังไม่มีค่าใช้จ่ายต้องมีคนมากรอกอยู่ดี
               const sr=this.state.shipRuns;
-              if(this.state.shipRunsPo===(sel._splitBase||sel.poNo)&&sr&&sr.length>1){
+              if(this.state.shipRunsPo===(sel._splitBase||sel.poNo)&&sr&&sr.length){
                 const norm=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-                const known=new Set(this.allShipments()
-                  .filter(x=>this.strip(x._splitBase||x.poNo)===this.strip(sel._splitBase||sel.poNo))
-                  .map(x=>norm(x.bl)).filter(Boolean));
-                const missing=sr.filter(r=>r.bl_awb&&!known.has(norm(r.bl_awb)));
+                const sibs=this.allShipments()
+                  .filter(x=>this.strip(x._splitBase||x.poNo)===this.strip(sel._splitBase||sel.poNo));
+                const known=new Set(sibs.map(x=>norm(x.bl)).filter(Boolean));
+                const knownVessels=sibs.map(x=>norm(x.vessel)).filter(Boolean);
+                const missing=sr.filter(r=>{
+                  if(!r.bl_awb||known.has(norm(r.bl_awb)))return false;
+                  if(sr.length>1)return true; // เอกสารบอกหลายชิปเม้นชัดเจน
+                  // เอกสารพบชิปเม้นเดียวแต่ B/L ไม่ตรงการ์ด — โชว์เฉพาะเมื่อ "เรือ" ก็ไม่ตรงด้วย
+                  // (B/L ต่างเพราะ MBL/HBL คนละใบแต่เรือเดียวกัน = ชิปเม้นเดิม ไม่ใช่ใบตกหล่น
+                  //  เคสจริงที่ต้องโชว์: การ์ดเก็บ AWB ขาอากาศ แต่เอกสารเป็นขาเรือ KUO LONG)
+                  const rv=norm(r.vessel);
+                  if(!rv)return false;
+                  return !knownVessels.some(v=>v.includes(rv)||rv.includes(v));
+                });
                 if(missing.length)return <div style={{marginBottom:'18px'}}>
                   <SectionTitle>ชิปเม้นที่ยังไม่มีการ์ด</SectionTitle>
                   <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginBottom:'8px'}}>เอกสารของ PO นี้พบ {sr.length} ชิปเม้น (เลข B/L ต่างกัน = คนละเที่ยวเรือ) แต่ในระบบยังไม่มีการ์ดของ {missing.length} ใบ</div>
