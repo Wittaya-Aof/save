@@ -617,7 +617,8 @@ function splitVesselVoyage(vessel, voyage) {
   const tokens = String(vessel).trim().split(/\s+/);
   if (tokens.length < 2) return { vessel, voyage };
   const last = tokens[tokens.length - 1];
-  const m = /^[\/]?V?\.?(\d{2,4}[A-Z]{1,2})$/i.exec(last);
+  // รูปแบบเลขเที่ยวที่เจอจริง: 2507S / 76S (ตัวเลขนำ) และ S023 (ตัวอักษรนำ เช่น "ANBIEN SKY V.S023")
+  const m = /^[\/]?V?\.?(\d{2,4}[A-Z]{1,2}|[A-Z]{1,2}\d{2,4}[A-Z]?)$/i.exec(last);
   if (!m) return { vessel, voyage };
   return { vessel: tokens.slice(0, -1).join(' '), voyage: m[1].toUpperCase() };
 }
@@ -852,7 +853,13 @@ async function main() {
           log(`  [NOTE] ชื่อโฟลเดอร์บอก ${folderMode} แต่ AI อ่านเอกสารได้ ${result.mode} — ใช้ตามชื่อโฟลเดอร์`);
         }
 
-        if (result.vessel) {
+        // ETS "Vessel Arrival" เป็นระบบของเรือเท่านั้น — ชิปเม้นทางอากาศจะเอาเลขเที่ยวบิน
+        // (VZ3525, CK273, HT3859 …) ไปค้นเป็นชื่อเรือ ซึ่งไม่มีวันเจอ วัดจริงรอบสแกน 2026:
+        // air/not_found 13 ครั้ง sea/found 58 — ทางอากาศไม่เคยสำเร็จสักครั้ง
+        // ข้ามไปเลยดีกว่า: ประหยัดเวลา ~20 วิ/ครั้ง และไม่ทิ้ง not_found ปลอมไว้ใน log
+        if (result.vessel && docMode === 'air') {
+          log(`  ข้าม ETA lookup — ชิปเม้นทางอากาศ (ETS Vessel Arrival ค้นได้เฉพาะเรือ)`);
+        } else if (result.vessel) {
           try {
             if (!etsSession) { log('  เปิด ETS session ครั้งแรก...'); etsSession = await openEtsSession(); }
             // ส่ง etd ไปด้วยเพื่อให้ค้นในช่วงวันที่ของ shipment นี้จริงๆ ไม่ใช่ช่วงรอบ "วันนี้"
