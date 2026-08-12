@@ -606,6 +606,22 @@ function extractFieldsFree(text) {
   };
 }
 
+// ─── แยกเลขเที่ยว (voyage) ที่ติดมากับชื่อเรือ ─────────────────────────────────────────
+// B/L จำนวนมากพิมพ์ชื่อเรือกับเลขเที่ยวติดกันในช่องเดียว ("JARU BHUM 175S", "KANWAY FORTUNE 76S",
+// "CA SAIGON V.2506S") → AI คืน voyage=null แล้ว ETS หาไม่เจอ (ETS ต้องการชื่อเรือเปล่าๆ)
+// แยกเฉพาะเมื่อ (1) ยังไม่มี voyage (2) ชื่อมี ≥2 คำ (3) คำท้ายเป็นรูปเลขเที่ยว "ตัวเลข+ตัวอักษรท้าย"
+// ⚠ ห้ามแยกเลขล้วน — ชื่อเรือจริงลงท้ายด้วยเลขได้ ("XIN MING ZHOU 108") ตัดเลขออกแล้วจะไปชนเรือ
+// ลำอื่นในตระกูลเดียวกัน (XIN MING ZHOU 102/106/...) ใน ETS
+function splitVesselVoyage(vessel, voyage) {
+  if (!vessel || voyage) return { vessel, voyage };
+  const tokens = String(vessel).trim().split(/\s+/);
+  if (tokens.length < 2) return { vessel, voyage };
+  const last = tokens[tokens.length - 1];
+  const m = /^[\/]?V?\.?(\d{2,4}[A-Z]{1,2})$/i.exec(last);
+  if (!m) return { vessel, voyage };
+  return { vessel: tokens.slice(0, -1).join(' '), voyage: m[1].toUpperCase() };
+}
+
 // ─── ชี้ขาดว่าโฟลเดอร์นี้เป็นชิปเม้นทางอากาศหรือทางเรือ ──────────────────────────────────
 // AOF ยืนยัน 2026-08-11: PO เดียวกันแบ่งส่งได้ทั้ง air และ sea และถือเป็น "คนละชิปเม้น"
 // ลำดับความน่าเชื่อถือ: ชื่อโฟลเดอร์ > ชนิดเอกสารที่มีในโฟลเดอร์ > ที่ AI เดามาจากเนื้อเอกสาร
@@ -807,6 +823,12 @@ async function main() {
         const claimedTargets = new Set(); // กัน shipment สองตัวเขียนลงการ์ดใบเดียวกัน
 
         for (const result of shipments) {
+        // แยกเลขเที่ยวที่ติดมากับชื่อเรือ ก่อนใช้ทั้งตอนเขียนการ์ดและตอนค้น ETS
+        {
+          const sv = splitVesselVoyage(result.vessel, result.voyage);
+          if (sv.vessel !== result.vessel) log(`  [SPLIT-VOY] "${result.vessel}" → เรือ "${sv.vessel}" เที่ยว "${sv.voyage}"`);
+          result.vessel = sv.vessel; result.voyage = sv.voyage;
+        }
         log(`  ดึงได้: inv=${result.invoiceNo} etd=${result.etd} vessel=${result.vessel} voyage=${result.voyage} bl=${result.blNumber} forwarder=${result.forwarder} mode=${result.mode} pol=${result.portOfLoading} pod=${result.portOfDischarge} container=${(result.containerNumbers||[]).join('/')} awb=${result.awbNumber} po=${(result.poNumbers||[]).join('/')}`);
 
         const fields = {};

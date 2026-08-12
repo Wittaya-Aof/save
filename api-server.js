@@ -469,26 +469,39 @@ function saveIntegritySeenKeys() {
 }
 
 let mailTransporter;
+// อีเมลแจ้งเตือน — ย้ายจาก Gmail มาเป็น SMTP ทั่วไป (default = Outlook/Microsoft 365) 2026-08-12
+// เหตุ: GMAIL_APP_PASSWORD เดิมถูก Google เพิกถอน (SMTP ตอบ 535) ระบบแจ้งเตือนตายเงียบ
+// ตั้งค่าใน .env: MAIL_USER + MAIL_PASS (และ MAIL_HOST/MAIL_PORT ถ้าไม่ใช่ Outlook)
+// ยังรองรับ GMAIL_USER/GMAIL_APP_PASSWORD เดิมเป็น fallback ถ้าไม่ได้ตั้ง MAIL_*
 function getMailTransporter() {
   if (mailTransporter !== undefined) return mailTransporter;
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) { mailTransporter = null; return null; }
-  mailTransporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
-  });
+  if (process.env.MAIL_USER && process.env.MAIL_PASS) {
+    mailTransporter = nodemailer.createTransport({
+      host: process.env.MAIL_HOST || 'smtp.office365.com',
+      port: parseInt(process.env.MAIL_PORT, 10) || 587,
+      secure: false, // 587 = STARTTLS (nodemailer ยกระดับเป็น TLS เองหลัง handshake)
+      auth: { user: process.env.MAIL_USER, pass: process.env.MAIL_PASS },
+    });
+  } else if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+    mailTransporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+    });
+  } else { mailTransporter = null; return null; }
   return mailTransporter;
 }
+function mailFrom() { return process.env.MAIL_USER || process.env.GMAIL_USER; }
 
 async function sendIntegrityAlertEmail(newFindings, label) {
   const transporter = getMailTransporter();
   const to = process.env.ALERT_EMAIL_TO;
   if (!transporter || !to) {
-    console.log('[Integrity] ยังไม่ได้ตั้งค่าอีเมล (GMAIL_USER/GMAIL_APP_PASSWORD/ALERT_EMAIL_TO ใน .env) — ข้ามการแจ้งเตือน');
+    console.log('[Integrity] ยังไม่ได้ตั้งค่าอีเมล (MAIL_USER/MAIL_PASS/ALERT_EMAIL_TO ใน .env) — ข้ามการแจ้งเตือน');
     return;
   }
   const lines = newFindings.map(f => `- ${f.message}`).join('\n');
   await transporter.sendMail({
-    from: process.env.GMAIL_USER,
+    from: mailFrom(),
     to,
     subject: `[Logistics Tracking] พบข้อมูลผิดปกติใหม่ ${newFindings.length} จุด`,
     text: `ระบบตรวจสอบข้อมูลอัตโนมัติ (${label}) พบรายการใหม่ที่น่าสงสัย:\n\n${lines}\n\nดูรายละเอียดที่ Dashboard: http://localhost:3000/`,
@@ -508,7 +521,7 @@ async function sendNoDataAlertEmail(label) {
     return;
   }
   await transporter.sendMail({
-    from: process.env.GMAIL_USER,
+    from: mailFrom(),
     to,
     subject: '[Logistics Tracking] ⚠️ ไม่มีข้อมูลให้ตรวจสอบเลย (snapshot ว่างเปล่า)',
     text: `ระบบตรวจสอบข้อมูลอัตโนมัติ (${label}) พบว่า import/export snapshot ว่างเปล่าทั้งคู่ (0 รายการ) — แปลว่าดึงข้อมูลจาก Odoo ไม่สำเร็จเลยตั้งแต่ต้น (ทั้ง direct DB และ MCP bridge) ไม่ใช่ "ไม่พบปัญหา" ตามปกติ กรุณาตรวจสอบการเชื่อมต่อ Odoo/RDS โดยด่วน\n\nDashboard: http://localhost:3000/`,
@@ -549,7 +562,7 @@ async function maybeSendWeeklyDigest() {
   ].join('\n');
   try {
     await transporter.sendMail({
-      from: process.env.GMAIL_USER,
+      from: mailFrom(),
       to,
       subject: `[Logistics Tracking] สรุปสถานะข้อมูลรายสัปดาห์ — ${noData ? 'ไม่มีข้อมูล!' : fCount ? 'พบ ' + fCount + ' จุด' : 'ปกติ'}`,
       text: `สรุปการตรวจสอบข้อมูลอัตโนมัติประจำสัปดาห์\n\n${statusLine}\nตรวจล่าสุด: ${ir.ranAt || '-'} · เช็ค ${(ir.importChecked||0)+(ir.exportChecked||0)} รายการ\n\n${detail || '(ไม่มีรายการที่ต้องรายงาน)'}\n\nอีเมลนี้ส่งทุก 7 วันเพื่อยืนยันว่าระบบแจ้งเตือนยังทำงานอยู่ — ถ้าไม่ได้รับตามรอบ แปลว่าระบบอาจมีปัญหา\nDashboard: http://localhost:3000/`,
