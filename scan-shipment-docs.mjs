@@ -53,6 +53,12 @@ const NO_WRITE = process.argv.includes('--no-write');
 const ONLY = (process.argv.find(a => a.startsWith('--only=')) || '').slice(7).toUpperCase();
 // --overwrite : ยอมให้ทับค่าที่มีอยู่แล้ว (default = เติมเฉพาะช่องว่าง ปลอดภัยกว่า)
 const OVERWRITE = process.argv.includes('--overwrite');
+// --year=2026 : จำกัดเฉพาะโฟลเดอร์ปีนั้น (ใช้ตอนอยากไล่เก็บ backlog ทีละปี)
+const ONLY_YEAR = (process.argv.find(a => a.startsWith('--year=')) || '').slice(7).trim();
+// --force  : ไม่สนใจ doc_scan_seen.json สแกนซ้ำทุกโฟลเดอร์ (ใช้ตอนโค้ดสกัดดีขึ้นแล้วอยากเก็บของเก่าใหม่)
+// --max=N  : เปลี่ยนเพดานโฟลเดอร์ต่อรอบ (default MAX_FOLDERS_PER_RUN = 20)
+const FORCE = process.argv.includes('--force');
+const MAX_FOLDERS = parseInt((process.argv.find(a => a.startsWith('--max=')) || '').slice(6), 10) || MAX_FOLDERS_PER_RUN;
 const IMAGE_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
 // จับเลข PO พร้อม "เลขลำดับชุด" ที่ต่อท้ายในชื่อโฟลเดอร์ เช่น "KOBPO2605-09063 (2)"
 // วัดจริง: 30 จาก 198 โฟลเดอร์ใช้รูปแบบนี้ และตรงกับ key ที่ปุ่มแยก shipment ในแอปสร้าง
@@ -175,7 +181,8 @@ function discoverYearFolders() {
     .map(d => d.name)
     .filter(name => {
       const m = /^PO\s*(\d{4})$/i.exec(name.trim());
-      return m && parseInt(m[1], 10) >= MIN_YEAR;
+      if (!m || parseInt(m[1], 10) < MIN_YEAR) return false;
+      return !ONLY_YEAR || m[1] === ONLY_YEAR;
     });
 }
 
@@ -726,11 +733,11 @@ async function main() {
         return !prev || prev.mtimeMs !== stat.mtimeMs || prev.size !== stat.size;
       });
       // ไฟล์ไม่เปลี่ยน ข้าม ไม่เรียก AI ซ้ำ — ยกเว้นตอนเจาะจงโฟลเดอร์ด้วย --only (สั่งทดสอบเอง)
-      if (!newFiles.length && !ONLY) continue;
+      if (!newFiles.length && !ONLY && !FORCE) continue;
 
       // จำกัดจำนวนโฟลเดอร์/รอบเฉพาะตอนใช้ AI (มีค่าใช้จ่ายจริง) — โหมดฟรี (regex local) เร็ว/ไม่มี
       // ค่าใช้จ่าย ประมวลผล backlog ทั้งหมดในรอบเดียวได้เลย ไม่ต้องจำกัด
-      if (openai && processed >= MAX_FOLDERS_PER_RUN) { skippedBacklog++; continue; }
+      if (openai && processed >= MAX_FOLDERS) { skippedBacklog++; continue; }
       processed++;
 
       log(`[${folderName}] PO: ${poNumbers.map(t => t.key).join(', ')} — ไฟล์ใหม่/เปลี่ยน ${newFiles.length}/${allFiles.length}`);
@@ -935,7 +942,7 @@ async function main() {
     // ปิด ETS session เสมอแม้ error โผล่นอก per-folder try (เช่น readdir ล้ม) — กัน chromium ค้าง zombie
     if (etsSession) await closeEtsSession(etsSession);
   }
-  if (skippedBacklog) log(`[NOTE] เหลือ ${skippedBacklog} โฟลเดอร์ที่ยังไม่ได้สแกน (เกิน ${MAX_FOLDERS_PER_RUN} โฟลเดอร์/รอบ) จะสแกนต่อรอบหน้า`);
+  if (skippedBacklog) log(`[NOTE] เหลือ ${skippedBacklog} โฟลเดอร์ที่ยังไม่ได้สแกน (เกิน ${MAX_FOLDERS} โฟลเดอร์/รอบ) จะสแกนต่อรอบหน้า`);
   log(`=== จบการสแกน — ประมวลผล ${processed} โฟลเดอร์ ===`);
 }
 
