@@ -80,6 +80,84 @@ function log(msg) {
   try { rotateLogIfNeeded(); fs.appendFileSync(LOG_FILE, line + '\n', 'utf8'); } catch (e) {}
 }
 
+// ─── บันทึกการใช้ token ของ AI ────────────────────────────────────────────────────────────
+// เดิมไม่เก็บเลย → ตอบไม่ได้ว่าใช้ไปเท่าไหร่ ต้องเปิด platform.openai.com/usage ดูเอง
+// (project key `sk-proj-` เรียก /v1/organization/costs ไม่ได้ — ตอบ 403 missing scope api.usage.read
+//  ต้องเป็น Admin key เท่านั้น จึงดึงยอดจริงจาก API ในสคริปต์นี้ไม่ได้)
+const USAGE_FILE = path.join(ROOT, 'ai_usage.jsonl'); // append-only 1 บรรทัด/รอบสแกน
+// เรตต่อ 1 ล้าน token — ต้องกรอกเองใน .env จาก platform.openai.com/pricing
+// *จงใจไม่ใส่ค่าเริ่มต้น*: เดาเรตแล้วรายงานเป็นบาทคือการสร้างตัวเลขที่ไม่มีที่มา
+// ไม่ตั้ง = รายงานเฉพาะจำนวน token (ซึ่งเป็นค่าที่วัดได้จริงเสมอ)
+const PRICE_IN = parseFloat(process.env.OPENAI_PRICE_IN || '') || 0;
+const PRICE_CACHED_IN = parseFloat(process.env.OPENAI_PRICE_CACHED_IN || '') || 0;
+const PRICE_OUT = parseFloat(process.env.OPENAI_PRICE_OUT || '') || 0;
+const USD_THB = parseFloat(process.env.USD_THB || '') || 0;
+
+const usage = { calls: 0, input: 0, cachedInput: 0, output: 0, reasoning: 0 };
+function addUsage(u) {
+  if (!u) return null;
+  const one = {
+    input: u.input_tokens || 0,
+    cachedInput: u.input_tokens_details?.cached_tokens || 0,
+    output: u.output_tokens || 0,
+    reasoning: u.output_tokens_details?.reasoning_tokens || 0,
+  };
+  usage.calls++;
+  for (const k of Object.keys(one)) usage[k] += one[k];
+  return one;
+}
+// cached input คิดถูกกว่า input ปกติ จึงต้องหักออกก่อน ไม่งั้นตีราคาสูงเกิน
+function costUsd(u) {
+  if (!PRICE_IN && !PRICE_OUT) return null;
+  const fresh = Math.max(0, (u.input || 0) - (u.cachedInput || 0));
+  return (fresh * PRICE_IN + (u.cachedInput || 0) * (PRICE_CACHED_IN || PRICE_IN) + (u.output || 0) * PRICE_OUT) / 1e6;
+}
+function fmtCost(u) {
+  const usd = costUsd(u);
+  if (usd == null) return '';
+  return ` · $${usd.toFixed(4)}` + (USD_THB ? ` ≈ ${(usd * USD_THB).toFixed(2)} บาท` : '');
+}
+function fmtUsage(u) {
+  return `in=${u.input.toLocaleString()}` + (u.cachedInput ? ` (cached ${u.cachedInput.toLocaleString()})` : '')
+    + ` out=${u.output.toLocaleString()}` + (u.reasoning ? ` (reasoning ${u.reasoning.toLocaleString()})` : '')
+    + fmtCost(u);
+}
+// เขียนแม้ในโหมด --no-write ด้วย: token ถูกใช้ไปจริงแล้ว ค่าใช้จ่ายเกิดขึ้นจริง
+// การไม่บันทึกจะทำให้ยอดสะสมต่ำกว่าความจริง (ไฟล์นี้เป็นบัญชีค่าใช้จ่าย ไม่ใช่ข้อมูล shipment)
+function saveUsage() {
+  if (!usage.calls) return;
+  const rec = { ts: new Date().toISOString(), model: MODEL, ...usage };
+  if (NO_WRITE) rec.noWrite = true;
+  const usd = costUsd(usage);
+  if (usd != null) rec.usd = +usd.toFixed(6);
+  try { fs.appendFileSync(USAGE_FILE, JSON.stringify(rec) + '\n', 'utf8'); } catch (e) {}
+  log(`[Usage] รอบนี้เรียก AI ${usage.calls} ครั้ง — ${fmtUsage(usage)}`);
+}
+// --usage : สรุปยอดสะสมทั้งหมดจาก ai_usage.jsonl แล้วจบ (ไม่สแกน ไม่เรียก AI)
+function reportUsage() {
+  let lines = [];
+  try { lines = fs.readFileSync(USAGE_FILE, 'utf8').split('\n').filter(Boolean); } catch (e) {
+    console.log('ยังไม่มี ai_usage.jsonl — ยังไม่เคยบันทึกการใช้ token (เริ่มบันทึกตั้งแต่รอบสแกนถัดไป)');
+    return;
+  }
+  const total = { calls: 0, input: 0, cachedInput: 0, output: 0, reasoning: 0 };
+  const byDay = new Map();
+  for (const l of lines) {
+    let r; try { r = JSON.parse(l); } catch (e) { continue; }
+    for (const k of Object.keys(total)) total[k] += r[k] || 0;
+    const d = String(r.ts || '').slice(0, 10);
+    const g = byDay.get(d) || { calls: 0, input: 0, cachedInput: 0, output: 0, reasoning: 0 };
+    for (const k of Object.keys(g)) g[k] += r[k] || 0;
+    byDay.set(d, g);
+  }
+  console.log(`=== การใช้ AI สะสม (${lines.length} รอบสแกน) ===`);
+  for (const [d, g] of [...byDay].sort()) console.log(`  ${d}  เรียก ${String(g.calls).padStart(4)} ครั้ง · ${fmtUsage(g)}`);
+  console.log(`  ${'รวม'.padEnd(10)}  เรียก ${String(total.calls).padStart(4)} ครั้ง · ${fmtUsage(total)}`);
+  if (costUsd(total) == null) {
+    console.log('\n(ยังไม่ได้ตั้งเรตราคาใน .env จึงบอกเป็นบาทไม่ได้ — ดู .env.example หัวข้อ OPENAI_PRICE_*)');
+  }
+}
+
 // ─── Lock ───────────────────────────────────────────────────────────────────────────────
 // ป้องกันรันซ้อน — Scheduled Task ยิงทุก 20 นาที ถ้า run รอบก่อนยังไม่จบ (เช่น backlog เยอะ/
 // ETS lookup ช้า) กับมีคนสั่งรันมือพร้อมกันด้วย จะเกิด 2 process แข่งกันเขียน doc_scan_seen.json
@@ -411,6 +489,9 @@ async function extractFields(openai, documentBlocks, excelText, pdfText) {
       text: { format: { type: 'json_schema', name: 'report_fields', strict: true, schema: RESPONSE_SCHEMA } },
       max_output_tokens: 4000,
     });
+    // นับ token ก่อนเช็ค incomplete — ตอบไม่จบก็จ่ายเงินไปแล้ว ต้องเข้าบัญชีด้วย
+    const one = addUsage(response.usage);
+    if (one) log(`  [AI] ${fmtUsage(one)}`);
     if (response.status === 'incomplete') {
       throw new Error(`AI ตอบไม่จบ (${response.incomplete_details?.reason || 'ไม่ทราบสาเหตุ'}) — ลองเพิ่ม max_output_tokens`);
     }
@@ -989,4 +1070,12 @@ async function main() {
   log(`=== จบการสแกน — ประมวลผล ${processed} โฟลเดอร์ ===`);
 }
 
-main().catch(e => { log('[FATAL] ' + e.stack); process.exitCode = 1; }).finally(releaseLock);
+// --usage: อ่านบัญชีสะสมแล้วจบ ไม่แตะ lock/ไม่สแกน (เรียกซ้อนกับรอบที่กำลังรันอยู่ได้)
+if (process.argv.includes('--usage')) {
+  reportUsage();
+} else {
+  // saveUsage ต้องทำงานแม้ main() โยน error กลางทาง — token ที่ใช้ไปแล้วต้องไม่หายจากบัญชี
+  main()
+    .catch(e => { log('[FATAL] ' + e.stack); process.exitCode = 1; })
+    .finally(() => { saveUsage(); releaseLock(); });
+}
