@@ -358,6 +358,29 @@ function countPdfPages(buffer) {
   } catch (e) { return 1; }
 }
 
+// ─── ประมาณค่าใช้จ่าย AI ก่อนกดรันจริง (ใช้ใน --dry-run) ──────────────────────────────────
+// วัดจริง 2 จุด (2026-08-12): 1 หน้า → 4,515 token · 63 หน้า → 75,727 token
+// แก้สมการเชิงเส้นได้ token ≈ 3,366 + 1,149 × จำนวนหน้า
+//   ค่าคงที่ = system prompt (~710) + JSON schema + boilerplate ที่ส่งทุกครั้ง
+// ⚠ มีแค่ 2 จุดจึงลากเส้นผ่านทั้งคู่พอดีโดยปริยาย — ยังไม่ได้ทดสอบกับจุดที่สาม ถือเป็นค่าประมาณ
+//   ตัวเลขจริงสะสมใน ai_usage.jsonl ทุกรอบแล้ว ปรับสองค่านี้ให้ตรงขึ้นได้เมื่อมีข้อมูลพอ
+const EST_FIXED_TOKENS = 3400;
+const EST_TOKENS_PER_PAGE = 1150;
+// นับ "หน้า" ที่จะถูกส่งเข้า AI จริง — ต้องใช้เพดานชุดเดียวกับ convertFiles ไม่งั้นประมาณเกิน
+// (PDF นับหน้าจริงแล้วตัดที่ MAX_PDF_PAGES · รูป 1 ไฟล์ = 1 หน้า · Excel ส่งเป็นข้อความ ≈ 1)
+function estimatePagesForFolder(files) {
+  let pdfPages = 0, other = 0;
+  for (const fp of files) {
+    const ext = path.extname(fp).toLowerCase();
+    if (!ALLOWED_EXT.has(ext)) continue;
+    if (ext === '.pdf') {
+      if (pdfPages >= MAX_PDF_PAGES) continue;
+      try { pdfPages += countPdfPages(fs.readFileSync(fp)); } catch (e) {}
+    } else other++;
+  }
+  return Math.min(pdfPages, MAX_PDF_PAGES) + other;
+}
+
 async function convertFiles(filePaths, needDocumentBlocks) {
   const documentBlocks = [];
   const excelTextParts = [];
@@ -768,6 +791,9 @@ async function main() {
     const tracking = loadTrackingLocal();
     const byPo = new Map(tracking.map(r => [(r.po_so || '').toUpperCase(), r]));
     const plan = { update: 0, create: 0, noBase: 0, folders: 0 };
+    // ประมาณค่าใช้จ่าย: นับเฉพาะโฟลเดอร์ที่ "รอบจริงจะเรียก AI" — ต้องใช้เงื่อนไขชุดเดียวกับ
+    // ตัวสแกนจริง (ไฟล์เปลี่ยน/--only/--force + เพดาน MAX_FOLDERS ต่อรอบ) ไม่งั้นตัวเลขจะไม่ตรง
+    const est = { folders: 0, pages: 0, skipped: 0, heaviest: [] };
     log('=== DRY RUN — ไม่เขียนข้อมูลใดๆ ทั้งสิ้น ===');
     for (const yearFolder of yearFolders) {
       let folders = [];
@@ -776,7 +802,25 @@ async function main() {
         const targets = extractPoNumbers(folderName);
         if (!targets.length) continue;
         const dir = path.join(IMPORT_ROOT, yearFolder, folderName);
-        const files = walkFiles(dir).map(f => path.basename(f));
+        const allPaths = walkFiles(dir);
+        const files = allPaths.map(f => path.basename(f));
+
+        if (!ONLY || folderName.toUpperCase().includes(ONLY)) {
+          const changed = allPaths.some(fp => {
+            let st; try { st = fs.statSync(fp); } catch (e) { return false; }
+            const prev = seen[fp];
+            return !prev || prev.mtimeMs !== st.mtimeMs || prev.size !== st.size;
+          });
+          if (changed || ONLY || FORCE) {
+            if (est.folders >= MAX_FOLDERS) est.skipped++;
+            else {
+              const p = estimatePagesForFolder(allPaths);
+              est.folders++; est.pages += p;
+              est.heaviest.push({ name: folderName, pages: p });
+            }
+          }
+        }
+
         const mode = detectModeFromFolder(folderName) || detectModeFromDocs(files, '') || '?';
         const lines = [];
         for (const t of targets) {
@@ -798,6 +842,24 @@ async function main() {
       }
     }
     log(`=== สรุป DRY RUN: อัปเดตการ์ดเดิม ${plan.update} · สร้างการ์ดใหม่ ${plan.create} · ข้าม ${plan.noBase} ===`);
+
+    // ── ประมาณค่าใช้จ่าย AI ของ "รอบจริง" ที่จะรันด้วย flag ชุดเดียวกันนี้ ──────────────────
+    if (!est.folders) {
+      log('=== ค่าใช้จ่าย AI: ไม่มีโฟลเดอร์ไหนต้องเรียก AI (ไฟล์ไม่เปลี่ยนตั้งแต่รอบก่อน) = 0 บาท ===');
+    } else {
+      const tokens = est.folders * EST_FIXED_TOKENS + est.pages * EST_TOKENS_PER_PAGE;
+      const money = fmtCost({ input: tokens, cachedInput: 0, output: est.folders * 150 });
+      log(`=== ประมาณค่าใช้จ่าย AI ของรอบจริง (flag ชุดเดียวกันนี้) ===`);
+      log(`  เรียก AI ${est.folders} ครั้ง · ${est.pages.toLocaleString()} หน้า → ~${tokens.toLocaleString()} token${money}`);
+      if (est.skipped) log(`  (อีก ${est.skipped} โฟลเดอร์เกินเพดาน ${MAX_FOLDERS}/รอบ จะยกไปรอบถัดไป — ยังไม่รวมในตัวเลขข้างบน)`);
+      est.heaviest.sort((a, b) => b.pages - a.pages);
+      if (est.heaviest.length > 1) {
+        log('  โฟลเดอร์ที่กินเงินมากสุด:');
+        est.heaviest.slice(0, 5).forEach(h => log(`    ${String(h.pages).padStart(4)} หน้า  ${h.name.slice(0, 64)}`));
+      }
+      if (!costUsd({ input: 1 })) log('  (ตั้ง OPENAI_PRICE_* กับ USD_THB ใน .env แล้วจะบอกเป็นบาทให้ด้วย)');
+      log('  ⚠ เป็นค่าประมาณจากจำนวนหน้า (สอบเทียบจากการวัดจริง 2 จุด) ยอดจริงดูได้จาก --usage หลังรัน');
+    }
     return;
   }
 
