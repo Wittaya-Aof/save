@@ -1568,8 +1568,15 @@ const server = http.createServer(async (req, res) => {
               // ถ้า record มีตัวระบุชิปเม้นอยู่แล้ว (B/L หรือชื่อเรือ) และไม่ตรงกับที่กำลังจะเขียน
               // = คนละชิปเม้น ห้ามแตะ record นี้เลยแม้แต่ช่องที่ว่าง
               const same = (a, b) => { const n = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); return n(a) && n(b) && (n(a) === n(b) || n(a).includes(n(b)) || n(b).includes(n(a))); };
-              const idMismatch = ['bl_awb', 'vessel'].some(k =>
-                !isEmpty(before[k]) && !isEmpty(r[k]) && !same(before[k], r[k]));
+              // ⚠ ชื่อเรือชี้ขาดว่าเป็นชิปเม้นเดียวกันหรือไม่ ไม่ใช่เลข B/L
+              // shipment เดียวมี Master B/L (สายเรือ) กับ House B/L (forwarder) เลขคนละเลขเป็นปกติ
+              // เดิมเทียบ bl_awb ด้วย ทำให้ "เรือลำเดียวเที่ยวเดียว แต่เอกสารคนละใบ" ถูกตัดสินว่าเป็น
+              // คนละชิปเม้น แล้วข้ามทั้ง record → การ์ดไม่เคยได้ ETD/ETA เลย
+              // (เจอจริง 2026-08-13: KOBPO2605-09063 การ์ดมี HBL MZY202605220303 เรือ ISEACO UNITY
+              //  เอกสารให้ MBL SGCN202606004 เรือ ISEACO UNITY ลำเดียวกัน แต่ถูกข้ามทุกรอบ)
+              let idMismatch = false;
+              if (!isEmpty(before.vessel) && !isEmpty(r.vessel)) idMismatch = !same(before.vessel, r.vessel);
+              else if (!isEmpty(before.bl_awb) && !isEmpty(r.bl_awb)) idMismatch = !same(before.bl_awb, r.bl_awb);
               if (idMismatch) {
                 console.log(`[Upsert] ${key} ข้ามทั้ง record — เป็นคนละชิปเม้น (ในระบบ bl=${before.bl_awb || '-'}/เรือ=${before.vessel || '-'} · ที่ส่งมา bl=${r.bl_awb || '-'}/เรือ=${r.vessel || '-'})`);
                 return;

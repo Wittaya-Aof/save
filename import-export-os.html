@@ -2157,13 +2157,13 @@ class App extends Component {
                 const knownVessels=sibs.map(x=>norm(x.vessel)).filter(Boolean);
                 const missing=sr.filter(r=>{
                   if(!r.bl_awb||known.has(norm(r.bl_awb)))return false;
-                  if(sr.length>1)return true; // เอกสารบอกหลายชิปเม้นชัดเจน
-                  // เอกสารพบชิปเม้นเดียวแต่ B/L ไม่ตรงการ์ด — โชว์เฉพาะเมื่อ "เรือ" ก็ไม่ตรงด้วย
-                  // (B/L ต่างเพราะ MBL/HBL คนละใบแต่เรือเดียวกัน = ชิปเม้นเดิม ไม่ใช่ใบตกหล่น
-                  //  เคสจริงที่ต้องโชว์: การ์ดเก็บ AWB ขาอากาศ แต่เอกสารเป็นขาเรือ KUO LONG)
+                  // ⚠ ต้องเช็คชื่อเรือ "เสมอ" ไม่ใช่เฉพาะตอน artifact มีใบเดียว — shipment เดียวมี
+                  // MBL (สายเรือ) กับ HBL (forwarder) เลขคนละเลข ถ้าดูแต่ B/L จะชวนให้สร้างการ์ดซ้ำ
+                  // ของเที่ยวที่มีการ์ดอยู่แล้ว (เจอจริง 2026-08-13: KOBPO2605-09063 (4) ที่ถูกสร้าง
+                  //  ทั้งที่เป็นเรือ ISEACO UNITY 2614S ลำเดียวกับการ์ดหลัก)
                   const rv=norm(r.vessel);
-                  if(!rv)return false;
-                  return !knownVessels.some(v=>v.includes(rv)||rv.includes(v));
+                  if(rv&&knownVessels.some(v=>v.includes(rv)||rv.includes(v)))return false;
+                  return true;
                 });
                 if(missing.length)return <div style={{marginBottom:'18px'}}>
                   <SectionTitle>ชิปเม้นที่ยังไม่มีการ์ด</SectionTitle>
