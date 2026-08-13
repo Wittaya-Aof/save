@@ -53,6 +53,11 @@ const NO_WRITE = process.argv.includes('--no-write');
 const ONLY = (process.argv.find(a => a.startsWith('--only=')) || '').slice(7).toUpperCase();
 // --overwrite : ยอมให้ทับค่าที่มีอยู่แล้ว (default = เติมเฉพาะช่องว่าง ปลอดภัยกว่า)
 const OVERWRITE = process.argv.includes('--overwrite');
+// --overwrite-fields=forwarder,bl_awb : ทับเฉพาะฟิลด์ที่ระบุ ฟิลด์อื่นยังเติมเฉพาะช่องว่างตามเดิม
+// ใช้ตอนกฎการสกัดเปลี่ยนแล้วค่าเดิมในการ์ด "ถูกตามกฎเก่า" — ปลอดภัยกว่า --overwrite ทั้งก้อนมาก
+// (เทียบเอกสารกับการ์ด 2026-08-13: เลขตู้ในการ์ดถูกกว่าเอกสาร 4 จาก 7 เคส จึงห้ามทับเหมาทุกฟิลด์)
+const OVERWRITE_FIELDS = ((process.argv.find(a => a.startsWith('--overwrite-fields=')) || '').slice(19) || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 // --year=2026 : จำกัดเฉพาะโฟลเดอร์ปีนั้น (ใช้ตอนอยากไล่เก็บ backlog ทีละปี)
 const ONLY_YEAR = (process.argv.find(a => a.startsWith('--year=')) || '').slice(7).trim();
 // --force  : ไม่สนใจ doc_scan_seen.json สแกนซ้ำทุกโฟลเดอร์ (ใช้ตอนโค้ดสกัดดีขึ้นแล้วอยากเก็บของเก่าใหม่)
@@ -447,9 +452,9 @@ const SHIPMENT_ITEM_SCHEMA = {
     etd: { type: ['string', 'null'], description: "YYYY-MM-DD วันที่ Shipped on Board (B/L) หรือวันเที่ยวบิน (AWB) — null ถ้าเป็น draft ที่ยังไม่มีวันที่จริง" },
     vessel: { type: ['string', 'null'], description: 'ชื่อเรือจาก B/L — null ถ้าขนส่งทางอากาศ' },
     voyage: { type: ['string', 'null'], description: "เลข voyage (มักติดกับชื่อเรือ เช่น 'V.2627S')" },
-    forwarder: { type: ['string', 'null'], description: 'ชื่อบริษัท freight forwarder ผู้ออก B/L หรือ AWB' },
-    blNumber: { type: ['string', 'null'], description: 'เลข B/L — ใช้ Master B/L (MBL) ถ้ามีทั้ง MBL และ HBL' },
-    awbNumber: { type: ['string', 'null'], description: 'เลข AWB ถ้าขนส่งทางอากาศ' },
+    forwarder: { type: ['string', 'null'], description: "ชื่อตัวแทนขนส่งในไทย — เอาจากช่อง 'For delivery of goods please apply to' (บางใบเขียน 'Delivery Agent' / 'Notify Agent') ใน B/L หรือ AWB เป็นหลักเสมอ นี่คือเจ้าที่ผู้นำเข้าติดต่อรับของจริง ห้ามใช้ชื่อผู้ออก B/L หรือชื่อ forwarder ต้นทางจีนถ้าช่องนี้มีชื่ออื่น · ถ้าไม่มีช่องนี้ในเอกสารเลย ค่อยใช้ชื่อผู้ออก B/L/AWB แทน" },
+    blNumber: { type: ['string', 'null'], description: 'เลข B/L — ใช้ House B/L (HBL) เป็นหลักถ้ามีทั้ง MBL และ HBL เพราะ forwarder อ้างเลข House ในการติดต่อ · ใช้ MBL ต่อเมื่อไม่มี HBL' },
+    awbNumber: { type: ['string', 'null'], description: 'เลข AWB ถ้าขนส่งทางอากาศ — ใช้ House AWB (HAWB) เป็นหลักถ้ามีทั้ง MAWB และ HAWB · ใช้ MAWB ต่อเมื่อไม่มี HAWB' },
     containerNumbers: { type: 'array', items: { type: 'string' }, description: 'เลขตู้คอนเทนเนอร์ทั้งหมดที่พบ — array ว่างถ้าไม่มี' },
     portOfLoading: { type: ['string', 'null'], description: "ท่าเรือ/สนามบินต้นทางที่สินค้าลงเรือ (Port of Loading ใน B/L หรือ Airport of Departure ใน AWB) รูปแบบ 'ชื่อท่าเรือ, ประเทศ' เช่น 'SHANTOU, CHINA'" },
     portOfDischarge: { type: ['string', 'null'], description: "ท่าเรือ/สนามบินปลายทางที่สินค้าขึ้นจากเรือ (Port of Discharge หรือ Port of Delivery ใน B/L, Airport of Destination ใน AWB) รูปแบบ 'ชื่อท่าเรือ, ประเทศ' เช่น 'LAEM CHABANG, THAILAND'" },
@@ -479,12 +484,25 @@ Lading/AWB, Purchase Order ฯลฯ) ที่แนบมา ดึงเฉ�
   = คนละ shipment · ถ้าเรือ/voyage/ตู้เดียวกัน = **shipment เดียวกันเสมอ** แม้เอกสารจะมีหลายฉบับ
 - ⚠ **ห้ามแยกเพราะเลข B/L ต่างกันเพียงอย่างเดียว** — shipment เดียวปกติมีทั้ง Master B/L (ของสายเรือ)
   และ House B/L (ของ freight forwarder) ซึ่งเลขคนละเลขกันเป็นเรื่องปกติ ให้ถือเป็น shipment เดียว
-  แล้วรายงาน Master B/L (MBL) · draft กับ final ของเลขเดียวกันก็ shipment เดียวกัน ใช้ฉบับ final
+  แล้วรายงาน **House B/L (HBL)** · draft กับ final ของเลขเดียวกันก็ shipment เดียวกัน ใช้ฉบับ final
 - ถ้าเอกสารทั้งโฟลเดอร์เป็น shipment เดียว ให้คืน shipments ที่มีสมาชิกเพียง 1 รายการ (กรณีปกติที่พบบ่อยสุด)
 - **ห้ามคืน shipment ซ้ำ** — แต่ละเที่ยวเรือ/เที่ยวบินต้องปรากฏเพียงรายการเดียวเท่านั้น
 
+**ตัวแทนขนส่ง (forwarder) — ใช้ช่อง "For delivery of goods please apply to" เป็นหลักเสมอ**
+ช่องนี้ใน B/L และ AWB คือชื่อ**ตัวแทนขนส่งในไทย**ที่ผู้นำเข้าต้องติดต่อเพื่อรับของจริง
+(บางแบบฟอร์มใช้คำว่า "Delivery Agent", "Notify Agent" หรือ "Also notify") ให้เอาชื่อบริษัทจากช่องนี้
+**ห้ามใช้ชื่อผู้ออก B/L (ที่อยู่หัวกระดาษ) หรือ forwarder ต้นทางในจีน ถ้าช่องนี้ระบุบริษัทอื่นไว้**
+ใช้ชื่อผู้ออก B/L/AWB ได้ต่อเมื่อเอกสารไม่มีช่องนี้เลยเท่านั้น
+
+**เลข B/L และ AWB — ใช้เลข House (HBL / HAWB) เป็นหลัก**
+เพราะ forwarder อ้างเลข House ในการติดต่อและหัวข้ออีเมล ค้นหาย้อนหลังได้ง่ายกว่า
+ใช้เลข Master (MBL / MAWB) ต่อเมื่อเอกสารไม่มีเลข House
+
 แต่ละ shipment ให้ระบุ poNumbers = เลข PO ที่ shipment นั้นครอบคลุม (รูปแบบ KOBPOxxxx-xxxxx หรือ
-BTVPOxxxx-xxxxx ที่ปรากฏใน Commercial Invoice / Packing List / PO ของ shipment นั้น) ถ้าระบุไม่ได้ให้ส่ง array ว่าง`;
+BTVPOxxxx-xxxxx ที่ปรากฏใน Commercial Invoice / Packing List / PO ของ shipment นั้น) ถ้าระบุไม่ได้ให้ส่ง array ว่าง
+⚠ **ห้ามใส่ PO ค่าขนส่ง/ค่าใช้จ่ายลงใน poNumbers** — โฟลเดอร์มักมี PO อีกใบที่เปิดไว้จ่ายค่าขนส่ง
+ค่าพิธีการ หรือค่าภาษีของชิปเม้นนี้ (สังเกตจากคู่ค้าเป็นบริษัทขนส่ง/ชิปปิ้ง และรายการเป็นค่าบริการ
+ไม่ใช่สินค้า) PO แบบนี้ **ไม่ใช่** PO สั่งซื้อสินค้าของชิปเม้น ให้ใส่เฉพาะ PO ที่สั่งซื้อตัวสินค้าเท่านั้น`;
 
 // API ตอบ 400 เมื่อมีไฟล์แนบที่อ่านไม่ออก แต่ "ไม่บอกว่าไฟล์ไหน" — เจอจริงตอน backtest 2026-08-11
 // (BTVPO2510-01940: "The file you uploaded is badly formatted or corrupted")
@@ -1087,7 +1105,9 @@ async function main() {
               if (NO_WRITE) { log(`  [NO-WRITE] จะ upsert ${po}: ${JSON.stringify(payload)}`); continue; }
               // _fillEmptyOnly: การเขียนอัตโนมัติเติมได้เฉพาะช่องที่ยังว่าง ห้ามทับค่าที่มีอยู่แล้ว
               // (ปิดโหมดนี้ได้ด้วย --overwrite เมื่อมั่นใจแล้ว — ดู OVERWRITE)
-              await upsertTracking({ po_so: po, ...payload, _origin: `scan:${folderName}`, ...(OVERWRITE ? {} : { _fillEmptyOnly: true }) });
+              await upsertTracking({ po_so: po, ...payload, _origin: `scan:${folderName}`,
+                ...(OVERWRITE ? {} : { _fillEmptyOnly: true }),
+                ...(OVERWRITE_FIELDS.length ? { _overwriteFields: OVERWRITE_FIELDS } : {}) });
               writtenThisRun.set(po, { folder: folderName, mode: docMode });
               log(`  upsert ${po} สำเร็จ: ${JSON.stringify(payload)}`);
             } catch (e) {

@@ -1558,6 +1558,12 @@ const server = http.createServer(async (req, res) => {
           // ห้ามทับค่าที่มีอยู่แล้วเด็ดขาด เพราะ PO เดียวอาจแบ่งส่งหลายชิปเม้น (คนละ B/L/เรือ/ตู้)
           // แล้ว record เก็บได้ชุดเดียว — ถ้าทับ จะกลายเป็นข้อมูลของชิปเม้นอื่นเงียบๆ
           // ทำฝั่ง server เพื่อให้ตรวจกับค่าล่าสุดในไฟล์แบบ atomic (ฝั่ง client จะมี race)
+          // _overwriteFields = รายชื่อฟิลด์ที่ "ยอมให้ทับได้" แม้อยู่ในโหมดเติมช่องว่าง
+          // ใช้ตอนกฎการสกัดเปลี่ยน (เช่น 2026-08-13: forwarder ต้องเอาจากช่อง "For delivery of goods
+          // please apply to" และ B/L ต้องใช้เลข House) ซึ่งค่าเดิมในการ์ด "ถูกตามกฎเก่า" จึงต้องเขียนทับ
+          // แบบเจาะจงทีละฟิลด์ — ไม่ใช้ --overwrite ทั้งก้อน เพราะฟิลด์อื่น (เช่นเลขตู้) การ์ดแม่นกว่าเอกสาร
+          const owFields = new Set(Array.isArray(r._overwriteFields) ? r._overwriteFields : []);
+          delete r._overwriteFields;
           if (r._fillEmptyOnly) {
             delete r._fillEmptyOnly;
             if (before) {
@@ -1581,11 +1587,15 @@ const server = http.createServer(async (req, res) => {
                 console.log(`[Upsert] ${key} ข้ามทั้ง record — เป็นคนละชิปเม้น (ในระบบ bl=${before.bl_awb || '-'}/เรือ=${before.vessel || '-'} · ที่ส่งมา bl=${r.bl_awb || '-'}/เรือ=${r.vessel || '-'})`);
                 return;
               }
-              const skipped = [];
+              const skipped = [], forced = [];
               Object.keys(r).forEach(k => {
                 if (k === 'po_so' || k.startsWith('_')) return;
-                if (!isEmpty(before[k]) && JSON.stringify(before[k]) !== JSON.stringify(r[k])) { skipped.push(k); delete r[k]; }
+                if (isEmpty(before[k]) || JSON.stringify(before[k]) === JSON.stringify(r[k])) return;
+                // ฟิลด์ที่สั่งให้ทับได้ — ทับเฉพาะเมื่อค่าใหม่ไม่ว่าง (ห้ามล้างของเดิมทิ้งเป็นค่าว่าง)
+                if (owFields.has(k) && !isEmpty(r[k])) { forced.push(`${k}: ${before[k]} → ${r[k]}`); return; }
+                skipped.push(k); delete r[k];
               });
+              if (forced.length) console.log(`[Upsert] ${key} ทับตามที่สั่ง — ${forced.join(' · ')}`);
               if (skipped.length) console.log(`[Upsert] ${key} โหมดเติมช่องว่าง — ไม่ทับ: ${skipped.join(', ')}`);
             }
           }
