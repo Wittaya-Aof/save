@@ -651,9 +651,16 @@ class App extends Component {
     const extra=Object.keys(ov).filter(k=>ov[k]._synthetic&&!rows.some(s=>s.poNo===k)).map(k=>{
       const ns=this.mapSynthetic(ov[k]);
       const b=baseIdx[this.strip(ns._splitBase||ns.poNo)];
+      // เช่นเดียวกับ applyOne: สถานะที่ derive จาก PO ฐานเป็น "พื้น" ไม่ใช่ "เพดาน"
+      // การ์ดแยกที่คนตั้งไว้ไกลกว่าแล้ว (เช่นงวดนี้ของเข้าคลังแล้ว แต่งวดอื่นยังไม่มา = PO ยัง partial)
+      // ต้องไม่ถูกดึงถอยกลับมาที่ "พิธีการศุลกากร"
       const rs=b&&b._receiptStatus;
-      if(rs==='full')ns.stage=ns._board==='export'?'arrived':'received';
-      else if(rs==='partial')ns.stage=ns._board==='export'?'shipped':'customs';
+      const floor=rs==='full'?(ns._board==='export'?'arrived':'received')
+                 :rs==='partial'?(ns._board==='export'?'shipped':'customs'):null;
+      if(floor){
+        const order=(ns._board==='export'?EXP_STAGES:IMP_STAGES).map(x=>x.key);
+        if(order.indexOf(floor)>order.indexOf(ns.stage))ns.stage=floor;
+      }
       return ns;
     });
     return merged.concat(extra);
@@ -681,10 +688,15 @@ class App extends Component {
       // Odoo ยืนยันการรับ/ส่งของแล้ว → สถานะจาก Odoo ชนะ override เสมอ กันการ์ดค้างสถานะเก่า
       // (เดิม guard เฉพาะ terminal=full — เคส partial ยังถูก override เก่าดึงถอยหลังได้
       //  เจอจริง 2026-08-12: การ์ดค้าง booking/transit ทั้งที่ Odoo บอกรับของแล้วบางส่วน)
-      const terminal=s._board==='export'?'arrived':'received';
-      const rs=s._receiptStatus;
-      if(rs==='full'||rs==='partial'){/* คงสถานะที่ derive จาก Odoo (received/customs หรือ arrived/shipped) */}
-      else if(s.stage!==terminal||o.stage===terminal){m.stage=o.stage;m._stageManual=true;}
+      // สถานะจาก Odoo เป็น "พื้น" ไม่ใช่ "เพดาน" — เอาอันที่ก้าวหน้ากว่าเสมอ
+      // เดิม rs='partial' ทิ้ง override ทั้งดุ้น ซึ่งกันการ์ดถอยหลังได้จริง แต่ก็ทำให้ "เดินหน้า" ไม่ได้ด้วย:
+      // PO ที่แบ่งส่งหลายชิปเม้น Odoo จะเป็น partial จนกว่าจะรับครบทุกงวด → ทุกการ์ดในตระกูลค้างที่
+      // "พิธีการศุลกากร" แล้วกดเป็น "รับเข้าคลัง" เองก็ไม่ติด (เจอจริง 2026-08-13: 7 PO ที่ ETA ผ่านมา
+      // 6-155 วัน — AOF ถามเองว่าทำไมของถึงไทยแล้วยังไม่ขึ้นรับเข้าคลัง)
+      // ใช้ลำดับขั้นเทียบแทน: Odoo ดันขึ้นได้ คนดันขึ้นต่อได้ แต่ไม่มีใครดึงถอยหลังกว่าหลักฐานของ Odoo
+      const order=(s._board==='export'?EXP_STAGES:IMP_STAGES).map(x=>x.key);
+      const rank=k=>{const i=order.indexOf(k);return i<0?-1:i;};
+      if(rank(o.stage)>rank(s.stage)){m.stage=o.stage;m._stageManual=true;}
     }
     m._edited=true; return m;
   }
