@@ -614,7 +614,12 @@ const SQL_IMPORT = `
       po.origin,
       po.notes,
       'oversea'::text           AS source_type,
-      cat.top_cat               AS goods_category
+      cat.top_cat               AS goods_category,
+      -- วันที่รับของเข้าคลังครั้งล่าสุดที่ "ทำเสร็จแล้วจริง" ของ PO นี้
+      -- จำเป็นเพราะ receipt_status เป็นค่ารวมระดับ PO (pending/partial/full) ซึ่งบอกไม่ได้ว่า
+      -- ชิปเม้นงวดไหนเข้าคลังแล้ว — PO ที่แบ่งส่งหลายงวดจะค้าง 'partial' จนกว่างวดสุดท้ายจะมา
+      -- ทำให้งวดที่เข้าคลังไปตั้งแต่เดือนก่อนยังโชว์ว่าอยู่ระหว่างพิธีการ (AOF เจอเองกับ KOBPO2604-08431)
+      rcpt.last_receipt::text   AS last_receipt_date
     FROM  purchase_order po
     JOIN  res_company    rc  ON rc.id  = po.company_id
     JOIN  res_partner    rp  ON rp.id  = po.partner_id
@@ -632,6 +637,15 @@ const SQL_IMPORT = `
       ORDER BY SUM(pol.price_subtotal) DESC NULLS LAST
       LIMIT 1
     ) cat ON true
+    -- รวมทีเดียวแล้ว hash join — ห้ามใช้ LATERAL ที่อ้าง po.name ตรงๆ เพราะ stock_picking.origin
+    -- ไม่มี index ทำให้สแกนทั้งตารางซ้ำต่อ PO (ลองแล้ว: direct timeout ทันที ต้องตกไป MCP)
+    LEFT JOIN (
+      SELECT sp.origin AS po_name, MAX(sp.date_done)::date AS last_receipt
+      FROM stock_picking sp
+      WHERE sp.state = 'done' AND sp.date_done IS NOT NULL
+        AND sp.date_done >= NOW() - INTERVAL '2 years'
+      GROUP BY sp.origin
+    ) rcpt ON rcpt.po_name = po.name
     WHERE po.company_id IN (1, 2)
       AND po.state NOT IN ('cancel')
       AND po.date_order >= NOW() - INTERVAL '2 years'
@@ -666,7 +680,8 @@ const SQL_IMPORT = `
     -- ธงบอกว่าแถวนี้ "ซ่อมอัตโนมัติ" (ค่าที่ Odoo เพี้ยน แต่ดึง rate จากใบวางบิลมาแทนได้) — โชว์เป็นข้อมูล
     -- ไม่ใช่ปัญหา เพื่อไม่ให้บดบังความจริงว่า Odoo ต้นทางยังต้องแก้ (ดู runIntegrityCheck)
     CASE WHEN fixed_rates.invoice_currency_rate IS NOT NULL THEN 1 ELSE 0 END AS rate_auto_corrected,
-    base.receipt_status, base.origin, base.notes, base.source_type, base.goods_category
+    base.receipt_status, base.origin, base.notes, base.source_type, base.goods_category,
+    base.last_receipt_date
   FROM base
   LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.po_number
   ORDER BY base.date_order DESC

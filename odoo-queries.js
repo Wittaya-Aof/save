@@ -15,7 +15,8 @@ const IMPORT_INNER = `
       rp.id AS partner_id, rp.name AS supplier, po.state AS odoo_state,
       po.date_order AS raw_date_order, po.date_planned AS raw_date_planned,
       po.amount_total, cu.name AS currency, po.currency_rate AS raw_rate,
-      po.receipt_status, po.origin, cat.top_cat AS goods_category
+      po.receipt_status, po.origin, cat.top_cat AS goods_category,
+      rcpt.last_receipt::text AS last_receipt_date
     FROM purchase_order po
     JOIN res_company rc ON rc.id = po.company_id
     JOIN res_partner rp ON rp.id = po.partner_id
@@ -29,6 +30,15 @@ const IMPORT_INNER = `
       JOIN product_category pc ON pc.id = pt.categ_id
       WHERE pol.order_id = po.id GROUP BY 1 ORDER BY SUM(pol.price_subtotal) DESC NULLS LAST LIMIT 1
     ) cat ON true
+    -- วันรับของเข้าคลังครั้งล่าสุดที่ทำเสร็จแล้ว — ต้อง mirror กับ SQL_IMPORT ใน api-server.js
+    -- รวมทีเดียวแล้ว join (ห้าม LATERAL อ้าง po.name: stock_picking.origin ไม่มี index → timeout)
+    LEFT JOIN (
+      SELECT sp.origin AS po_name, MAX(sp.date_done)::date AS last_receipt
+      FROM stock_picking sp
+      WHERE sp.state = 'done' AND sp.date_done IS NOT NULL
+        AND sp.date_done >= NOW() - INTERVAL '2 years'
+      GROUP BY sp.origin
+    ) rcpt ON rcpt.po_name = po.name
     WHERE po.company_id IN (1,2) AND po.state NOT IN ('cancel')
       AND po.date_order >= NOW() - INTERVAL '2 years'
       AND (rco.code IS NOT NULL AND rco.code != 'TH' OR (rco.code IS NULL AND cu.name NOT IN ('THB')))
@@ -55,7 +65,7 @@ const IMPORT_INNER = `
     base.amount_total, base.currency,
     COALESCE(fixed_rates.invoice_currency_rate, base.raw_rate) AS currency_rate,
     CASE WHEN fixed_rates.invoice_currency_rate IS NOT NULL THEN 1 ELSE 0 END AS rate_auto_corrected,
-    base.receipt_status, base.origin, base.goods_category
+    base.receipt_status, base.origin, base.goods_category, base.last_receipt_date
   FROM base
   LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.po_number`;
 

@@ -655,7 +655,13 @@ class App extends Component {
       // การ์ดแยกที่คนตั้งไว้ไกลกว่าแล้ว (เช่นงวดนี้ของเข้าคลังแล้ว แต่งวดอื่นยังไม่มา = PO ยัง partial)
       // ต้องไม่ถูกดึงถอยกลับมาที่ "พิธีการศุลกากร"
       const rs=b&&b._receiptStatus;
+      // การ์ดแยกใช้วันถึงของ "งวดตัวเอง" เทียบกับใบรับของล่าสุดของ PO ฐาน
+      // (เคสจริง KOBPO2604-08431: ขาอากาศ 5 งวด ETD 4-23 ก.ค. · ใบรับของ done ถึง 29 ก.ค.
+      //  → ทั้ง 5 งวดเข้าคลังแล้ว ส่วนขาเรือ ETA 7 ส.ค. ยังไม่มีใบรับของ จึงยังไม่ใช่ received)
+      const gotIt=rs==='partial'&&ns._board!=='export'
+        &&this._receivedByEvidence(this._arrivalOf(ns),b&&b._lastReceipt);
       const floor=rs==='full'?(ns._board==='export'?'arrived':'received')
+                 :gotIt?'received'
                  :rs==='partial'?(ns._board==='export'?'shipped':'customs'):null;
       if(floor){
         const order=(ns._board==='export'?EXP_STAGES:IMP_STAGES).map(x=>x.key);
@@ -684,6 +690,10 @@ class App extends Component {
     }
     if(o.overReceipt!=null)m.overReceipt=!!o.overReceipt;
     if(Array.isArray(o.bills))m.bills=o.bills;
+    // ETA จริงจากเอกสาร/ETS แม่นกว่า date_planned ของ Odoo — พอ merge เข้ามาแล้วต้องคิดสถานะใหม่
+    // (deriveImportStage คิดตอนยังไม่มี override จึงใช้ date_planned ซึ่งเป็นแค่วันที่วางแผนไว้)
+    if(m._board!=='export'&&s._receiptStatus==='partial'
+       &&this._receivedByEvidence(this._arrivalOf(m),s._lastReceipt)) m.stage='received';
     if(o.stage){
       // Odoo ยืนยันการรับ/ส่งของแล้ว → สถานะจาก Odoo ชนะ override เสมอ กันการ์ดค้างสถานะเก่า
       // (เดิม guard เฉพาะ terminal=full — เคส partial ยังถูก override เก่าดึงถอยหลังได้
@@ -718,10 +728,27 @@ class App extends Component {
   // แต่ endpoint นั้นไม่มีอยู่ใน api-server.js (ตอบ 404 ทุกครั้ง — ยืนยันแล้ว) จึงไม่เคยมีค่าให้ใช้เลย
   // สาขาเงื่อนไขทั้งหมดที่พึ่ง plan เป็น dead code — ตัดทิ้งพร้อม applyPlan/planFor และ fetch ที่ 404
   // ทุก 3 นาที (พฤติกรรมที่เห็นบนหน้าจอไม่เปลี่ยน เพราะเส้นทางเหล่านั้นไม่เคยถูกเดินอยู่แล้ว)
+  // วันที่ของขึ้นฝั่งไทยของ shipment ใบนี้ — ทางเรือใช้ ETA ตรงๆ · ทางอากาศมักไม่มี ETA
+  // (ETS ของกรมศุลฯ ค้นได้เฉพาะเรือ) จึงใช้ ETD แทน เพราะบินถึงภายใน 1-2 วัน
+  _arrivalOf(r){ return (r.eta||'').slice(0,10) || (r.etd||'').slice(0,10) || ''; }
+  // ของงวดนี้เข้าคลังแล้วหรือยัง — ตัดสินจากหลักฐานใน Odoo ไม่ใช่การเดาจากวันที่อย่างเดียว
+  // receipt_status เป็นค่ารวมทั้ง PO บอกไม่ได้ว่างวดไหนเข้าแล้ว แต่ last_receipt_date บอกได้ว่า
+  // "ใบรับของที่ทำเสร็จล่าสุดคือวันไหน" → ถ้าของงวดนี้ถึงไทยก่อนหรือพร้อมวันนั้น แปลว่าถูกรับไปแล้ว
+  // ถ้าถึงหลังจากนั้น = ยังไม่มีใบรับของสำหรับงวดนี้ ต้องไม่โชว์ว่ารับเข้าคลังแล้ว (ห้ามเดาเกินหลักฐาน)
+  _receivedByEvidence(arrival,lastReceipt){
+    if(!arrival||!lastReceipt)return false;
+    return arrival.slice(0,10)<=lastReceipt.slice(0,10);
+  }
   deriveImportStage(r){
     const rs=r.receipt_status,os=r.odoo_state;
     if(rs==='full')return 'received';
-    if(rs==='partial')return 'customs';
+    // รับบางส่วน: PO ที่แบ่งส่งหลายงวดจะค้าง partial จนงวดสุดท้ายมาถึง — งวดที่เข้าคลังไปแล้ว
+    // ต้องขึ้น "รับเข้าคลัง" ไม่ใช่ค้างที่พิธีการยกทั้งตระกูล (เคสจริง KOBPO2604-08431:
+    // ขาอากาศ 5 งวดมีใบรับของครบตั้งแต่ ก.ค. แต่บอร์ดยังโชว์พิธีการเพราะขาเรือยังไม่มา)
+    if(rs==='partial'){
+      const arrival=(r.date_planned||'').slice(0,10);
+      return this._receivedByEvidence(arrival,r.last_receipt_date)?'received':'customs';
+    }
     if(os==='draft'||os==='sent')return 'po';
     const today=this._today(),planned=this._dt(r.date_planned);
     if(planned){const days=Math.round((planned-today)/86400000);if(days<=0)return 'arrived';if(days<=10)return 'transit';if(days<=30)return 'booking';}
@@ -747,7 +774,8 @@ class App extends Component {
     // 'oversea' หมดโดยไม่สนใจหมวดจริง — ปุ่มกรอง Packaging/Finished ในหน้า Import Board เลยกรองไม่ได้ผลจริง
     const catType=r.goods_category==='Packaging'?'pk':r.goods_category==='Finished Goods'?'fg':'oversea';
     return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',partyId:r.partner_id||null,type:normType(catType),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
-      _odooState:r.odoo_state||'',_receiptStatus:r.receipt_status||r.delivery_status||''};
+      _odooState:r.odoo_state||'',_receiptStatus:r.receipt_status||r.delivery_status||'',
+      _lastReceipt:(r.last_receipt_date||'').slice(0,10)};
   }
   mapTracking(r){
     // _board คือ field ที่ code ปัจจุบันเขียนจริง — r.type เป็น field เก่าที่คาบเกี่ยวความหมายกับ
