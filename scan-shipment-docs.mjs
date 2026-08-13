@@ -58,6 +58,22 @@ const OVERWRITE = process.argv.includes('--overwrite');
 // (เทียบเอกสารกับการ์ด 2026-08-13: เลขตู้ในการ์ดถูกกว่าเอกสาร 4 จาก 7 เคส จึงห้ามทับเหมาทุกฟิลด์)
 const OVERWRITE_FIELDS = ((process.argv.find(a => a.startsWith('--overwrite-fields=')) || '').slice(19) || '')
   .split(',').map(s => s.trim()).filter(Boolean);
+// --resume-from-log=<ไฟล์> : ข้ามโฟลเดอร์ที่ log รอบก่อนประมวลผลไปแล้ว ใช้รันต่อจากที่ค้าง
+// จำเป็นเพราะ --force ไม่สนใจ ledger จะเริ่มใหม่ทั้งหมด = จ่ายค่า AI ซ้ำของที่ทำไปแล้ว
+// (เจอจริง 2026-08-13: ต้องหยุดรอบสแกนกลางคันที่โฟลเดอร์ 45/198 เพื่อแก้บั๊ก)
+// ⚠ ตัดโฟลเดอร์สุดท้ายใน log ออกจากรายการข้ามเสมอ — ตัวนั้นอาจถูกฆ่ากลางคันจึงยังไม่ครบ
+const RESUME_LOG = (process.argv.find(a => a.startsWith('--resume-from-log=')) || '').slice(18).trim();
+const SKIP_FOLDERS = new Set();
+if (RESUME_LOG) {
+  try {
+    const done = [];
+    for (const line of fs.readFileSync(RESUME_LOG, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\[[^\]]+\] \[(.+?)\] PO: /);
+      if (m) done.push(m[1]);
+    }
+    done.slice(0, -1).forEach(f => SKIP_FOLDERS.add(f));
+  } catch (e) { console.error('[Config] อ่าน --resume-from-log ไม่ได้:', e.message); }
+}
 // --year=2026 : จำกัดเฉพาะโฟลเดอร์ปีนั้น (ใช้ตอนอยากไล่เก็บ backlog ทีละปี)
 const ONLY_YEAR = (process.argv.find(a => a.startsWith('--year=')) || '').slice(7).trim();
 // --force  : ไม่สนใจ doc_scan_seen.json สแกนซ้ำทุกโฟลเดอร์ (ใช้ตอนโค้ดสกัดดีขึ้นแล้วอยากเก็บของเก่าใหม่)
@@ -823,7 +839,7 @@ async function main() {
         const allPaths = walkFiles(dir);
         const files = allPaths.map(f => path.basename(f));
 
-        if (!ONLY || folderName.toUpperCase().includes(ONLY)) {
+        if ((!ONLY || folderName.toUpperCase().includes(ONLY)) && !SKIP_FOLDERS.has(folderName)) {
           const changed = allPaths.some(fp => {
             let st; try { st = fs.statSync(fp); } catch (e) { return false; }
             const prev = seen[fp];
@@ -901,6 +917,7 @@ async function main() {
     catch (e) { log(`[WARN] อ่านโฟลเดอร์ปี ${yearFolder} ไม่ได้ (${e.message}) — ข้ามปีนี้`); continue; }
     for (const folderName of shipmentFolders) {
       if (ONLY && !folderName.toUpperCase().includes(ONLY)) continue;
+      if (SKIP_FOLDERS.has(folderName)) continue; // ทำไปแล้วในรอบก่อน (--resume-from-log)
       const poNumbers = extractPoNumbers(folderName);
       const fullDir = path.join(IMPORT_ROOT, yearFolder, folderName);
       const allFiles = walkFiles(fullDir);
@@ -1024,7 +1041,20 @@ async function main() {
           try {
             if (!etsSession) { log('  เปิด ETS session ครั้งแรก...'); etsSession = await openEtsSession(); }
             // ส่ง etd ไปด้วยเพื่อให้ค้นในช่วงวันที่ของ shipment นี้จริงๆ ไม่ใช่ช่วงรอบ "วันนี้"
-            const etaResult = await searchVesselActualDate(etsSession.page, result.vessel, result.mode === 'air' ? 'air' : 'sea', result.voyage, result.etd);
+            // ⚠ ต้องมีเพดานเวลา — วัดจริง 2026-08-13: ETS ค้างไป 48 นาทีในการค้นครั้งเดียว
+            // (XIN MING ZHOU 98 voy=2505S) เพราะ waitFor ภายในบางจุดไม่มี timeout กำกับ
+            // ครั้งเดียวกินเวลามากกว่าทั้งรอบสแกน 45 โฟลเดอร์รวมกัน จึงตัดที่ 90 วิแล้วไปต่อ
+            const etaResult = await Promise.race([
+              searchVesselActualDate(etsSession.page, result.vessel, result.mode === 'air' ? 'air' : 'sea', result.voyage, result.etd),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('ETS ไม่ตอบใน 90 วินาที')), 90000)),
+            ]).catch(async (e) => {
+              // หมดเวลาแล้วหน้าเว็บค้างอยู่กลางทาง ใช้ session เดิมต่อไม่ได้ — ปิดทิ้งให้เปิดใหม่รอบหน้า
+              if (/90 วินาที/.test(e.message)) {
+                try { await closeEtsSession(etsSession); } catch (e2) {}
+                etsSession = null;
+              }
+              throw e;
+            });
             log(`  ETA lookup (${result.vessel} voy=${result.voyage} etd=${result.etd}): status=${etaResult.status} eta=${etaResult.eta} matchedVoyage=${etaResult.matchedVoyage} ของทั้งหมด ${etaResult.totalVoyagesFound} เที่ยว${etaResult.reason ? ' — ' + etaResult.reason : ''}`);
             if (etaResult.eta) fields.eta = etaResult.eta;
           } catch (e) {

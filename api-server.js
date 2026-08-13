@@ -1544,6 +1544,22 @@ const server = http.createServer(async (req, res) => {
           const n = Number(r[f]);
           return !Number.isFinite(n) || n < 0;
         });
+        // ISO 6346: 3 ตัวอักษร + ตัวระบุประเภท (U/J/Z) + 6 หลัก + เลขตรวจสอบ 1 หลัก
+        // เลขตรวจสอบคำนวณจากน้ำหนักฐาน 2 ของ 10 ตัวแรก จึงยืนยันได้ว่า "เป็นเลขตู้จริง" ไม่ใช่แค่หน้าตาคล้าย
+        const ISO6346_VAL = (() => {
+          const m = {}; '0123456789'.split('').forEach((c, i) => { m[c] = i; });
+          let n = 10;
+          for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') { if (n % 11 === 0) n++; m[c] = n++; }
+          return m;
+        })();
+        const isContainerNo = v => {
+          const s = String(v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (!/^[A-Z]{3}[UJZ]\d{7}$/.test(s)) return false;
+          let sum = 0;
+          for (let i = 0; i < 10; i++) sum += ISO6346_VAL[s[i]] * Math.pow(2, i);
+          return (sum % 11) % 10 === Number(s[10]);
+        };
+        const isEmpty = v => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
         let applied = 0;
         const rejected = [];
         recs.forEach(r => {
@@ -1551,6 +1567,15 @@ const server = http.createServer(async (req, res) => {
           if (key == null) return;
           const bad = invalidField(r);
           if (bad) { rejected.push({ po_so: key, field: bad, value: r[bad] }); return; }
+          // ── เลขตู้ต้องไม่หลุดเข้าช่อง B/L ────────────────────────────────────────────────
+          // เลขตู้กับเลข B/L อยู่ใกล้กันในเอกสารและหน้าตาคล้ายกัน (ตัวอักษร+ตัวเลข) ตัวสกัดจึงสลับกันได้
+          // เจอจริง 2026-08-13: กฎ "ใช้เลข House" ทำให้ AI เขียน NLLU4237054 (เลขตู้แท้ ผ่าน ISO 6346)
+          // ลงช่อง bl_awb ของ 3 การ์ด · เลข B/L ไม่มีวันเป็นเลขตู้ที่ถูกต้องตามมาตรฐาน จึงตัดทิ้งได้เลย
+          if (!isEmpty(r.bl_awb) && isContainerNo(r.bl_awb)) {
+            console.log(`[Upsert] ${key} ทิ้งค่า bl_awb="${r.bl_awb}" — เป็นเลขตู้ตามมาตรฐาน ISO 6346 ไม่ใช่เลข B/L`);
+            delete r.bl_awb;
+            if (!isEmpty(r.bl) && isContainerNo(r.bl)) delete r.bl;
+          }
           const idx    = byKey.has(key) ? byKey.get(key) : -1;
           const before = idx >= 0 ? data[idx] : null;
           // ── โหมด "เติมเฉพาะช่องว่าง" (_fillEmptyOnly) ────────────────────────────────
