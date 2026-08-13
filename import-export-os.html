@@ -440,7 +440,7 @@ class App extends Component {
       const saved=localStorage.getItem('kobTheme');
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
@@ -930,13 +930,17 @@ class App extends Component {
     if(this.state.billList&&this.state.billList.length&&this._billListCompany===f.company){return;}
     this.setState({billLoading:true});
     try{
-      const r=await fetchTimeout('/api/logistics-bills?company='+encodeURIComponent(f.company)+'&months=12',{headers:{Accept:'application/json'}},15000);
+      // limit=2000 — เพดานเดิม 300 ตัดบิลเก่าทิ้งเงียบๆ (วัดจริง: KOB 12 เดือนมี 736 รายการ เห็นแค่ 365
+      // และเก่าสุดขยับจาก 2025-08-14 มาเป็น 2025-09-19) ทำให้ค้นหาบิลเก่าไม่เจอเลยเพราะกรองฝั่งเบราว์เซอร์
+      // จากลิสต์ที่ถูกตัดมาแล้ว · ขอเต็มเร็วกว่าด้วยซ้ำ (0.5 วิ เทียบ 2.6 วิ) เพราะไม่ต้อง sort+ตัด
+      const r=await fetchTimeout('/api/logistics-bills?company='+encodeURIComponent(f.company)+'&months=12&limit=2000',{headers:{Accept:'application/json'}},20000);
       if(!r.ok)throw new Error('HTTP '+r.status);
       const j=await r.json();
       this._billListCompany=f.company;
-      this.setState({billList:(j&&j.bills)||[],billLoading:false});
+      this.setState({billList:(j&&j.bills)||[],billLoading:false,
+        billMeta:j?{total:j.total,fetched:j.fetched,truncated:!!j.truncated,months:j.months}:null});
     }catch(e){
-      this.setState({billList:[],billLoading:false,billError:true});
+      this.setState({billList:[],billLoading:false,billError:true,billMeta:null});
       this.showToast(e.name==='AbortError'?'เชื่อมต่อ Odoo ไม่ทันเวลา — ลองใหม่อีกครั้ง':'โหลดรายการบิลไม่สำเร็จ','error');
     }
   }
@@ -2372,7 +2376,7 @@ class App extends Component {
     </>;
   }
   renderBillPicker(){
-    const {billList,billLoading,billQuery,billError,selBills}=this.state;
+    const {billList,billLoading,billQuery,billError,selBills,billMeta}=this.state;
     const q=(billQuery||'').trim().toLowerCase();
     const all=billList||[];
     const list=q?all.filter(b=>((b.partner||'')+' '+(b.bill||'')+' '+(b.ref||'')+' '+(b.date||'')).toLowerCase().includes(q)):all;
@@ -2398,6 +2402,17 @@ class App extends Component {
             <span style={{display:'flex',color:'var(--color-text-muted)'}}><Ico name="search" size={16} sw={1.8}/></span>
             <input value={billQuery} onChange={e=>this.setState({billQuery:e.target.value})} placeholder="ค้นหา ผู้ขาย / เลขบิล / วันที่…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',width:'100%'}}/>
           </div>
+          {/* บอกตรงๆ ว่ากำลังเห็นกี่จากกี่รายการ — ห้ามตัดข้อมูลโดยไม่บอก
+              ถ้า server ยังตัดอยู่ (truncated) ต้องเตือนให้เห็นชัด ไม่ใช่ปล่อยให้เข้าใจว่าเห็นครบ */}
+          {!billLoading&&!billError&&billMeta&&<div style={{marginTop:'10px',fontSize:'11.5px',
+            color:billMeta.truncated?'var(--color-warn-text)':'var(--color-text-muted)',
+            background:billMeta.truncated?'var(--color-warn-soft)':'transparent',
+            border:billMeta.truncated?'1px solid var(--color-warn-border)':'0',
+            borderRadius:'var(--radius)',padding:billMeta.truncated?'7px 10px':'0'}}>
+            {billMeta.truncated
+              ? <>⚠️ แสดง {(billList||[]).length.toLocaleString()} จากทั้งหมด {(billMeta.total||0).toLocaleString()} รายการ — ยังมีบิลเก่ากว่านี้ที่ยังไม่ได้โหลด</>
+              : <>แสดงครบทุกรายการ · {(billList||[]).length.toLocaleString()} บิล/PO ย้อนหลัง {billMeta.months||12} เดือน</>}
+          </div>}
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'12px 16px'}}>
           {billLoading&&<div style={{textAlign:'center',color:'var(--color-text-muted)',fontSize:'13px',padding:'40px 0'}}>กำลังโหลดบิลจาก Odoo… (ไม่เกิน 15 วินาที)</div>}

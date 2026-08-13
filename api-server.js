@@ -1073,6 +1073,14 @@ const server = http.createServer(async (req, res) => {
 
     if (reqUrl === '/api/vendors' && method === 'GET') {
       try {
+        // เพดานเดิม 500 ตัดเงียบเหมือน logistics-bills — วัดจริง 2026-08-13: ผู้ขายที่เข้าเงื่อนไขมี 2,518 ราย
+        // คืนได้ 500 (ชนเพดานเป๊ะ) หายไป 2,018 ราย = 80% · autocomplete ผู้ขาย/ตัวแทนขนส่งจึงหาไม่เจอ
+        // เรียงตามจำนวน PO มาก→น้อย เจ้าที่ไม่เคยสั่งเลยจึงตกหายก่อน ซึ่งคือเจ้าที่คนพิมพ์หาบ่อยที่สุด
+        const VENDOR_CAP = 3000;
+        const vTotal = await cachedQuery('vendors_count', `
+          SELECT COUNT(*)::int AS n FROM res_partner rp
+          WHERE rp.supplier_rank > 0 AND rp.active = true AND rp.is_company = true
+        `, false, { orderCols: 'r.n AS _ord, r.n AS _id', maxRows: 1 }).then(r => r[0]?.n ?? null).catch(() => null);
         const rows = await cachedQuery('vendors', `
           SELECT
             rp.id,
@@ -1104,9 +1112,10 @@ const server = http.createServer(async (req, res) => {
             AND rp.active = true
             AND rp.is_company = true
           ORDER BY COALESCE(v.po_count, 0) DESC, rp.name ASC
-          LIMIT 500
-        `, false, { orderCols: 'r.po_count AS _ord, r.id AS _id', maxRows: 500 });
-        jsonOk(res, { ok: true, count: rows.length, rows });
+          LIMIT ${VENDOR_CAP}
+        `, false, { orderCols: 'r.po_count AS _ord, r.id AS _id', maxRows: VENDOR_CAP });
+        jsonOk(res, { ok: true, count: rows.length, total: vTotal, limit: VENDOR_CAP,
+          truncated: vTotal == null ? rows.length >= VENDOR_CAP : rows.length < vTotal, rows });
       } catch (e) {
         jsonErrEx(res, 500, 'vendors', e);
       }
@@ -1222,6 +1231,13 @@ const server = http.createServer(async (req, res) => {
       // การ cap ความยาว + ตัดอักขระควบคุม/backslash เป็น defense-in-depth เพิ่มจาก escape (กันพึ่ง
       // standard_conforming_strings อย่างเดียว) และกัน ReDoS/query ยาวผิดปกติ
       const q       = (params.get('q') || '').trim().slice(0, 80).replace(/[\\\x00-\x1f]/g, '');
+      // ── เพดานผลลัพธ์ ────────────────────────────────────────────────────────────────────
+      // เดิมฮาร์ดโค้ด LIMIT 300 ทั้ง bill และ po แล้ว "ตัดเงียบ" — ผู้ใช้ไม่มีทางรู้ว่าเห็นไม่ครบ
+      // วัดจริง 2026-08-13: ?months=24 คืน 370 แถว (300 bill + 70 po) ชนเพดานเป๊ะ · วันเก่าสุดที่ได้
+      // คือ 2026-01-12 ทั้งที่ขอ 24 เดือน · ยอดรวมต่ำกว่าความจริง ~20% · bill picker จึงหาบิลเก่าไม่เจอเลย
+      // แก้ตามหลัก "ห้ามตัดข้อมูลโดยไม่บอก" — คืน total จริงมาด้วยเสมอ + เปิด limit/offset ให้ดึงต่อได้
+      const limit   = Math.min(Math.max(parseInt(params.get('limit')) || 300, 1), 2000);
+      const offset  = Math.max(parseInt(params.get('offset')) || 0, 0);
       const coFilter   = co === 'KOB' ? 'AND am.company_id = 1'
                        : co === 'BTV' ? 'AND am.company_id = 2' : '';
       const coFilterPo = co === 'KOB' ? 'AND po.company_id = 1'
@@ -1243,6 +1259,58 @@ const server = http.createServer(async (req, res) => {
       const poSearchMcp   = q ? `AND (rp.name ILIKE ${qLit} OR po.name ILIKE ${qLit} OR po.origin ILIKE ${qLit})` : '';
 
       // ตัว SQL body รับ search clause เป็นพารามิเตอร์ ใช้ร่วมกันทั้ง direct และ MCP (จุดเดียว ไม่ drift)
+      // WHERE แยกออกมาเป็นชิ้นเดียว เพื่อให้ query นับจำนวนใช้เงื่อนไข "ชุดเดียวกันเป๊ะ" กับ query ดึงข้อมูล
+      // (ถ้าเขียนแยกสองที่ วันหนึ่งจะ drift แล้วเลข "จาก N รายการ" จะโกหกโดยไม่มีใครรู้)
+      const billWhere = (search) => `
+        WHERE am.company_id IN (1,2)
+          ${coFilter}
+          -- รวม in_refund (ใบลดหนี้) ด้วย กลับเครื่องหมายลบตอนประมวลผล — เดิมนับแต่ in_invoice ทำให้ผู้ใช้
+          -- เห็นแต่ยอดเต็มโดยไม่รู้ว่ามีใบลดหนี้หักล้างอยู่ (บั๊กรูปแบบเดียวกับที่เจอใน gl-reconciliation:
+          -- ยืนยันแล้วว่ามี in_refund จริง 2 ใบในขอบเขตนี้ ณ วันที่ตรวจสอบ)
+          AND am.move_type IN ('in_invoice', 'in_refund')
+          AND am.state = 'posted'
+          AND am.invoice_date >= NOW() - INTERVAL '${months} months'
+          AND (
+            rp.name ~* '${LOGI_PATTERN}'
+            OR EXISTS (
+              SELECT 1 FROM account_move_line aml2
+              JOIN product_product  pp2 ON pp2.id = aml2.product_id
+              JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
+              JOIN product_category pc2 ON pc2.id = pt2.categ_id
+              WHERE aml2.move_id = am.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
+            )
+          )
+          ${search}`;
+      const poWhere = (search) => `
+        WHERE po.company_id IN (1,2)
+          ${coFilterPo}
+          AND po.state NOT IN ('cancel')
+          AND po.date_order >= NOW() - INTERVAL '${months} months'
+          AND (
+            rp.name ~* '${LOGI_PATTERN}'
+            OR EXISTS (
+              SELECT 1 FROM purchase_order_line pol2
+              JOIN product_product  pp2 ON pp2.id = pol2.product_id
+              JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
+              JOIN product_category pc2 ON pc2.id = pt2.categ_id
+              WHERE pol2.order_id = po.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
+            )
+          )
+          ${search}`;
+      // นับทั้งหมดที่เข้าเงื่อนไข (ไม่มี LIMIT) — ใช้บอกผู้ใช้ว่ากำลังเห็นกี่จากกี่รายการ
+      // ไม่ต้อง join LATERAL ที่ใช้เฉพาะตอนดึงข้อมูล (lines/main_product) เพราะ WHERE ไม่ได้อ้างถึง
+      const billCountSql = (search) => `
+        SELECT COUNT(*)::int AS n
+        FROM account_move am
+        JOIN res_currency cu ON cu.id = am.currency_id
+        JOIN res_partner  rp ON rp.id = am.partner_id
+        ${billWhere(search)}`;
+      const poCountSql = (search) => `
+        SELECT COUNT(*)::int AS n
+        FROM purchase_order po
+        JOIN res_partner  rp ON rp.id = po.partner_id
+        JOIN res_currency cu ON cu.id = po.currency_id
+        ${poWhere(search)}`;
       // (1) Vendor Bills: partner เข้า pattern หรือ line เป็นสินค้าหมวด Import Expenses
       const billSql = (search) => `
         SELECT
@@ -1267,27 +1335,9 @@ const server = http.createServer(async (req, res) => {
           FROM account_move_line aml
           WHERE aml.move_id = am.id AND aml.display_type = 'product'
         ) aml_s ON true
-        WHERE am.company_id IN (1,2)
-          ${coFilter}
-          -- รวม in_refund (ใบลดหนี้) ด้วย กลับเครื่องหมายลบตอนประมวลผล — เดิมนับแต่ in_invoice ทำให้ผู้ใช้
-          -- เห็นแต่ยอดเต็มโดยไม่รู้ว่ามีใบลดหนี้หักล้างอยู่ (บั๊กรูปแบบเดียวกับที่เจอใน gl-reconciliation:
-          -- ยืนยันแล้วว่ามี in_refund จริง 2 ใบในขอบเขตนี้ ณ วันที่ตรวจสอบ)
-          AND am.move_type IN ('in_invoice', 'in_refund')
-          AND am.state = 'posted'
-          AND am.invoice_date >= NOW() - INTERVAL '${months} months'
-          AND (
-            rp.name ~* '${LOGI_PATTERN}'
-            OR EXISTS (
-              SELECT 1 FROM account_move_line aml2
-              JOIN product_product  pp2 ON pp2.id = aml2.product_id
-              JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
-              JOIN product_category pc2 ON pc2.id = pt2.categ_id
-              WHERE aml2.move_id = am.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
-            )
-          )
-          ${search}
+        ${billWhere(search)}
         ORDER BY am.invoice_date DESC
-        LIMIT 300`;
+        LIMIT ${limit} OFFSET ${offset}`;
 
       // (2) Expense POs: หมวด Import Expenses หรือ partner โลจิสติกส์ — รอออกบิล
       const poSql = (search) => `
@@ -1314,32 +1364,20 @@ const server = http.createServer(async (req, res) => {
           WHERE pol.order_id = po.id
           ORDER BY pol.price_subtotal DESC LIMIT 1
         ) prod ON true
-        WHERE po.company_id IN (1,2)
-          ${coFilterPo}
-          AND po.state NOT IN ('cancel')
-          AND po.date_order >= NOW() - INTERVAL '${months} months'
-          AND (
-            rp.name ~* '${LOGI_PATTERN}'
-            OR EXISTS (
-              SELECT 1 FROM purchase_order_line pol2
-              JOIN product_product  pp2 ON pp2.id = pol2.product_id
-              JOIN product_template pt2 ON pt2.id = pp2.product_tmpl_id
-              JOIN product_category pc2 ON pc2.id = pt2.categ_id
-              WHERE pol2.order_id = po.id AND pc2.complete_name ILIKE '${IMPORT_CAT}'
-            )
-          )
-          ${search}
+        ${poWhere(search)}
         ORDER BY po.date_order DESC
-        LIMIT 300`;
+        LIMIT ${limit} OFFSET ${offset}`;
 
       // MCP path หั่นคอลัมน์ตาม doc_date/id (ต้องมีใน SELECT ทั้งสอง query) — ใช้ NCOLS_WIDE เพราะ bill มี lines[]
       const BILL_ORDER = 'r.doc_date AS _ord, r.id AS _id';
-      let billRows, poRows, via = null;
+      let billRows, poRows, via = null, billTotal = null, poTotal = null;
       // ลอง direct ก่อน (ข้ามถ้า circuit เพิ่งเปิด — จะได้ไม่รอ timeout เปล่าๆ)
       if (!dbLikelyDown()) {
         try {
           billRows = (await db.query(billSql(billSearchDirect), q ? args : [])).rows;
           poRows   = (await db.query(poSql(poSearchDirect),     q ? args : [])).rows;
+          billTotal = (await db.query(billCountSql(billSearchDirect), q ? args : [])).rows[0]?.n ?? null;
+          poTotal   = (await db.query(poCountSql(poSearchDirect),     q ? args : [])).rows[0]?.n ?? null;
           markDbUp(); via = 'direct';
         } catch (e) {
           if (isConnFailure(e)) markDbDown();
@@ -1351,8 +1389,14 @@ const server = http.createServer(async (req, res) => {
         if (!(MCP_URL && MCP_TOKEN)) { jsonErr(res, 503, 'Odoo ไม่พร้อมใช้งานชั่วคราว (RDS ตรงต่อไม่ได้ และไม่ได้ตั้งค่า MCP bridge)'); return; }
         try {
           const sid = await mcpConnect();
-          billRows = await mcpPull(sid, billSql(billSearchMcp), BILL_ORDER, 300, MCP_NCOLS_WIDE);
-          poRows   = await mcpPull(sid, poSql(poSearchMcp),     BILL_ORDER, 300, MCP_NCOLS_WIDE);
+          billRows = await mcpPull(sid, billSql(billSearchMcp), BILL_ORDER, limit, MCP_NCOLS_WIDE);
+          poRows   = await mcpPull(sid, poSql(poSearchMcp),     BILL_ORDER, limit, MCP_NCOLS_WIDE);
+          // นับผ่าน bridge ด้วย — ถ้านับไม่ได้ปล่อย null แล้วฝั่งหน้าเว็บจะไม่โชว์ "จาก N" (ดีกว่าโชว์เลขมั่ว)
+          const CNT_ORDER = 'r.n AS _ord, r.n AS _id';
+          try {
+            billTotal = (await mcpPull(sid, billCountSql(billSearchMcp), CNT_ORDER, 1, MCP_NCOLS_WIDE))[0]?.n ?? null;
+            poTotal   = (await mcpPull(sid, poCountSql(poSearchMcp),     CNT_ORDER, 1, MCP_NCOLS_WIDE))[0]?.n ?? null;
+          } catch (cntErr) { console.error('[API] logistics-bills นับจำนวนผ่าน MCP ไม่สำเร็จ:', cntErr.message); }
           via = 'mcp';
           console.log('[API] logistics-bills ผ่าน MCP bridge สำเร็จ — bills:', billRows.length, 'po:', poRows.length, '(direct ใช้ไม่ได้)');
         } catch (mcpErr) {
@@ -1450,7 +1494,14 @@ const server = http.createServer(async (req, res) => {
         out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         // via บอกว่าดึงมาจาก direct หรือ MCP bridge (markDbUp/markDbDown จัดการไปแล้วในขั้นดึงข้อมูล)
-        jsonOk(res, { ok: true, count: out.length, months, via, bills: out });
+        // total/truncated = สัญญาว่า "ไม่ตัดข้อมูลโดยไม่บอก" — หน้าเว็บเอาไปแสดงว่าเห็นกี่จากกี่รายการ
+        // count คือจำนวนที่ส่งกลับหลังกรอง PO ที่มีบิลอ้างแล้วออก จึงน้อยกว่า fetched ได้เป็นปกติ
+        const fetched = billRows.length + poRows.length;
+        const total   = (billTotal == null || poTotal == null) ? null : billTotal + poTotal;
+        jsonOk(res, { ok: true, count: out.length, months, via, limit, offset,
+          fetched, total, totalBills: billTotal, totalPos: poTotal,
+          truncated: total == null ? (billRows.length >= limit || poRows.length >= limit) : (offset + fetched < total),
+          bills: out });
       } catch(e) {
         // ถึงตรงนี้แปลว่าดึงข้อมูลสำเร็จแล้ว (direct หรือ MCP) — error ที่นี่คือขั้นประมวลผล ไม่ใช่ DB หลุด
         console.error('[API] logistics-bills ประมวลผล:', e.message);
