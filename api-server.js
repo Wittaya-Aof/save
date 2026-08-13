@@ -1605,8 +1605,17 @@ const server = http.createServer(async (req, res) => {
               // คนละชิปเม้น แล้วข้ามทั้ง record → การ์ดไม่เคยได้ ETD/ETA เลย
               // (เจอจริง 2026-08-13: KOBPO2605-09063 การ์ดมี HBL MZY202605220303 เรือ ISEACO UNITY
               //  เอกสารให้ MBL SGCN202606004 เรือ ISEACO UNITY ลำเดียวกัน แต่ถูกข้ามทุกรอบ)
+              // ⭐ เลข B/L ตรงกันเป๊ะ = ชิปเม้นเดียวกันแน่นอน ชนะทุกสัญญาณ (เลข B/L เป็นรหัสเอกสารที่ไม่ซ้ำ)
+              // ต้องมาก่อนการเทียบชื่อเรือ เพราะ B/L ใบเดียวมีได้หลายลำจริงๆ จากการถ่ายลำ (feeder + mother)
+              // วัดจริง 2026-08-13: ถูกบล็อกทั้งที่ B/L ตรงกัน 20 ครั้ง เช่น TWSABKK2601017 เรือ
+              // "SAWASDEE ATLANTIC" vs "SAWASDEE PACIFIC" · HASLK01260707883 "KMTC SINGAPORE" vs
+              // "KMTC BANGKOK" · และ NBPAT2611973 ที่ชื่อเรืออ่านได้ 108 กับ 98 (ตัวเลขคลาดกันตอนสกัด)
+              // ผลคือข้อมูลที่ดึงถูกต้องแล้วไม่เคยลงการ์ดเลย — AOF เจอเองว่า forwarder ยังผิดอยู่
+              // ใช้การเทียบแบบ "ตรงกันเป๊ะ" เท่านั้น (ไม่ใช่ substring) เพื่อไม่ให้เลขสั้นไปพ้องกับเลขอื่น
+              const exact = (a, b) => { const n = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); return !!n(a) && n(a) === n(b); };
               let idMismatch = false;
-              if (!isEmpty(before.vessel) && !isEmpty(r.vessel)) idMismatch = !same(before.vessel, r.vessel);
+              if (exact(before.bl_awb, r.bl_awb)) idMismatch = false;
+              else if (!isEmpty(before.vessel) && !isEmpty(r.vessel)) idMismatch = !same(before.vessel, r.vessel);
               else if (!isEmpty(before.bl_awb) && !isEmpty(r.bl_awb)) idMismatch = !same(before.bl_awb, r.bl_awb);
               if (idMismatch) {
                 console.log(`[Upsert] ${key} ข้ามทั้ง record — เป็นคนละชิปเม้น (ในระบบ bl=${before.bl_awb || '-'}/เรือ=${before.vessel || '-'} · ที่ส่งมา bl=${r.bl_awb || '-'}/เรือ=${r.vessel || '-'})`);
