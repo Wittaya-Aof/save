@@ -462,7 +462,7 @@ class App extends Component {
       const saved=localStorage.getItem('kobTheme');
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},landed:null,costDetail:null,alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},landed:null,costDetail:null,billTarget:null,alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
@@ -702,6 +702,10 @@ class App extends Component {
   applyOne(s,o){
     const m={...s};
     ['origin','dest','bl','container','vessel','forwarder','etd','eta','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
+    // ตัวสแกนเขียนเลข B/L ลงฟิลด์ bl_awb ฟิลด์เดียว (ไม่ได้เขียน bl) — วัดจริง 2026-08-13:
+    // 218 record มี bl_awb แต่ไม่มี bl จึงไม่มีเลข B/L ขึ้นบนการ์ดเลย และการจับคู่ต้นทุนด้วย
+    // เลข B/L ก็ใช้ไม่ได้ทั้งที่ข้อมูลมีอยู่ (mapTracking ทางสำรองอ่าน bl_awb ถูกอยู่แล้ว ตกหล่นเฉพาะทางนี้)
+    if(!m.bl&&o.bl_awb)m.bl=o.bl_awb;
     ['freight','clearance','insurance','duty','vat','other','expectedCost','containerQty'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
     // มูลค่าสินค้า (amount/cur/rate) มาจาก Odoo เสมอสำหรับ PO จริง ห้าม override ทับ —
     // ยกเว้น shipment ที่แยกเอง (_synthetic) ซึ่งไม่มี PO จริงคู่กัน มูลค่าต้องรับจากฟอร์มแก้ไขเท่านั้น
@@ -1073,11 +1077,14 @@ class App extends Component {
     finally{this._vendorsLoading=false;}
   }
   // ── เปิดรายการบิลขนส่ง/ศุลกากร ให้ผู้ใช้เลือกจับคู่ ──
-  async openBillPicker(){
+  // เปิดตัวเลือกบิลจาก Odoo แบบเจาะจง "ช่องค่าใช้จ่ายเดียว" — เดิมเป็นปุ่มเดียวเติมทั้ง 5 ช่องรวด
+  // ซึ่งใช้ไม่ได้กับกรณีที่ Landed Cost ไม่มีข้อมูล (เช่นอากร/VAT ที่บิลกรมศุลฯ ผูกโฟลเดอร์ไม่ติด)
+  // ผู้ใช้ต้องเลือกเองได้ว่าบิลใบไหนเป็นค่าใช้จ่ายช่องไหน
+  async openBillPicker(bucket,label){
     const f=this.state.editForm;if(!f)return;
-    // preselect บิลที่เคยจับคู่ไว้
-    const sel={};(f.bills||[]).forEach(b=>{sel[b.id]=b;});
-    this.setState({billPicker:true,billQuery:'',selBills:sel,billError:false});
+    // preselect บิลที่เคยจับคู่ไว้กับช่องนี้
+    const sel={};((f._billsBy&&f._billsBy[bucket])||[]).forEach(b=>{sel[b.id]=b;});
+    this.setState({billPicker:true,billTarget:{bucket,label},billQuery:'',selBills:sel,billError:false});
     // cache แยกตามบริษัท — เดิมเช็คแค่ "มีลิสต์อยู่แล้วหรือยัง" ทำให้เปิด BTV ต่อจาก KOB
     // เห็นบิลของ KOB ค้างอยู่ (ผิดบริษัท)
     if(this.state.billList&&this.state.billList.length&&this._billListCompany===f.company){return;}
@@ -1097,21 +1104,22 @@ class App extends Component {
       this.showToast(e.name==='AbortError'?'เชื่อมต่อ Odoo ไม่ทันเวลา — ลองใหม่อีกครั้ง':'โหลดรายการบิลไม่สำเร็จ','error');
     }
   }
-  closeBillPicker(){this.setState({billPicker:false});}
+  closeBillPicker(){this.setState({billPicker:false,billTarget:null});}
   toggleBill(b){this.setState(s=>{const sel={...s.selBills};if(sel[b.id])delete sel[b.id];else sel[b.id]=b;return {selBills:sel};});}
   // ใช้บิลที่เลือก: รวม freight/duty/vat เติมลงช่อง + จำการจับคู่ไว้
   applySelectedBills(){
+    const t=this.state.billTarget;if(!t)return;
     const sel=Object.values(this.state.selBills||{});
-    let freight=0,clearance=0,insurance=0,duty=0,vat=0;
-    sel.forEach(b=>{freight+=b.freight||0;clearance+=b.clearance||0;insurance+=b.insurance||0;duty+=b.duty||0;vat+=b.vat||0;});
-    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,category:b.category,freight:b.freight||0,clearance:b.clearance||0,insurance:b.insurance||0,duty:b.duty||0,vat:b.vat||0}));
+    // ยอดที่ลงช่อง = ยอดรวมของบิลที่ผู้ใช้เลือก (ผู้ใช้เป็นคนตัดสินว่าบิลใบไหนเป็นค่าใช้จ่ายช่องไหน
+    // ไม่ใช่ให้ระบบเดาจาก keyword ซึ่งเดิมกระจายยอดใบเดียวไปหลายช่องโดยที่ผู้ใช้ไม่เห็น)
+    const total=sel.reduce((a,b)=>a+(b.amount||0),0);
+    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,category:b.category}));
     this.setState(s=>({
-      editForm:{...s.editForm,freight:Math.round(freight),clearance:Math.round(clearance),insurance:Math.round(insurance),duty:Math.round(duty),vat:Math.round(vat),bills:meta},
-      billPicker:false,
-      costSrc:sel.length?('✓ จับคู่ '+sel.length+' รายการจาก Odoo'):''
+      editForm:{...s.editForm,[t.bucket]:Math.round(total),_billsBy:{...(s.editForm._billsBy||{}),[t.bucket]:meta}},
+      billPicker:false,billTarget:null,
+      costSrc:sel.length?('✓ '+t.label+': จับคู่ '+sel.length+' บิลจาก Odoo'):''
     }));
-    const total=freight+clearance+insurance+duty+vat;
-    this.showToast(sel.length?('ใช้ '+sel.length+' รายการ รวม ฿'+Math.round(total).toLocaleString()):'ไม่ได้เลือกบิล',sel.length?'success':'info');
+    this.showToast(sel.length?('ใส่ '+t.label+' ฿'+Math.round(total).toLocaleString()+' จาก '+sel.length+' บิล'):'ไม่ได้เลือกบิล',sel.length?'success':'info');
   }
   async saveEdit(){
     const f=this.state.editForm;if(!f||this.state.savingEdit)return;
@@ -2461,12 +2469,20 @@ class App extends Component {
                 return <div key={k}>
                   <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'5px'}}>
                     <span style={{fontSize:'11px',color:'var(--color-text-muted)'}}>{l}</span>
-                    {act!=null&&act>0&&<button onClick={()=>this.openCostDetail(sel,k,l)}
-                      title="ดูบิลจริงที่ประกอบเป็นตัวเลขนี้"
-                      style={{marginLeft:'auto',display:'inline-flex',alignItems:'center',gap:'4px',padding:'2px 8px',
-                        border:'1px solid var(--color-border)',borderRadius:'999px',background:'var(--color-surface-muted)',
-                        color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'10.5px',cursor:'pointer'}}>
-                      <Ico name="boxes" size={11} sw={1.8}/>บิลจริง ฿{Math.round(act).toLocaleString()}</button>}
+                    <span style={{marginLeft:'auto',display:'inline-flex',gap:'6px'}}>
+                      {act!=null&&act>0&&<button onClick={()=>this.openCostDetail(sel,k,l)}
+                        title="ดูบิลจริงที่ประกอบเป็นตัวเลขนี้"
+                        style={{display:'inline-flex',alignItems:'center',gap:'4px',padding:'2px 8px',
+                          border:'1px solid var(--color-border)',borderRadius:'999px',background:'var(--color-surface-muted)',
+                          color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'10.5px',cursor:'pointer'}}>
+                        <Ico name="boxes" size={11} sw={1.8}/>บิลจริง ฿{Math.round(act).toLocaleString()}</button>}
+                      <button onClick={()=>this.openBillPicker(k,l)}
+                        title="เลือกบิลจาก Odoo มาใส่ช่องนี้ — ใช้ตอนที่ระบบต้นทุนยังผูกบิลให้ไม่ได้ (เช่นบิลกรมศุลกากร)"
+                        style={{display:'inline-flex',alignItems:'center',gap:'4px',padding:'2px 8px',
+                          border:'1px solid var(--color-border)',borderRadius:'999px',background:'var(--color-surface)',
+                          color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'10.5px',cursor:'pointer'}}>
+                        <Ico name="sync" size={11} sw={1.8}/>Odoo</button>
+                    </span>
                   </div>
                   <input value={ef[k]===''||ef[k]==null?'':ef[k]} onChange={e=>this.setEdit(k,e.target.value)} type="number" placeholder="0" style={INP}/>
                   {act!=null&&act>0&&Math.round(act)!==Math.round(cur)&&<div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>
@@ -2602,16 +2618,15 @@ class App extends Component {
     Object.keys(ovAll).forEach(k=>{if(k===curPo)return;((ovAll[k]&&ovAll[k].bills)||[]).forEach(b=>{if(b&&b.id!=null&&!usedBy[b.id])usedBy[b.id]=k;});});
     const sel=selBills||{};
     const selArr=Object.values(sel);
-    const sums={freight:0,clearance:0,insurance:0,duty:0,vat:0};
-    selArr.forEach(b=>{Object.keys(sums).forEach(k=>{sums[k]+=b[k]||0;});});
-    const sumAll=sums.freight+sums.clearance+sums.insurance+sums.duty+sums.vat;
+    // ยอดที่จะลงช่อง = ยอดรวมของบิลที่เลือก (ไม่ใช่ยอดที่ระบบเดาแยกเป็น 5 หมวดแบบเดิม)
+    const sumAll=selArr.reduce((a,b)=>a+(b.amount||0),0);
     return <>
       <div onClick={()=>this.closeBillPicker()} style={{position:'fixed',inset:0,background:'rgba(15,23,42,.45)',zIndex:70,animation:'kobFadeIn .2s ease'}}/>
       <div style={{position:'fixed',top:0,right:0,bottom:0,width:'520px',maxWidth:'96vw',background:'var(--color-surface)',zIndex:71,boxShadow:'var(--shadow-pop)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
         <div style={{padding:'20px 22px 14px',borderBottom:'1px solid var(--color-border)'}}>
           <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
-            <div><div style={{fontSize:'16px',fontWeight:500,color:'var(--color-text)'}}>เลือกบิลค่าขนส่ง / ภาษี</div>
-              <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'2px'}}>จาก Odoo · เลือกบิลที่เป็นของ shipment นี้ (เลือกได้หลายใบ)</div></div>
+            <div><div style={{fontSize:'16px',fontWeight:500,color:'var(--color-text)'}}>เลือกบิลใส่ช่อง “{(this.state.billTarget&&this.state.billTarget.label)||'ค่าใช้จ่าย'}”</div>
+              <div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'2px'}}>จาก Odoo · เลือกได้หลายใบ — ยอดรวมของบิลที่เลือกจะลงช่องนี้ช่องเดียว</div></div>
             <button onClick={()=>this.closeBillPicker()} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
           </div>
           <div style={{display:'flex',alignItems:'center',gap:'8px',background:'var(--color-surface-muted)',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',padding:'0 12px',height:'38px',marginTop:'14px'}}>
@@ -2665,7 +2680,7 @@ class App extends Component {
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'10px',fontSize:'11px',color:'var(--color-text-tertiary)',marginBottom:'10px',flexWrap:'wrap'}}>
             <span style={{fontWeight:500}}>เลือก {selArr.length} รายการ</span>
             <span style={{fontVariantNumeric:'tabular-nums',textAlign:'right'}}>
-              {['freight','clearance','insurance','duty','vat'].filter(k=>sums[k]>0).map(k=>billCatLabel(k)+' ฿'+Math.round(sums[k]).toLocaleString()).join(' · ')||'—'}
+              {selArr.length?('จะลงช่อง “'+((this.state.billTarget&&this.state.billTarget.label)||'')+'” ฿'+Math.round(sumAll).toLocaleString()):'—'}
             </span>
           </div>
           <div style={{display:'flex',gap:'10px'}}>
