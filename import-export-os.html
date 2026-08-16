@@ -187,13 +187,17 @@ function kpiStandardDays(origin,seaType){
 // Transit Time จริง: ETD -> วันที่รับเข้าคลังจริง (actualDate) + เทียบมาตรฐาน (import + sea เท่านั้น
 // เพราะ Excel มาตรฐานครอบคลุมเฉพาะ sea freight ขาเข้า)
 function transitInfo(s){
-  if(!s||!s.etd||!s.actualDate)return null;
-  const d1=new Date(s.etd),d2=new Date(s.actualDate);
+  // วันรับของจริง: ใช้ actualDate ที่คนกรอกก่อน — ถ้าไม่มี ใช้วันใบรับของล่าสุดจาก Odoo
+  // (_lastReceipt) ซึ่งเป็นหลักฐานจริงและครอบคลุมกว่ามาก วัดจริง 2026-08-13: actualDate มี 179
+  // record แต่คำนวณ lead time ได้เพิ่มเป็น 210 การ์ดเมื่อรวม _lastReceipt เข้ามา
+  const done=s&&(s.actualDate||s._lastReceipt);
+  if(!s||!s.etd||!done)return null;
+  const d1=new Date(s.etd),d2=new Date(done);
   if(isNaN(d1)||isNaN(d2))return null;
   const days=Math.round((d2-d1)/86400000);
-  if(days<0)return null;
+  if(days<0||days>400)return null;   // ติดลบ/ห่างเกินปี = ข้อมูลคนละชิปเม้นปนกัน ไม่รายงานดีกว่ารายงานผิด
   const kpi=(s._board==='import'&&s.mode==='sea')?kpiStandardDays(s.origin,s.seaType):null;
-  return {days,kpi};
+  return {days,kpi,via:s.actualDate?'manual':'odoo',doneDate:String(done).slice(0,10)};
 }
 // Lead time วางออเดอร์ (date_order) ถึงกำหนดถึงท่า (date_planned/ETA) — ใช้ orderDate/eta ที่มาจาก Odoo ตรงๆ
 // (coverage ~99% ของ import PO ทั้งหมด) แทน etd/actualDate ที่ transitInfo() ต้องพึ่ง ซึ่งเป็นฟิลด์กรอกมือ
@@ -237,6 +241,24 @@ const EXP_STAGES = [
   {key:'arrived',label:'ถึงปลายทาง',color:'#16a34a'}
 ];
 
+// 15 หมวดของ Landed Cost → 6 ช่องต้นทุนในการ์ด (ครอบคลุมครบทุกหมวด ไม่มีตกหล่น)
+// VAT แยกช่องของตัวเองเพราะเครดิตคืนได้ ไม่ใช่ต้นทุนจริงของสินค้า
+const LC_BUCKET = {
+  freight_sea:'freight', freight_air:'freight', exwork:'freight',
+  clearance:'clearance', co_fee:'clearance',
+  insurance:'insurance',
+  duty:'duty', excise:'duty', local_tax:'duty',
+  vat:'vat',
+  port:'other', storage:'other', trucking:'other', other:'other', no_desc:'other',
+};
+const COST_FIELDS = [
+  ['ค่าขนส่ง (Freight)','freight'],
+  ['ค่าเดินพิธีการ (Clearance)','clearance'],
+  ['ค่าประกันภัย (Insurance)','insurance'],
+  ['อากรขาเข้า (Import Duty)','duty'],
+  ['ภาษีมูลค่าเพิ่ม (VAT)','vat'],
+  ['อื่นๆ — ค่าท่า / ฝากเก็บ / รถในประเทศ','other'],
+];
 const PATHS = {
   boxes:'M3.5 9.5l8.5-4.5 8.5 4.5-8.5 4.5z M3.5 9.5v5l8.5 4.5 8.5-4.5v-5 M12 14v5',
   down:'M12 4v13 M6 11l6 6 6-6',up:'M12 20V7 M6 13l6-6 6 6',
@@ -307,7 +329,7 @@ const AUDIT_FIELD_LABELS={cur:'สกุลเงิน',amount:'มูลค่
   actualDate:'วันที่รับเข้าคลังจริง',freight:'ค่าขนส่ง',clearance:'ค่าพิธีการ',insurance:'ค่าประกันภัย',duty:'อากรขาเข้า',
   vat:'ภาษีมูลค่าเพิ่ม',bl:'เลข BL/AWB',bl_awb:'เลข BL/AWB',container:'ตู้คอนเทนเนอร์',vessel:'เรือ/เที่ยว',
   forwarder:'ตัวแทนขนส่ง',note:'หมายเหตุ',overReceipt:'รับเกิน',dest:'ปลายทาง',origin:'ต้นทาง',party:'คู่ค้า',
-  courierCo:'บริษัทขนส่ง',containerQty:'จำนวนตู้',expectedCost:'ต้นทุนที่คาดการณ์ไว้'};
+  courierCo:'บริษัทขนส่ง',containerQty:'จำนวนตู้',other:'ค่าใช้จ่ายอื่นๆ',expectedCost:'ต้นทุนที่คาดการณ์ไว้'};
 // เฉพาะฟิลด์ที่มีความหมายทางธุรกิจ — กรอง internal state ทิ้ง (ขึ้นต้น _ หรืออยู่ในลิสต์กันเอง)
 const AUDIT_SKIP_FIELDS=new Set(['po_so','id','_ts','_src','_origin','_board','_edited','_rateIsThb','_synthetic','_splitBase','type','company','mode','seaType','bills']);
 function auditEntrySummary(e){
@@ -342,7 +364,7 @@ function poStatusColor(s){
 }
 function billCatSty(c){const m=({freight:{bg:'var(--color-brand-soft)',fg:'var(--color-brand)'},clearance:{bg:'#f3e8ff',fg:'#7e22ce'},insurance:{bg:'#ccfbf1',fg:'#0f766e'},duty:{bg:'#ffedd5',fg:'var(--color-warn)'},vat:{bg:'#dcfce7',fg:'#15803d'}})[c]||{bg:'var(--color-surface-muted)',fg:'var(--color-text-tertiary)'};return {display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'var(--radius-sm)',fontSize:'10px',fontWeight:500,background:m.bg,color:m.fg};}
 // ต้นทุนนำเข้ารวมของ shipment (ไม่รวมมูลค่าสินค้า)
-function costSum(s){return (s.freight||0)+(s.clearance||0)+(s.insurance||0)+(s.duty||0)+(s.vat||0);}
+function costSum(s){return (s.freight||0)+(s.clearance||0)+(s.insurance||0)+(s.duty||0)+(s.vat||0)+(s.other||0);}
 // ต้นทุนรวมแปลงเป็นบาท (มูลค่าสินค้า + ต้นทุนนำเข้า) — ใช้ทั้งตารางต้นทุนและ Dashboard
 function totalCostThb(s){return (s.amount||0)*(s.rate||0)+costSum(s);}
 // สรุปผล Transit Time เทียบ KPI สำหรับ import + sea freight เท่านั้น (ตรงกับที่มีมาตรฐานอ้างอิง)
@@ -427,7 +449,7 @@ function sampleExports(){return [
 function defaultForm(board){
   return {board:board||'import',company:'KOB',poNo:'',party:'',type:'oversea',mode:'sea',seaType:'FCL20',containerQty:'',courierCo:'',
     cur:'CNY',amount:'',origin:'',dest:'LAEM CHABANG, THAILAND',
-    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',actualDate:'',freight:'',clearance:'',insurance:'',duty:'',vat:'',expectedCost:''};
+    bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',actualDate:'',freight:'',clearance:'',insurance:'',duty:'',vat:'',other:'',expectedCost:''};
 }
 
 class App extends Component {
@@ -440,7 +462,7 @@ class App extends Component {
       const saved=localStorage.getItem('kobTheme');
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},landed:null,costDetail:null,alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
@@ -658,6 +680,7 @@ class App extends Component {
       // การ์ดแยกใช้วันถึงของ "งวดตัวเอง" เทียบกับใบรับของล่าสุดของ PO ฐาน
       // (เคสจริง KOBPO2604-08431: ขาอากาศ 5 งวด ETD 4-23 ก.ค. · ใบรับของ done ถึง 29 ก.ค.
       //  → ทั้ง 5 งวดเข้าคลังแล้ว ส่วนขาเรือ ETA 7 ส.ค. ยังไม่มีใบรับของ จึงยังไม่ใช่ received)
+      if(b&&b._lastReceipt)ns._lastReceipt=b._lastReceipt;   // ให้การ์ดแยกคำนวณ lead time ได้ด้วย
       const gotIt=rs==='partial'&&ns._board!=='export'
         &&this._receivedByEvidence(this._arrivalOf(ns),b&&b._lastReceipt);
       const floor=rs==='full'?(ns._board==='export'?'arrived':'received')
@@ -674,12 +697,12 @@ class App extends Component {
   // สร้าง shipment object เต็มจาก override ที่เป็นรายการสังเคราะห์ (แยก shipment/สร้างใหม่)
   // แยกจาก mapTracking() เพราะ field ที่ใช้ต่างกัน (cur/amount/rate ตรงตัว ไม่ใช่ convention rate กลับด้านแบบ Odoo)
   mapSynthetic(o){
-    return {_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_synthetic:true};
+    return {_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,other:parseFloat(o.other)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_synthetic:true};
   }
   applyOne(s,o){
     const m={...s};
     ['origin','dest','bl','container','vessel','forwarder','etd','eta','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
-    ['freight','clearance','insurance','duty','vat','expectedCost','containerQty'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
+    ['freight','clearance','insurance','duty','vat','other','expectedCost','containerQty'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=parseFloat(o[k])||0;});
     // มูลค่าสินค้า (amount/cur/rate) มาจาก Odoo เสมอสำหรับ PO จริง ห้าม override ทับ —
     // ยกเว้น shipment ที่แยกเอง (_synthetic) ซึ่งไม่มี PO จริงคู่กัน มูลค่าต้องรับจากฟอร์มแก้ไขเท่านั้น
     if(o._synthetic){
@@ -794,7 +817,7 @@ class App extends Component {
     // id ต้องไม่มีวันเป็น undefined — record ที่บันทึกผ่านฟอร์มแก้ไข/สร้างในแอปไม่มี r.id/r.odoo_id
     // (มีแค่ po_so) ถ้าปล่อยเป็น undefined หลาย record จะชนกัน ทำให้คลิกแล้วเปิดผิด PO
     const id=r.id||r.odoo_id||('t_'+(r.po_so||Math.random()));
-    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total??r.amount)||0,rate,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,_fallback:true};
+    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total??r.amount)||0,rate,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,other:parseFloat(r.other)||0,_fallback:true};
   }
 
   allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
@@ -819,12 +842,12 @@ class App extends Component {
     const f=this.state.form;this.setState({saving:true});
     const rate=this.fxRate(f.cur);
     const id='t_'+(f.poNo||('new_'+Date.now()));
-    const ns={_board:f.board,id,poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,expectedCost:parseFloat(f.expectedCost)||0,_synthetic:true};
+    const ns={_board:f.board,id,poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,other:parseFloat(f.other)||0,expectedCost:parseFloat(f.expectedCost)||0,_synthetic:true};
     this.setState({shipments:[ns].concat(this.allShipments()),creating:false,tab:f.board,view:'kanban'});
     const ov={...this._overrides};
     // _synthetic:true — PO นี้ไม่มีอยู่จริงใน Odoo ต้องให้ applyOverrides() เก็บไว้เป็นรายการเดี่ยวๆ
     // ไม่งั้นตอนโหลดข้อมูลรอบถัดไป (auto-refresh ทุก 3 นาที) รายการนี้จะหายไปเงียบๆ เพราะไม่มี PO ให้ merge ทับ
-    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,expectedCost:parseFloat(f.expectedCost)||0};
+    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,other:parseFloat(f.other)||0,expectedCost:parseFloat(f.expectedCost)||0};
     this._overrides=ov;
     // ต้องเช็ค res.ok ด้วย — fetch จะ reject เฉพาะตอนเครือข่ายพัง ไม่ reject เมื่อ server ตอบ 4xx/5xx
     // เดิมจึงขึ้น toast "เพิ่มรายการสำเร็จ" ทุกครั้งที่ server ตอบกลับมา ไม่ว่าจะบันทึกผ่านหรือถูกปฏิเสธ
@@ -847,8 +870,8 @@ class App extends Component {
 
   startEdit(){
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
-    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',expectedCost:s.expectedCost||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
-    this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();
+    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',other:s.other||'',expectedCost:s.expectedCost||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();this.loadLanded();
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
   setEdit(k,v){this.setState(s=>({editForm:{...s.editForm,[k]:v}}));}
@@ -882,7 +905,7 @@ class App extends Component {
     // overReceipt = "รับของเกินสั่ง" คนละความหมายกับ "ลากมาลงคอลัมน์สุดท้ายแล้ว" — ห้ามตั้งเป็น true อัตโนมัติ
     // (บั๊กเดิม copy-paste มาจาก actualDate ด้านล่าง ทำให้ลากการ์ดปกติไปคอลัมน์สุดท้ายแล้วขึ้นป้าย "เกิน" ผิดๆ)
     // ต้องใส่ _synthetic/_splitBase ต่อให้ตรงกับของเดิมเสมอ ไม่งั้น shipment ที่แยกเอง/สร้างเองจะหลุดสถานะนั้นไปตอนลาก
-    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,other:s.other||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
     const ov={...this._overrides};ov[s.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(x=>x.poNo===s.poNo?this.applyOne(x,o):x);
     this.setState({shipments:rows});
@@ -935,6 +958,108 @@ class App extends Component {
   // ครั้งต่อๆ ไป return ทันทีที่บรรทัดแรก ไม่มีโอกาสลองใหม่เลยตลอดอายุแท็บ ถ้าพลาดครั้งเดียวตอนเปิดฟอร์มแรก
   // (เกิดจริงบ่อยเพราะ /api/vendors ต้องผ่าน MCP bridge ซึ่งใช้เวลาหลายวินาที) → เก็บสถานะพลาดแยก
   // ให้ลองใหม่ได้ตอนเปิดฟอร์มครั้งถัดไป
+  // ── ต้นทุนจริงจากบิล (Landed Cost service) ────────────────────────────────────────────
+  // โหลดครั้งเดียวต่ออายุแท็บ (241 shipment ~ไม่กี่ร้อย KB) แล้ว index ไว้ในหน่วยความจำ
+  // service อาจไม่รัน → เก็บ {unavailable:true} ไว้แสดงเหตุผล ไม่ปล่อยให้ฟอร์มพัง
+  async loadLanded(){
+    if(this.state.landed||this._landedLoading)return;
+    this._landedLoading=true;
+    try{
+      const r=await fetchTimeout('/api/landed-cost',{headers:{Accept:'application/json'}},60000);
+      const j=await r.json();
+      this.setState({landed:j&&j.unavailable?{unavailable:true,reason:j.reason}:{shipments:(j&&j.shipments)||[],built_at:j&&j.built_at}});
+    }catch(e){this.setState({landed:{unavailable:true,reason:e.name==='AbortError'?'ไม่ตอบใน 60 วินาที':e.message}});}
+    finally{this._landedLoading=false;}
+  }
+  // จับคู่ "การ์ด → โฟลเดอร์ต้นทุน" — ต้องแม่นระดับชิปเม้น ไม่ใช่ระดับ PO
+  // ลำดับความน่าเชื่อถือ (หยุดที่ตัวแรกที่เจอ) วัดจริงกับข้อมูลปัจจุบัน 193/197 การ์ด:
+  //   1. PO นี้มีโฟลเดอร์เดียว → ผูกตรง ไม่ต้องเดา (147 ใบ)
+  //   2. เลข B/L-AWB ของการ์ดตรงกับที่ตัวสแกนบันทึกไว้ว่ามาจากโฟลเดอร์ไหน (46 ใบ)
+  //   3. ชื่อเรือ+voyage ตรงกับ artifact
+  // ไม่เข้าเกณฑ์ไหนเลย = ไม่เดา คืน {ambiguous:true} แล้วให้หน้าจอบอกตรงๆ ว่าแยกรายใบไม่ได้
+  _landedIndex(){
+    if(this._lcIdx&&this._lcIdxFor===this.state.landed)return this._lcIdx;
+    const L=this.state.landed; if(!L||L.unavailable||!L.shipments)return null;
+    const N=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const baseOf=s=>String(s||'').toUpperCase().replace(/\s*\(\d+\)\s*$/,'');
+    const byPo=new Map(), byLeaf=new Map();
+    L.shipments.forEach(s=>{
+      byLeaf.set(s.leaf,s);
+      (s.product_pos||[]).forEach(p=>{const k=baseOf(p);if(!byPo.has(k))byPo.set(k,[]);byPo.get(k).push(s);});
+    });
+    // เลข B/L / ชื่อเรือ → โฟลเดอร์ (server ทำ index มาให้จาก artifact ของตัวสแกนแล้ว)
+    const byBl=new Map(), byVes=new Map();
+    L.shipments.forEach(s=>{
+      (s.blKeys||[]).forEach(k=>{if(!byBl.has(k))byBl.set(k,s.leaf);});
+      (s.vesKeys||[]).forEach(k=>{if(!byVes.has(k))byVes.set(k,s.leaf);});
+    });
+    this._lcIdx={byPo,byLeaf,byBl,byVes,N,baseOf}; this._lcIdxFor=this.state.landed;
+    return this._lcIdx;
+  }
+  landedFor(s){
+    const ix=this._landedIndex(); if(!ix)return null;
+    const list=ix.byPo.get(ix.baseOf(s.poNo)); if(!list||!list.length)return null;
+    if(list.length===1)return {ship:list[0],via:'po'};
+    const kb=ix.N(s.bl);
+    if(kb&&ix.byBl.has(kb)){const f=ix.byBl.get(kb);const m=list.find(x=>x.leaf===f);if(m)return {ship:m,via:'bl'};}
+    const kv=ix.N(s.vessel);
+    if(kv.length>=4&&ix.byVes.has(kv)){const f=ix.byVes.get(kv);const m=list.find(x=>x.leaf===f);if(m)return {ship:m,via:'vessel'};}
+    return {ambiguous:true,folders:list};
+  }
+  // ค่ากลาง/p90 ของ lead time ในกลุ่มเดียวกัน (ขาเข้า + วิธีขนส่งเดียวกัน) ไว้เทียบว่าใบนี้ช้าผิดปกติไหม
+  // คิดจากการ์ดที่วัด lead time ได้จริงเท่านั้น ต้องมีอย่างน้อย 5 ใบถึงจะรายงาน ไม่งั้นค่ากลางไม่มีความหมาย
+  leadPeer(s){
+    if(!s||!s.mode)return null;
+    const k=s._board+'|'+s.mode;
+    this._leadCache=this._leadCache||{};
+    if(this._leadCache[k]===undefined){
+      const days=this.allShipments().filter(x=>x._board===s._board&&x.mode===s.mode)
+        .map(x=>transitInfo(x)).filter(Boolean).map(t=>t.days).sort((a,b)=>a-b);
+      this._leadCache[k]=days.length>=5
+        ?{median:days[Math.floor(days.length/2)],p90:days[Math.floor(days.length*0.9)],n:days.length,
+          label:(s.mode==='air'?'ขาอากาศ':'ขาเรือ')+' ('+days.length+' รายการ)'}
+        :null;
+    }
+    return this._leadCache[k];
+  }
+  // ยอดรวมของช่องต้นทุนหนึ่งช่อง จากบิลจริง — null = ยังไม่มีข้อมูล/แยกรายใบไม่ได้
+  landedAmount(s,bucket){
+    const hit=this.landedFor(s);
+    if(!hit||hit.ambiguous||!hit.ship)return null;
+    const by=hit.ship.byCat||{};
+    let sum=0;
+    Object.keys(by).forEach(c=>{if(LC_BUCKET[c]===bucket)sum+=(+by[c]||0);});
+    return sum;
+  }
+  renderLandedNote(s){
+    const L=this.state.landed;
+    const box=(txt,tone)=><div style={{fontSize:'11px',marginBottom:'12px',padding:'8px 11px',borderRadius:'var(--radius)',
+      background:tone==='warn'?'var(--color-warn-soft)':'var(--color-surface-muted)',
+      border:'1px solid '+(tone==='warn'?'var(--color-warn-border)':'var(--color-surface-muted2)'),
+      color:tone==='warn'?'var(--color-warn-text)':'var(--color-text-secondary)'}}>{txt}</div>;
+    if(!L)return box('กำลังโหลดต้นทุนจริงจากบิล…');
+    if(L.unavailable)return box('ยังไม่มีข้อมูลต้นทุนจริง — ต่อ Landed Cost (port 3100) ไม่ได้: '+(L.reason||'ไม่ทราบสาเหตุ'),'warn');
+    const hit=this.landedFor(s);
+    if(!hit)return box('ไม่พบบิลของ PO นี้ใน Landed Cost — กรอกเองได้ตามปกติ');
+    if(hit.ambiguous)return box('⚠️ PO นี้แบ่งเป็น '+hit.folders.length+' ชิปเม้นในระบบต้นทุน แต่การ์ดใบนี้ยังไม่มีเลข B/L-AWB ที่ตรงกับโฟลเดอร์ไหน จึงยังแยกต้นทุนรายใบให้ไม่ได้ (ใส่เลข B/L ให้ตรงกับเอกสารแล้วจะจับคู่ได้เอง)','warn');
+    const via={po:'ผูกจากเลข PO',bl:'ผูกจากเลข B/L-AWB',vessel:'ผูกจากชื่อเรือ'}[hit.via];
+    return box('ต้นทุนจริงจากบิล '+(hit.ship.bills||[]).length+' ใบ · รวม ฿'+Math.round(hit.ship.total||0).toLocaleString()+' — '+via+' → โฟลเดอร์ "'+hit.ship.leaf+'"');
+  }
+  // ป๊อปอัปแสดงบิลจริงที่ประกอบเป็นตัวเลขของช่องนั้น — โหลด line ตอนเปิด ไม่โหลดล่วงหน้าทั้งหมด
+  async openCostDetail(s,bucket,label){
+    const hit=this.landedFor(s);
+    if(!hit||hit.ambiguous||!hit.ship)return;
+    this.setState({costDetail:{bucket,label,folder:hit.ship.folder,leaf:hit.ship.leaf,rows:null,loading:true,error:''}});
+    try{
+      const r=await fetchTimeout('/api/landed-cost/lines?folder='+encodeURIComponent(hit.ship.folder),{headers:{Accept:'application/json'}},30000);
+      const j=await r.json();
+      const rows=((j&&j.rows)||[]).filter(x=>LC_BUCKET[x.category]===bucket);
+      this.setState(st=>st.costDetail?{costDetail:{...st.costDetail,rows,loading:false}}:{});
+    }catch(e){
+      this.setState(st=>st.costDetail?{costDetail:{...st.costDetail,loading:false,error:e.name==='AbortError'?'ไม่ตอบใน 30 วินาที':e.message}}:{});
+    }
+  }
+  closeCostDetail(){this.setState({costDetail:null});}
   async loadVendors(){
     if(Array.isArray(this.state.vendors)&&this.state.vendors.length)return;
     if(this._vendorsLoading)return;
@@ -994,7 +1119,7 @@ class App extends Component {
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
     // shipment ที่แยกเอง (_synthetic) ไม่มี PO จริงใน Odoo — มูลค่า/สกุลเงินต้องรับจากฟอร์มนี้โดยตรง
     // ของ PO จริง มูลค่ามาจาก Odoo เสมอ ไม่ให้ฟอร์มนี้ทับ (ไม่มีช่องแก้ในฟอร์มอยู่แล้ว ค่าจะเท่าเดิม)
-    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),expectedCost:num(f.expectedCost),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),other:num(f.other),expectedCost:num(f.expectedCost),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
     const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
     this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
@@ -2161,6 +2286,10 @@ class App extends Component {
                 </div>
                 {ti.kpi&&<div style={{fontSize:'11.5px',color:'var(--color-text-tertiary)',marginTop:'5px'}}>มาตรฐาน {ti.kpi.label}: {ti.kpi.days} วัน — {variance<=0?('เร็วกว่ามาตรฐาน '+Math.abs(variance)+' วัน'):('ล่าช้ากว่ามาตรฐาน '+variance+' วัน')}</div>}
                 {!ti.kpi&&<div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginTop:'5px'}}>{sel._board==='import'&&sel.mode==='sea'?'ไม่มีมาตรฐานอ้างอิงสำหรับท่านี้':'มาตรฐาน KPI มีเฉพาะ Sea Freight ขาเข้า'}</div>}
+                <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'6px'}}>
+                  {sel.etd} → {ti.doneDate} · {ti.via==='odoo'?'วันรับเข้าคลังจากใบรับของใน Odoo':'วันที่กรอกไว้เอง'}
+                  {(()=>{const p=this.leadPeer(sel);return p?' · ค่ากลางของ'+p.label+' '+p.median+' วัน'+(ti.days>p.p90?' — ช้ากว่า 90% ของรายการกลุ่มนี้':''):'';})()}
+                </div>
               </div>;
             })()}
             <SectionTitle>ต้นทุน (บาท)</SectionTitle>
@@ -2323,24 +2452,29 @@ class App extends Component {
                 <input value={ef.forwarder||''} onChange={e=>this.setEdit('forwarder',e.target.value)} list="kobVL" placeholder="พิมพ์เพื่อค้นหา vendor…" style={INP}/>
                 <datalist id="kobVL">{vList.slice(0,500).map(v=><option key={v.name} value={v.name}/>)}</datalist></div>
             </div>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',margin:'20px 0 11px'}}>
-              <SectionTitle>ต้นทุน (บาท)</SectionTitle>
-              <button onClick={()=>this.openBillPicker()} style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'6px 11px',border:'1px solid var(--color-brand)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:500,cursor:'pointer'}}><Ico name="boxes" size={13} sw={1.8}/>เลือกบิลจาก Odoo</button>
-            </div>
-            {Array.isArray(ef.bills)&&ef.bills.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'5px',marginBottom:'12px',background:'var(--color-surface-muted)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'10px 12px'}}>
-              <div style={{fontSize:'10.5px',fontWeight:500,color:'var(--color-text-muted)',letterSpacing:'.4px'}}>บิลที่จับคู่ ({ef.bills.length})</div>
-              {ef.bills.map(b=><div key={b.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',fontSize:'11.5px'}}>
-                <span style={{color:'var(--color-text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</span>
-                <span style={{display:'flex',alignItems:'center',gap:'6px',flexShrink:0}}>
-                  <span style={billCatSty(b.category)}>{billCatLabel(b.category)}</span>
-                  <span style={{fontWeight:500,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(b.amount).toLocaleString()}</span>
-                </span>
-              </div>)}
-            </div>}
+            <div style={{margin:'20px 0 11px'}}><SectionTitle>ต้นทุน (บาท)</SectionTitle></div>
+            {this.renderLandedNote(sel)}
             <div style={{display:'flex',flexDirection:'column',gap:'13px'}}>
-              {[['ค่าขนส่ง (Freight)','freight'],['ค่าเดินพิธีการ (Clearance)','clearance'],['ค่าประกันภัย (Insurance)','insurance'],['อากรขาเข้า (Import Duty)','duty'],['ภาษีมูลค่าเพิ่ม (VAT)','vat']].map(([l,k])=>(
-                <div key={k}><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>{l}</div><input value={ef[k]===''||ef[k]==null?'':ef[k]} onChange={e=>this.setEdit(k,e.target.value)} type="number" placeholder="0" style={INP}/></div>
-              ))}
+              {COST_FIELDS.map(([l,k])=>{
+                const act=this.landedAmount(sel,k);   // ต้นทุนจริงจากบิลของช่องนี้ (null = ไม่มีข้อมูล)
+                const cur=parseFloat(ef[k])||0;
+                return <div key={k}>
+                  <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'5px'}}>
+                    <span style={{fontSize:'11px',color:'var(--color-text-muted)'}}>{l}</span>
+                    {act!=null&&act>0&&<button onClick={()=>this.openCostDetail(sel,k,l)}
+                      title="ดูบิลจริงที่ประกอบเป็นตัวเลขนี้"
+                      style={{marginLeft:'auto',display:'inline-flex',alignItems:'center',gap:'4px',padding:'2px 8px',
+                        border:'1px solid var(--color-border)',borderRadius:'999px',background:'var(--color-surface-muted)',
+                        color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'10.5px',cursor:'pointer'}}>
+                      <Ico name="boxes" size={11} sw={1.8}/>บิลจริง ฿{Math.round(act).toLocaleString()}</button>}
+                  </div>
+                  <input value={ef[k]===''||ef[k]==null?'':ef[k]} onChange={e=>this.setEdit(k,e.target.value)} type="number" placeholder="0" style={INP}/>
+                  {act!=null&&act>0&&Math.round(act)!==Math.round(cur)&&<div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>
+                    บิลจริงรวม ฿{Math.round(act).toLocaleString()} — <span onClick={()=>this.setEdit(k,String(Math.round(act)))}
+                      style={{color:'var(--color-brand-text)',cursor:'pointer',textDecoration:'underline'}}>ใช้ตัวเลขนี้</span>
+                  </div>}
+                </div>;
+              })}
             </div>
             {costSrc&&<div style={{fontSize:'11px',color:costSrc.includes('ไม่พบ')?'var(--color-danger-text)':'var(--color-success-text)',marginTop:'4px'}}>{costSrc}</div>}
             <div style={{marginTop:'16px'}}>
@@ -2377,6 +2511,7 @@ class App extends Component {
         </div>
       </div>
       {billPicker&&this.renderBillPicker()}
+      {this.state.costDetail&&this.renderCostDetail()}
       {deleteDialog&&this.renderDeleteDialog()}
     </>;
   }
@@ -2400,6 +2535,59 @@ class App extends Component {
           <button onClick={()=>this.closeDeleteDialog()} style={{flex:1,height:'38px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
           <button onClick={()=>this.confirmDelete()} disabled={d.busy||!d.password} style={{flex:1,height:'38px',border:0,borderRadius:'var(--radius)',background:'var(--color-danger-text)',color:'#fff',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:(d.busy||!d.password)?'default':'pointer',opacity:(d.busy||!d.password)?0.6:1}}>{d.busy?'กำลังลบ…':'ยืนยันลบ'}</button>
         </div>
+      </div>
+    </>;
+  }
+  // ป๊อปอัป "บิลจริง" ของช่องต้นทุนหนึ่งช่อง — แสดงทุกบรรทัดที่ประกอบเป็นตัวเลขนั้น
+  // พร้อมชื่อคู่ค้า (freight forwarder) เลขบิล วันที่ และ PO ค่าใช้จ่ายที่บิลอ้างถึง
+  renderCostDetail(){
+    const d=this.state.costDetail; if(!d)return null;
+    const rows=d.rows||[];
+    const sum=rows.reduce((a,r)=>a+(+r.thb||0),0);
+    // จัดกลุ่มตามคู่ค้า — โฟลเดอร์เดียวมีได้หลายเจ้า (ตัวแทนขนส่ง + ชิปปิ้ง + กรมศุลฯ)
+    const byPartner={};rows.forEach(r=>{const k=r.partner||'(ไม่ระบุ)';(byPartner[k]=byPartner[k]||[]).push(r);});
+    const CELL={fontSize:'11.5px',padding:'7px 8px',borderBottom:'1px solid var(--color-border)',verticalAlign:'top'};
+    return <>
+      <div onClick={()=>this.closeCostDetail()} style={{position:'fixed',inset:0,background:'rgba(15,23,42,.45)',zIndex:80,animation:'kobFadeIn .2s ease'}}/>
+      <div style={{position:'fixed',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:'720px',maxWidth:'94vw',maxHeight:'86vh',
+        background:'var(--color-surface)',borderRadius:'12px',zIndex:81,boxShadow:'var(--shadow-pop)',display:'flex',flexDirection:'column'}}>
+        <div style={{padding:'18px 20px 12px',borderBottom:'1px solid var(--color-border)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:'15px',fontWeight:500}}>{d.label}</div>
+              <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>บิลจริงจากโฟลเดอร์ “{d.leaf}”</div>
+            </div>
+            <button onClick={()=>this.closeCostDetail()} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'30px',height:'30px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={15} sw={1.9}/></button>
+          </div>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'6px 20px 12px'}}>
+          {d.loading&&<div style={{textAlign:'center',color:'var(--color-text-muted)',fontSize:'13px',padding:'34px 0'}}>กำลังโหลดบิล…</div>}
+          {d.error&&<div style={{color:'var(--color-danger-text)',fontSize:'12.5px',padding:'20px 0'}}>โหลดไม่สำเร็จ: {d.error}</div>}
+          {!d.loading&&!d.error&&!rows.length&&<div style={{color:'var(--color-text-muted)',fontSize:'12.5px',padding:'20px 0'}}>ไม่มีบิลในหมวดนี้</div>}
+          {Object.keys(byPartner).sort((a,b)=>byPartner[b].reduce((x,r)=>x+(+r.thb||0),0)-byPartner[a].reduce((x,r)=>x+(+r.thb||0),0)).map(p=>(
+            <div key={p} style={{marginTop:'14px'}}>
+              <div style={{display:'flex',alignItems:'baseline',gap:'8px',marginBottom:'4px'}}>
+                <span style={{fontSize:'12px',fontWeight:500}}>{p}</span>
+                <span style={{marginLeft:'auto',fontSize:'12px',fontWeight:500,fontVariantNumeric:'tabular-nums'}}>฿{Math.round(byPartner[p].reduce((x,r)=>x+(+r.thb||0),0)).toLocaleString()}</span>
+              </div>
+              <table style={{width:'100%',borderCollapse:'collapse'}}><tbody>
+                {byPartner[p].map((r,i)=><tr key={i}>
+                  <td style={{...CELL,color:'var(--color-text-secondary)'}}>{r.desc||'—'}
+                    <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'2px'}}>
+                      {r.bill_no} · {r.bill_date}{r.origin?' · PO ค่าใช้จ่าย '+r.origin:''}
+                    </div></td>
+                  <td style={{...CELL,textAlign:'right',whiteSpace:'nowrap',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(+r.thb||0).toLocaleString()}</td>
+                </tr>)}
+              </tbody></table>
+            </div>
+          ))}
+        </div>
+        {!d.loading&&!!rows.length&&<div style={{padding:'12px 20px',borderTop:'1px solid var(--color-border)',display:'flex',alignItems:'center',gap:'12px'}}>
+          <span style={{fontSize:'12px',color:'var(--color-text-muted)'}}>รวม {rows.length} บรรทัด</span>
+          <span style={{marginLeft:'auto',fontSize:'15px',fontWeight:500,fontVariantNumeric:'tabular-nums'}}>฿{Math.round(sum).toLocaleString()}</span>
+          <button onClick={()=>{this.setEdit(d.bucket,String(Math.round(sum)));this.closeCostDetail();}}
+            style={{padding:'8px 15px',border:0,borderRadius:'var(--radius)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>ใส่ตัวเลขนี้ลงช่อง</button>
+        </div>}
       </div>
     </>;
   }

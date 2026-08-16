@@ -138,7 +138,7 @@ function appendVerifyRun(result, ip) {
 const PROVENANCE_FIELDS = new Set([
   'etd', 'eta', 'actualDate', 'bl', 'bl_awb', 'container', 'vessel', 'voyage', 'forwarder',
   'origin', 'dest', 'mode', 'seaType', 'containerQty', 'courierCo',
-  'freight', 'clearance', 'insurance', 'duty', 'vat', 'expectedCost',
+  'freight', 'clearance', 'insurance', 'duty', 'vat', 'other', 'expectedCost',
   'amount', 'cur', 'rate', 'stage', 'note', 'overReceipt',
 ]);
 // origin ต้องสะอาดก่อนเอาไปต่อสตริง — กันชื่อไฟล์ที่มี @ หรือขึ้นบรรทัดใหม่ทำให้ parse ฝั่งอ่านเพี้ยน
@@ -212,6 +212,31 @@ const markDbUp     = () => { dbDownUntil = 0; };
 // เดิมต้องรัน build-snapshot.mjs มือ + restart server เอง ทุกครั้งที่ direct หลุด
 // ย้าย logic เดียวกันมาไว้ใน server เอง ให้ดึงเองอัตโนมัติ ไม่ต้องมีคนมาสั่งอีก
 const MCP_URL = process.env.MCP_URL, MCP_TOKEN = process.env.MCP_TOKEN;
+// ── Landed Cost service (โปรเจกต์แยก port 3100) ────────────────────────────────────────
+// แตกบิลจริงจาก Odoo เป็นต้นทุนราย shipment แล้วจัดหมวด 15 ประเภท ผูกกับ "โฟลเดอร์เอกสาร"
+// ซึ่งเป็นคีย์เดียวกับที่ scan-shipment-docs.mjs เดิน จึงเชื่อมเข้าการ์ดในบอร์ดได้ตรงๆ
+// ⚠ เป็น service คนละตัว — ห้ามให้บอร์ดพังเมื่อมันไม่รัน ทุก endpoint ที่นี่ต้องตอบ
+// { ok:true, unavailable:true } แทนการโยน error เพื่อให้หน้าเว็บแสดงว่า "ยังไม่มีข้อมูลต้นทุน"
+const LANDED_URL = process.env.LANDED_COST_URL || 'http://127.0.0.1:3100';
+const LANDED_MONTHS = 24;
+// ชื่อโฟลเดอร์ท้ายสุด — Landed Cost เก็บ path เต็ม ("1. Import\PO 2026\68. …") ส่วน
+// scan-shipment-docs.mjs เก็บเฉพาะชื่อโฟลเดอร์ชั้นล่างสุด จึงต้องตัดให้เทียบกันได้
+const leafName = f => String(f || '').split(/[\\/]/).pop().trim();
+function landedFetch(pathname, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(pathname, LANDED_URL);
+    const req = http.get(u, { headers: { Accept: 'application/json' } }, r => {
+      let d = ''; r.setEncoding('utf8');
+      r.on('data', c => { d += c; });
+      r.on('end', () => {
+        if (r.statusCode !== 200) return reject(new Error('HTTP ' + r.statusCode));
+        try { resolve(JSON.parse(d)); } catch (e) { reject(new Error('ตอบกลับไม่ใช่ JSON')); }
+      });
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`Landed Cost ไม่ตอบใน ${timeoutMs / 1000} วินาที`)));
+    req.on('error', reject);
+  });
+}
 // NCOLS*CHUNK = งบ base64 ต่อแถว (24*50=1200 ตัว ≈ 900 byte JSON ดิบ) — เผื่อแถวที่มีชื่อผู้ขาย/สินค้ายาว
 // หรือ currency_rate ทศนิยมเยอะ ไม่ให้ตัดขาดจน parse ไม่ผ่าน (เดิม 16 คอลัมน์ = 600 byte เสี่ยงพอดีกับแถวยาวๆ)
 const MCP_NCOLS = 24, MCP_CHUNK = 50, MCP_PAGE = 120;
@@ -1235,6 +1260,55 @@ const server = http.createServer(async (req, res) => {
     // PO ที่มีบิลอ้างถึงแล้วจะถูกตัดออก (บิล actual กว่า)
     // จำแนก 5 ประเภท: freight / clearance / insurance / duty / vat
     // GET /api/logistics-bills?company=KOB&months=8&q=dhl
+    // ── ต้นทุนจริงจากบิล (Landed Cost service) ────────────────────────────────────────────
+    // คืนต้นทุนราย "การ์ด" ไม่ใช่ราย PO — เพราะ PO เดียวแบ่งส่งหลายชิปเม้นได้ และแต่ละงวด
+    // มีบิลของตัวเอง (คนละ forwarder คนละใบขน) การรวมเป็นก้อนเดียวจะทำให้ต้นทุนต่อชิปเม้นผิด
+    if (reqUrl.startsWith('/api/landed-cost') && method === 'GET') {
+      const params = new URL('http://x' + req.url).searchParams;
+      try {
+        if (reqUrl.startsWith('/api/landed-cost/lines')) {
+          const folder = params.get('folder') || '';
+          if (!folder) { jsonErr(res, 400, 'ต้องระบุ folder'); return; }
+          const j = await landedFetch('/api/lines?folder=' + encodeURIComponent(folder));
+          jsonOk(res, { ok: true, rows: (j && j.rows) || [] });
+          return;
+        }
+        const j = await landedFetch(`/api/shipments?months=${LANDED_MONTHS}&company=`, 45000);
+        const shipments = (j && j.shipments) || [];
+        // ── index ตัวระบุชิปเม้น → โฟลเดอร์ จาก artifact ของตัวสแกน ────────────────────────
+        // จำเป็นเมื่อ PO เดียวแบ่งหลายงวด: เลข PO ซ้ำกันทุกใบในตระกูล ใช้แยกโฟลเดอร์ไม่ได้
+        // แต่เลข B/L-AWB ของแต่ละงวดไม่ซ้ำกัน และตัวสแกนบันทึกไว้แล้วว่าเจอในโฟลเดอร์ไหน
+        // ทำฝั่ง server เพราะ artifact เป็นไฟล์ปฏิบัติการขนาดหลาย MB ไม่ควรส่งไปทั้งก้อน
+        const NK = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const keysOf = new Map(); // leaf → { bl:Set, ves:Set }
+        try {
+          if (fs.existsSync(SHIPMENT_RUNS_FILE)) {
+            for (const line of fs.readFileSync(SHIPMENT_RUNS_FILE, 'utf8').split('\n')) {
+              if (!line) continue;
+              let r; try { r = JSON.parse(line); } catch (e) { continue; }
+              const leaf = leafName(r.folder); if (!leaf) continue;
+              if (!keysOf.has(leaf)) keysOf.set(leaf, { bl: new Set(), ves: new Set() });
+              const g = keysOf.get(leaf);
+              const kb = NK(r.bl_awb); if (kb.length >= 6) g.bl.add(kb);
+              const kv = NK(r.vessel) + NK(r.voyage); if (kv.length >= 4) g.ves.add(kv);
+            }
+          }
+        } catch (e) { console.error('[API] landed-cost อ่าน artifact ไม่ได้:', e.message); }
+        jsonOk(res, { ok: true, built_at: j.built_at || null, count: shipments.length,
+          cat_label: j.cat_label || {}, shipments: shipments.map(s => {
+            const leaf = leafName(s.folder), k = keysOf.get(leaf);
+            return { folder: s.folder, leaf, product_pos: s.product_pos || [],
+              total: s.total, byCat: s.byCat || {}, bills: s.bills || [], n_lines: s.n_lines,
+              blKeys: k ? [...k.bl] : [], vesKeys: k ? [...k.ves] : [] };
+          }) });
+      } catch (e) {
+        // service ไม่รัน/ตอบช้า = บอร์ดต้องยังใช้งานได้ แค่ไม่มีตัวเลขต้นทุนให้ดู
+        console.error('[API] landed-cost ไม่พร้อม:', e.message);
+        jsonOk(res, { ok: true, unavailable: true, reason: e.message, shipments: [] });
+      }
+      return;
+    }
+
     if (reqUrl === '/api/logistics-bills' && method === 'GET') {
       const params = new URL('http://x' + req.url).searchParams;
       const co      = params.get('company') || '';
@@ -1604,7 +1678,7 @@ const server = http.createServer(async (req, res) => {
         data.forEach((r, i) => { const k = r.po_so || r.id; if (k != null && !byKey.has(k)) byKey.set(k, i); });
         // เดิม endpoint นี้ merge JSON จาก client ตรงๆ โดยไม่ตรวจสอบเลย — ฟิลด์ตัวเลขที่ผิดปกติ (ติดลบ/ไม่ใช่
         // ตัวเลข) จะถูกบันทึกเงียบๆ แล้วไปพังผลรวมต้นทุน/Dashboard ที่อื่นในภายหลังโดยไม่มี error ให้เห็น
-        const NUM_FIELDS = ['freight','clearance','insurance','duty','vat','expectedCost','amount','rate','containerQty'];
+        const NUM_FIELDS = ['freight','clearance','insurance','duty','vat','other','expectedCost','amount','rate','containerQty'];
         const invalidField = r => NUM_FIELDS.find(f => {
           if (r[f] === undefined || r[f] === null || r[f] === '') return false;
           const n = Number(r[f]);
