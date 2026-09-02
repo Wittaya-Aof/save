@@ -1354,7 +1354,7 @@ class App extends Component {
         <div style={{minWidth:0}}><div className="kobDisplayTight" style={{fontSize:'16px',color:'var(--color-chrome-display)'}}>Import-Export OS</div><div style={{fontSize:'10.5px',color:'var(--color-chrome-muted)'}}>KOB &amp; BTV</div></div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'12px 10px',display:'flex',flexDirection:'column',gap:'1px'}}>
-        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'เปรียบเทียบค่าเฟรท',icon:'scale',active:tab==='freight'},{key:'verify',label:'ตรวจเอกสาร Shipment',icon:'check',active:tab==='verify'}].map(t=>{
+        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'Freight Charges Comparison',icon:'scale',active:tab==='freight'},{key:'verify',label:'ตรวจเอกสาร Shipment',icon:'check',active:tab==='verify'}].map(t=>{
           const active=t.active;
           return <button key={t.key} onClick={()=>{
             if(t.key==='logistics'){if(!inLogisticsGroup)this.setState({tab:'import',detailId:null});}

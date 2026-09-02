@@ -48,7 +48,7 @@ const SP = (process.env.SHOT_DIR || '.').replace(/\\/g, '/').replace(/\/?$/, '/'
       const main = await ctx.newPage();
       main.on('pageerror', e => out.errors.push('main: ' + e.message));
       await main.goto('http://127.0.0.1:3000/', { waitUntil: 'networkidle' });
-      await main.click('text=เปรียบเทียบค่าเฟรท');
+      await main.click('text=Freight Charges Comparison');
       const fr = await main.waitForSelector('iframe[src="/freight-comparison.html"]', { timeout: 10000 });
       const frame = await fr.contentFrame(); await frame.waitForSelector('#tbl tbody tr');
       out.mainTab = { title: await frame.title(), embeddedHeaderHidden: await frame.$eval('.header', el => getComputedStyle(el).display) };
