@@ -739,6 +739,24 @@ node scan-shipment-docs.mjs --overwrite                  # ปิดโหมด
 ⚠ **เป็น Scheduled Task บนเครื่อง desktop — ไม่รันตอนเครื่องปิด** (วัดจริง: หยุดไป 27 ชม. ข้ามคืน)
 "1 สัปดาห์" จึงหมายถึงสัปดาห์ที่เครื่องเปิด ไม่ใช่ 7×72 รอบ
 
+## โมดูลเปรียบเทียบค่าเฟรท `freight-comparison.html` (2026-09-02)
+แทน `D:\Import Charges Comparison.xlsx` / `D:\Export Charges Comparison.xlsx` ที่ต้อง copy ชีททีละใบ —
+เปิดเป็นแท็บ "เปรียบเทียบค่าเฟรท" ในแอปหลัก (iframe เหมือน Container Calculator) หรือตรงที่ `/freight-comparison.html`
+- **3 แม่แบบ** ยกรายการค่าใช้จ่ายมาจากชีท `SEA (LCL · FCL)` / `AIR FREIGHT` / `Format` ครบทุกแถว
+- **สูตรตรงกับ Excel และแก้จุดที่ Excel ต้องกรอกทับสูตรเอง**: แถวหน่วย CBM ในคอลัมน์ **FCL คิดต่อตู้** (× จำนวนตู้)
+  ไม่ใช่ × CBM (ในชีท KOBPO2605-08758 ผู้ใช้กรอกทับสูตร THC/Cleaning/EMC เป็นค่าต่อตู้อยู่แล้ว) ·
+  AIR: แถว KGS × น้ำหนักคิดเงินต่อคอลัมน์ (ว่าง = max(GW,VW)) · USD × อัตรา BOT · Duties&Taxes = factor × subtotal
+  ยืนยันด้วย Playwright กรอกเคสจริงแล้วยอดตรง Excel ทุกบาท (LCL 33,314.54 / FCL20 33,007.88 / AIR 53,876.52)
+- **ข้อมูลเชื่อมระบบ**: อัตรา USD จาก `/api/fx-rates` · เลข PO จาก `/api/import-pos` เติมชื่อผู้ขาย+หมวดให้ · ชื่อ forwarder จาก `/api/vendors`
+- **เก็บใบ**: `freight_quotes.json` (gitignored, atomic write) ผ่าน `GET /api/freight-quotes` · `POST /api/freight-quotes/upsert`
+  (ตรวจ id `fq_…`, type, โครง head/options/rows, เพดาน 2,000 ใบ / 200KB) · `POST /api/freight-quotes/delete` · ลง `tracking_audit.jsonl`
+  ด้วย action `freight_create/update/delete` · draft ค้างใน `localStorage.kobFreightDraft`
+- ส่งออก Excel (SheetJS จาก vendor/) โครงเดียวกับไฟล์ต้นฉบับ · พิมพ์/PDF · ไฮไลต์ตัวเลือกถูกที่สุด + ส่วนต่างจากอันดับถัดไป
+- **บทเรียนที่ต้องคงไว้**: ระหว่างผู้ใช้พิมพ์ **ห้าม re-render DOM** — `input` handler อัปเดตเฉพาะเซลล์ยอดเงินแบบ in-place
+  (`updateAmountsInPlace`), re-render ทั้งตารางเฉพาะ `change` ของ `<select>` เท่านั้น · เคยพลาด: `endsWith('.qty')` จับ `head.qty`
+  แล้ววาดตารางใหม่ตอนกำลัง Tab ไปช่องราคา ทำให้ตัวเลขราคาไหลไปต่อท้าย Total Qty (Playwright จับได้)
+- ทดสอบ: `NODE_PATH=./node_modules node tests/freight-e2e.cjs` (0 pageerror ทั้ง light/dark, บันทึก/ลบครบวงจร, แท็บในแอปหลัก)
+
 ## ยังไม่แก้ (ตั้งใจ)
 - ~~pinwheel / tail rotation สำหรับพาเลท~~ **ทำครบแล้ว** (2026-08-01) — ดูหัวข้อ "แผนผังพื้นพาเลท
   แบบสลับทิศ" ด้านบน · 20'GP + standard ได้ 10 ใบ = optimal ที่พิสูจน์แล้ว

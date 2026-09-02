@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Freight Charges Comparison</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Noto+Sans+Thai:wght@400;500&display=swap" rel="stylesheet">
+<script>
+// หน้านี้ถูกเปิดเป็น iframe ในแอปหลัก (เหมือน container-loading-calculator.html) — รับธีมจาก
+// localStorage.kobTheme ที่แอปหลักตั้งไว้ และตามการสลับธีมสดผ่าน storage event
+(function(){
+  var apply=function(v){
+    if(v==='dark'||v==='light')document.documentElement.setAttribute('data-theme',v);
+    else document.documentElement.removeAttribute('data-theme');
+  };
+  try{apply(localStorage.getItem('kobTheme'));}catch(e){}
+  window.addEventListener('storage',function(e){if(e.key==='kobTheme')apply(e.newValue);});
+  if(window.self!==window.top)document.documentElement.classList.add('embedded');
+})();
+</script>
+<style>
+/* Design tokens — ชุดเดียวกับ import-export-os.html / container-loading-calculator.html (Supabase) */
+:root{
+  --color-text:#171717; --color-text-secondary:#212121; --color-text-tertiary:#707070; --color-text-muted:#9a9a9a;
+  --color-surface:#ffffff; --color-surface-muted:#fafafa; --color-surface-muted2:#ededed; --color-page-bg:#ffffff;
+  --color-border:#dfdfdf; --color-border-strong:#c7c7c7;
+  --color-brand:#3ecf8e; --color-brand-deep:#24b47e; --color-brand-soft-green:#4ade80;
+  --color-on-brand:#171717;
+  --color-brand-soft:#fafafa; --color-brand-text:#171717;
+  --color-danger:#d45656; --color-success:#1ba673; --color-warn:#c37d0d;
+  --color-danger-soft:rgba(212,86,86,.12); --color-success-soft:rgba(27,166,115,.12); --color-warn-soft:rgba(195,125,13,.12);
+  --color-danger-border:rgba(212,86,86,.32); --color-success-border:rgba(27,166,115,.32); --color-warn-border:rgba(195,125,13,.32);
+  --color-danger-text:#b23c3c; --color-success-text:#12805a; --color-warn-text:#8a5808;
+  --color-input:#fffbe6; /* ช่องกรอกราคา = พื้นเหลืองอ่อนเหมือน "yellow cells" ใน Excel ต้นฉบับ */
+  --radius-xs:4px; --radius-sm:6px; --radius:6px; --radius-md:8px; --radius-lg:12px; --radius-xl:16px; --radius-pill:9999px;
+  --shadow-card:none; --shadow-pop:0 16px 40px -8px rgba(23,23,23,.18);
+  --font-body:'Inter','Noto Sans Thai',system-ui,-apple-system,sans-serif;
+  --font-mono:ui-monospace,Menlo,Monaco,Consolas,'Liberation Mono',monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --color-text:#ffffff; --color-text-secondary:#d4d4d4; --color-text-tertiary:#9a9a9a; --color-text-muted:#707070;
+    --color-surface:#1c1c1e; --color-surface-muted:#202020; --color-surface-muted2:#2a2a2a; --color-page-bg:#171717;
+    --color-border:#2a2a2a; --color-border-strong:#3a3a3a;
+    --color-brand-soft:#202020; --color-brand-text:#4ade80;
+    --color-danger-text:#f08a8a; --color-success-text:#4ddba8; --color-warn-text:#e0a53c;
+    --color-input:#2a2714;
+    --shadow-pop:0 16px 40px -8px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --color-text:#ffffff; --color-text-secondary:#d4d4d4; --color-text-tertiary:#9a9a9a; --color-text-muted:#707070;
+  --color-surface:#1c1c1e; --color-surface-muted:#202020; --color-surface-muted2:#2a2a2a; --color-page-bg:#171717;
+  --color-border:#2a2a2a; --color-border-strong:#3a3a3a;
+  --color-brand-soft:#202020; --color-brand-text:#4ade80;
+  --color-danger-text:#f08a8a; --color-success-text:#4ddba8; --color-warn-text:#e0a53c;
+  --color-input:#2a2714;
+  --shadow-pop:0 16px 40px -8px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-body);font-weight:400;-webkit-font-smoothing:antialiased;background:var(--color-page-bg);color:var(--color-text);font-size:14px}
+.header{background:var(--color-surface);border-bottom:1px solid var(--color-border);padding:12px 22px}
+.header h1{margin:0;font-size:17px;font-weight:500}
+.header p{margin:2px 0 0;font-size:12.5px;color:var(--color-text-tertiary)}
+.embedded .header{display:none}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 22px;background:var(--color-surface);border-bottom:1px solid var(--color-border)}
+.seg{display:inline-flex;border:1px solid var(--color-border);border-radius:var(--radius);overflow:hidden}
+.seg button{border:0;background:transparent;padding:0 12px;height:32px;font:inherit;font-size:12.5px;font-weight:500;color:var(--color-text-secondary);cursor:pointer;border-right:1px solid var(--color-border)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--color-surface-muted2);color:var(--color-text)}
+.spacer{flex:1}
+.content{max-width:1240px;margin:16px auto;padding:0 22px 40px}
+.btn{padding:0 14px;height:32px;border:none;border-radius:var(--radius);cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn-primary{background:var(--color-brand);color:var(--color-on-brand)}.btn-primary:hover{filter:brightness(1.08)}
+.btn-outline{background:var(--color-surface);color:var(--color-text-secondary);border:1px solid var(--color-border)}
+.btn-outline:hover{background:var(--color-surface-muted)}
+.btn-danger{background:var(--color-danger-soft);color:var(--color-danger-text);border:1px solid var(--color-danger-border)}
+.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:default}
+.card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);margin-bottom:14px;overflow:hidden}
+.card-header{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--color-border);font-size:11.5px;font-weight:500;letter-spacing:.5px;text-transform:uppercase;color:var(--color-text-tertiary)}
+.card-body{padding:14px 16px}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 14px}
+@media (max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.field label{display:block;font-size:11px;color:var(--color-text-tertiary);margin-bottom:4px}
+.field .row{display:flex;gap:6px;align-items:center}
+.field .unit{font-size:11.5px;color:var(--color-text-muted);white-space:nowrap}
+input,select,textarea{font-family:inherit;font-size:13px;color:var(--color-text);background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius);height:32px;padding:0 9px;width:100%;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--color-border-strong);box-shadow:0 0 0 2px rgba(23,23,23,.08)}
+input[type=number]{text-align:right;font-variant-numeric:tabular-nums}
+input.price{background:var(--color-input)}
+input.inline{height:26px;padding:0 6px;font-size:12.5px}
+table{width:100%;min-width:1120px;border-collapse:collapse;font-size:13px} /* คอลัมน์ต้องไม่ถูกบีบจนตัดคำ — กว้างเกินให้เลื่อนแนวนอนใน .card แทน */
+th.col-unit,td.col-unit{min-width:78px}th.col-cur,td.col-cur{min-width:80px}
+th{background:var(--color-page-bg);padding:8px 10px;text-align:left;font-weight:500;color:var(--color-text-muted);font-size:11px;letter-spacing:.4px;text-transform:uppercase;border-bottom:1px solid var(--color-border);vertical-align:bottom}
+td{padding:5px 8px;border-bottom:1px solid var(--color-border);color:var(--color-text);vertical-align:middle}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+td.amt{font-family:var(--font-mono);font-size:12.5px;white-space:nowrap}
+tr.sec td{background:var(--color-surface-muted);font-weight:500;font-size:12px;color:var(--color-text-secondary);padding:7px 10px}
+tr.total td{font-weight:500;border-top:2px solid var(--color-border-strong)}
+tr.grand td{font-weight:500;background:var(--color-surface-muted)}
+td.best{color:var(--color-success-text);font-weight:500}
+.tag{display:inline-block;padding:1px 7px;border-radius:var(--radius-pill);font-size:10.5px;font-weight:500;white-space:nowrap}
+select.inline{padding-right:18px;min-width:64px}
+#savedSel{min-width:220px;max-width:340px;text-overflow:ellipsis}
+@media (max-width:1500px){.status{display:none}}
+.tag-best{background:var(--color-success-soft);color:var(--color-success-text);border:1px solid var(--color-success-border)}
+.opt-head{display:flex;flex-direction:column;gap:4px;min-width:200px}
+.opt-head .r{display:flex;gap:4px;align-items:center}
+.opt-head input,.opt-head select{height:26px;font-size:12px;padding:0 6px}
+.opt-head .kind{width:74px;flex:none}
+.opt-head .n{width:64px;flex:none}
+.opt-head .lbl{font-size:10.5px;color:var(--color-text-muted);white-space:nowrap}
+.desc{border:0;background:transparent;height:26px;padding:0 4px;width:100%}
+.desc:focus{background:var(--color-surface-muted)}
+.x{border:0;background:transparent;color:var(--color-text-muted);cursor:pointer;font-size:14px;line-height:1;padding:2px 6px;border-radius:var(--radius-xs)}
+.x:hover{color:var(--color-danger-text);background:var(--color-danger-soft)}
+.muted{color:var(--color-text-muted);font-size:12px}
+.note{font-size:12px;color:var(--color-text-tertiary);padding:8px 16px 12px;border-top:1px dashed var(--color-border)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--color-text);color:var(--color-page-bg);padding:9px 14px;border-radius:var(--radius);font-size:12.5px;box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+.toast.err{background:var(--color-danger)}
+.status{font-size:11.5px;color:var(--color-text-muted);white-space:nowrap}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.sum{border:1px solid var(--color-border);border-radius:var(--radius-md);padding:10px 12px}
+.sum.best{border-color:var(--color-success-border);background:var(--color-success-soft)}
+.sum .t{font-size:11.5px;color:var(--color-text-tertiary);display:flex;justify-content:space-between;gap:6px}
+.sum .v{font-size:20px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:2px}
+.sum .s{font-size:11.5px;color:var(--color-text-muted);margin-top:2px}
+@media print{
+  .toolbar,.header,.x,.btn,.no-print{display:none!important}
+  .content{max-width:none;margin:0;padding:0}
+  .card{break-inside:avoid;border-color:#999}
+  input,select{border:0;background:transparent!important;padding:0}
+  body{font-size:12px}
+}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Freight Charges Comparison</h1>
+  <p>เปรียบเทียบค่าระวางและค่าใช้จ่ายนำเข้า-ส่งออกจากผู้ให้บริการหลายราย — สูตรเดียวกับไฟล์ Import / Export Charges Comparison.xlsx</p>
+</div>
+
+<div class="toolbar">
+  <div class="seg" id="typeSeg">
+    <button data-type="import-sea">Import · ทางเรือ</button>
+    <button data-type="import-air">Import · ทางอากาศ</button>
+    <button data-type="export-sea">Export · ทางเรือ</button>
+  </div>
+  <select id="savedSel" style="width:auto;height:32px" title="ใบเปรียบเทียบที่บันทึกไว้บน server">
+    <option value="">— ใบเปรียบเทียบที่บันทึกไว้ —</option>
+  </select>
+  <span class="status" id="status"></span>
+  <div class="spacer"></div>
+  <button class="btn btn-outline" id="btnNew">+ ใบใหม่</button>
+  <button class="btn btn-outline" id="btnDup" title="ทำสำเนาใบนี้เป็นใบใหม่">ทำสำเนา</button>
+  <button class="btn btn-outline" id="btnXlsx">ส่งออก Excel</button>
+  <button class="btn btn-outline" id="btnPrint">พิมพ์ / PDF</button>
+  <button class="btn btn-danger btn-sm" id="btnDel" title="ลบใบนี้ออกจาก server">ลบ</button>
+  <button class="btn btn-primary" id="btnSave">บันทึก</button>
+</div>
+
+<div class="content">
+  <div class="card">
+    <div class="card-header">Shipment details</div>
+    <div class="card-body"><div class="grid" id="headGrid"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Charge items <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— ช่องพื้นเหลือง = กรอกราคาต่อหน่วย · ว่าง = ไม่มีค่าใช้จ่ายรายการนั้น</span>
+      <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm no-print" id="btnAddOpt">+ เพิ่มคอลัมน์ตัวเลือก</button>
+    </div>
+    <div style="overflow-x:auto"><table id="tbl"></table></div>
+    <div class="note" id="tblNote"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Shipment cost summary</div>
+    <div class="card-body"><div class="summary" id="summary"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Make decision</div>
+    <div class="card-body"><div class="grid" id="decisionGrid"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Prepared by / Approved by</div>
+    <div class="card-body"><div class="grid" id="signGrid"></div></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="/vendor/xlsx.full.min.js"></script>
+<script>
+'use strict';
+// ─────────────────────────────────────────────────────────────────────────────
+// แม่แบบรายการค่าใช้จ่าย — ยกมาจาก Excel ทั้ง 3 ชีท (SEA (LCL·FCL) / AIR FREIGHT / Format)
+// basis: 'cbm' = คูณ CBM (LCL) หรือคูณจำนวนตู้ (FCL) · 'kgs' = คูณน้ำหนักคิดเงินของคอลัมน์นั้น · 'flat' = qty × ราคา
+// ─────────────────────────────────────────────────────────────────────────────
+const R=(desc,basis,unit,cur)=>({desc,basis,unit,cur,qty:1});
+const TEMPLATES={
+  'import-sea':{
+    title:'IMPORT FREIGHT PRICE COMPARISON — SEA',
+    refLabel:'PO Number', partyLabel:'Vendor', termOptions:['EXW','FOB','CFR','CIF','DAP','DDP'],
+    options:[{label:'LCL',kind:'lcl'},{label:"FCL 20'",kind:'fcl'},{label:"FCL 40'HQ",kind:'fcl'}],
+    sections:[
+      {name:'OCEAN FREIGHT',rows:[R('O/F  (Ocean Freight)','cbm','CBM','USD')]},
+      {name:'LOCAL CHARGE @ ORIGIN',rows:[R('EXW Charge / Origin Handling','flat','SHIP','USD')]},
+      {name:'LOCAL CHARGE @ BANGKOK',rows:[
+        R('D/O  (Delivery Order)','flat','SHIP','THB'),R('THC  (Terminal Handling Charge)','cbm','CBM','THB'),
+        R('CFS  (Container Freight Station)','cbm','CBM','THB'),R('Status','cbm','CBM','THB'),R('Facilities','cbm','CBM','THB'),
+        R('Cleaning Fee','cbm','CBM','THB'),R('DG Surcharge','cbm','CBM','THB'),R('DG Handling','flat','SET','THB'),
+        R('PCS','cbm','CBM','THB'),R('Equipment Transfer Fee','cbm','CBM','THB'),R('IMO Admin','cbm','CBM','THB'),
+        R('EMC','cbm','CBM','THB'),R('LSS  (Low Sulphur Fuel Surcharge)','cbm','CBM','THB'),R('CIS','cbm','CBM','THB'),
+        R('PSS  (Peak Season Surcharge)','cbm','CBM','THB')]},
+      {name:'INLAND & CUSTOMS CLEARANCE',rows:[
+        R('Handling','flat','SHIP','THB'),R('Container Maintenance','cbm','CBM','THB'),R('Inspection Fee','flat','SHIP','THB'),
+        R('Paperless Registration','flat','TIME','THB'),R('Customs Clearance','flat','SHIP','THB'),
+        R('Transportation  (4 wheels)','flat','TRIP','THB'),R('Transportation  (6 wheels)','flat','TRIP','THB'),
+        R("Transportation  (FCL 20' / 40')",'flat','20/40','THB'),R('Service Charge','flat','SHIP','THB'),R('Clearance  (FDA)','flat','SHIP','THB')]},
+    ],
+  },
+  'import-air':{
+    title:'IMPORT FREIGHT PRICE COMPARISON — AIR',
+    refLabel:'PO Number', partyLabel:'Vendor', termOptions:['EXW','FCA','FOB','CPT','CIP','DAP','DDP'],
+    options:[{label:'Option 1 · Forwarder A',kind:'air'},{label:'Option 2 · Forwarder B',kind:'air'},{label:'Option 3 · Forwarder C',kind:'air'}],
+    sections:[
+      {name:'AIR FREIGHT',rows:[R('A/F  (Air Freight)','kgs','KGS','USD')]},
+      {name:'LOCAL CHARGE @ ORIGIN',rows:[R('Local Charge @ Origin / EXW Charge','flat','SHIP','USD')]},
+      {name:'LOCAL CHARGE @ BANGKOK',rows:[
+        R('D/O  (Delivery Order)','flat','SHIP','THB'),R('AWB Document','flat','SET','THB'),R('Customs Clearance','flat','SHIP','THB'),
+        R('Transportation  (4 wheels)','flat','TRIP','THB'),R('Transportation  (6 wheels)','flat','TRIP','THB'),R('Service Charge','flat','SHIP','THB'),
+        R('Inspection Charge','flat','SHIP','THB'),R('DG Surcharge','kgs','KGS','THB'),R('DG Handling','flat','SET','THB'),R('Clearance  (FDA)','flat','SHIP','THB')]},
+    ],
+  },
+  'export-sea':{
+    title:'EXPORT FREIGHT PRICE COMPARISON',
+    refLabel:'CI Number', partyLabel:'Consignee', termOptions:['EXW','FOB','CFR','CIF','DAP','DDP'],
+    options:[{label:'Option 1 / LCL',kind:'lcl'},{label:'Option 2 / LCL',kind:'lcl'},{label:'Option 3 / LCL',kind:'lcl'}],
+    sections:[
+      {name:'EXPORT CHARGES — SEA FREIGHT',rows:[R('Sea Freight','cbm','CBM/SHIP','USD')]},
+      {name:'LOCAL CHARGES — BANGKOK',rows:[
+        R('THC','cbm','CBM/CON','THB'),R('CFS','cbm','CBM','THB'),R('Seal Fee','flat','SET','THB'),R('B/L Fee','flat','SET','THB'),
+        R('Surrender Fee','flat','SET','THB'),R('Handling Charge','flat','SHIP','THB'),R('DG Surcharge @ BKK','flat','SHIP','THB'),
+        R('DG Surcharge @ SIN','flat','SHIP','THB'),R('DG Handling','flat','SHIP','THB'),R('DG Sticker','flat','PER PC','THB'),
+        R('Customs Clearance','flat','ENTRY','THB'),R('Form D / CO','flat','SET','THB'),R("Transportation (20'/40')",'flat',"20'/40'",'THB'),
+        R('Transportation 4-Wheel','flat','TRIP','THB'),R('Transportation 6-Wheel','flat','TRIP','THB'),R('Documentation','flat','SET','THB'),
+        R('X-Ray Charge','flat','SHIP','THB'),R('Inspection Charge','flat','SHIP','THB'),R('Lashing Charge','flat','SHIP','THB')]},
+      {name:'DESTINATION CHARGES',rows:[
+        R('Customs Clearance (Dest.)','flat','ENTRY','THB'),R('D/O','flat','SHIP','THB'),R('THC (Dest.)','cbm','CBM/CON','THB'),
+        R('CFS (Dest.)','cbm','CBM','THB'),R('Seal Fee (Dest.)','flat','SET','THB'),R('Surrender Fee (Dest.)','flat','SET','THB'),
+        R('CIC','cbm','CBM','THB'),R('LSS','cbm','CBM','THB'),R('Handling Charge (Dest.)','flat','SHIP','THB'),R('DG Fee (Dest.)','flat','SHIP','THB')]},
+    ],
+  },
+};
+const KIND_LABEL={lcl:'LCL',fcl:'FCL',air:'AIR'};
+const DRAFT_KEY='kobFreightDraft';
+
+// ─── state ───────────────────────────────────────────────────────────────────
+let Q=null;           // ใบเปรียบเทียบที่กำลังแก้
+let saved=[];         // รายการที่บันทึกบน server
+let fxRates=null;     // {USD:33.34,...} จาก /api/fx-rates
+let pos=[];           // import-pos สำหรับเติมชื่อผู้ขาย
+let vendors=[];       // ชื่อ forwarder/ผู้ขายจาก Odoo
+let dirty=false;
+
+const uid=()=>'fq_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const num=v=>{const n=parseFloat(String(v??'').replace(/,/g,''));return isFinite(n)?n:null;};
+const fmt=(v,d=2)=>v==null||!isFinite(v)?'–':v.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=id=>document.getElementById(id);
+
+function newQuote(type){
+  const T=TEMPLATES[type];
+  const today=new Date().toISOString().slice(0,10);
+  return {
+    id:uid(), type, createdAt:today, updatedAt:null,
+    head:{ref:'',party:'',category:'',group:'',qty:null,term:T.termOptions[0]==='EXW'&&type!=='export-sea'?'FOB':T.termOptions[0],
+          fx:fxRates?.USD?+fxRates.USD.toFixed(4):null, fxAsOf:fxRates?.USD_asOf||'', cbm:null,gw:null,vw:null,docRef:type.startsWith('import')?'SCM-IF-':''},
+    options:T.options.map(o=>({label:o.label,kind:o.kind,containers:1,cw:null,transit:''})),
+    rows:T.sections.flatMap(s=>s.rows.map(r=>({id:uid(),section:s.name,desc:r.desc,basis:r.basis,unit:r.unit,cur:r.cur,qty:r.qty,prices:T.options.map(()=>null)}))),
+    taxFactor:0.20,
+    decision:{forwarder:'',broker:'',remark:''},
+    sign:{preparedName:'Mr. Wittaya Sawangphol',preparedPos:'Senior Import-Export',preparedDate:today,approvedName:'',approvedPos:'',approvedDate:''},
+  };
+}
+
+// ─── คำนวณ (ตรงกับสูตรใน Excel) ─────────────────────────────────────────────
+// LCL: แถว CBM = CBM × ราคา · FCL: แถว CBM = จำนวนตู้ × ราคา (ในชีทจริงผู้ใช้กรอกทับสูตรเป็นต่อตู้อยู่แล้ว)
+// AIR: แถว KGS = น้ำหนักคิดเงินของคอลัมน์นั้น (default = max(GW,VW)) × ราคา · USD คูณอัตรา BOT
+function chargeableW(o){ if(o.cw!=null&&o.cw!=='')return +o.cw; const g=num(Q.head.gw)||0,v=num(Q.head.vw)||0; return Math.max(g,v)||null; }
+function qtyFor(row,o){
+  if(row.basis==='cbm')return o.kind==='fcl'?(num(o.containers)||1):(num(Q.head.cbm)||null);
+  if(row.basis==='kgs')return chargeableW(o);
+  return num(row.qty)??1;
+}
+function amount(row,oi){
+  const p=num(row.prices[oi]); if(p==null)return null;
+  const q=qtyFor(row,Q.options[oi]); if(q==null)return null;
+  const rate=row.cur==='USD'?(num(Q.head.fx)||0):1;
+  if(row.cur==='USD'&&!rate)return null;
+  return q*p*rate;
+}
+function totals(){
+  return Q.options.map((o,oi)=>{
+    let sub=0,filled=0;
+    Q.rows.forEach(r=>{const a=amount(r,oi);if(a!=null){sub+=a;filled++;}});
+    const tax=sub*(num(Q.taxFactor)||0), total=sub+tax, qty=num(Q.head.qty);
+    return {sub,tax,total,filled,avg:qty?total/qty:null};
+  });
+}
+function bestIndex(t){ let bi=-1; t.forEach((x,i)=>{ if(x.filled>0&&(bi<0||x.total<t[bi].total))bi=i; }); return bi; }
+
+// ─── render ──────────────────────────────────────────────────────────────────
+function field(label,html,unit){return `<div class="field"><label>${label}</label><div class="row">${html}${unit?`<span class="unit">${unit}</span>`:''}</div></div>`;}
+function inp(path,val,attrs=''){return `<input data-p="${path}" value="${esc(val??'')}" ${attrs}>`;}
+function numInp(path,val,attrs=''){return `<input type="number" step="any" data-p="${path}" value="${val??''}" ${attrs}>`;}
+
+function renderHead(){
+  const T=TEMPLATES[Q.type], h=Q.head, air=Q.type==='import-air';
+  const partyList=vendors.length?`list="vendorList"`:'';
+  $('headGrid').innerHTML=[
+    field(T.refLabel, inp('head.ref',h.ref,`list="poList" placeholder="${Q.type==='export-sea'?'เช่น CI-ITS2605-001':'เช่น KOBPO2605-08758'}"`)),
+    field(T.partyLabel, inp('head.party',h.party,`${partyList} placeholder="ชื่อผู้ขาย / ผู้รับ"`)),
+    field('PO Category', inp('head.category',h.category,'placeholder="เช่น Finished Goods / Packaging"')),
+    field('Product Group', inp('head.group',h.group,'placeholder="เช่น Kiss My Body"')),
+    field('Total Qty', numInp('head.qty',h.qty,'placeholder="จำนวนหน่วยสินค้า"'),'units'),
+    field(Q.type==='export-sea'?'Incoterm':'Term', `<select data-p="head.term">${T.termOptions.map(t=>`<option ${t===h.term?'selected':''}>${t}</option>`).join('')}</select>`),
+    field('USD Exchange Rate (BOT)', numInp('head.fx',h.fx,'step="0.0001"')+`<button class="btn btn-outline btn-sm no-print" id="btnFx" title="ดึงอัตราล่าสุดจาก Odoo">↻</button>`,'THB/USD'+(h.fxAsOf?` · ${esc(h.fxAsOf)}`:'')),
+    air?field('Gross Weight (GW)', numInp('head.gw',h.gw),'KGS'):field('Measurement (CBM)', numInp('head.cbm',h.cbm,'step="0.001"'),'CBM'),
+    air?field('Volume Weight (VW)', numInp('head.vw',h.vw),'KGS'):field('Gross Weight (GW)', numInp('head.gw',h.gw),'KGS'),
+    field('Document Ref.', inp('head.docRef',h.docRef)),
+    field('วันที่จัดทำ', `<input type="date" data-p="createdAt" value="${esc(Q.createdAt)}">`),
+    field('รหัสใบเปรียบเทียบ', `<input value="${esc(Q.id)}" readonly style="color:var(--color-text-muted);font-family:var(--font-mono);font-size:12px">`),
+  ].join('');
+  $('btnFx').onclick=async()=>{await loadFx(true); if(fxRates?.USD){Q.head.fx=+fxRates.USD.toFixed(4);Q.head.fxAsOf=fxRates.USD_asOf;touch();renderAll();toast('อัตรา USD '+Q.head.fx+' ('+Q.head.fxAsOf+')');}};
+}
+
+function renderTable(){
+  const T=TEMPLATES[Q.type], t=totals(), best=bestIndex(t), air=Q.type==='import-air';
+  const nOpt=Q.options.length;
+  let html='<thead><tr><th style="width:34px">No.</th><th style="min-width:230px">Description</th><th class="num" style="width:74px">Qty</th><th class="col-unit">Unit</th><th class="col-cur">Cur</th>';
+  Q.options.forEach((o,oi)=>{
+    html+=`<th colspan="2" style="min-width:220px"><div class="opt-head">
+      <div class="r"><input class="inline" data-p="options.${oi}.label" value="${esc(o.label)}" list="vendorList" placeholder="ชื่อตัวเลือก / forwarder">
+        ${nOpt>1?`<button class="x no-print" data-delopt="${oi}" title="ลบคอลัมน์นี้">×</button>`:''}</div>
+      <div class="r"><select class="kind" data-p="options.${oi}.kind">${(air?['air']:['lcl','fcl']).map(k=>`<option value="${k}" ${k===o.kind?'selected':''}>${KIND_LABEL[k]}</option>`).join('')}</select>
+        ${o.kind==='fcl'?`<span class="lbl">ตู้</span><input class="n" type="number" min="1" step="1" data-p="options.${oi}.containers" value="${o.containers??1}">`:''}
+        ${o.kind==='air'?`<span class="lbl">CW</span><input class="n" type="number" step="any" data-p="options.${oi}.cw" value="${o.cw??''}" placeholder="${fmt(chargeableW(o),1)}" title="น้ำหนักคิดเงิน (ว่าง = max(GW,VW))">`:''}
+        ${o.kind==='lcl'?`<span class="lbl">× CBM ${fmt(num(Q.head.cbm),2)}</span>`:''}
+        ${best===oi?'<span class="tag tag-best">ถูกที่สุด</span>':''}</div>
+    </div></th>`;
+  });
+  html+='<th class="no-print" style="width:28px"></th></tr>';
+  html+='<tr><th></th><th></th><th></th><th></th><th></th>'+Q.options.map(()=>'<th class="num">Price / Unit</th><th class="num">Amount (THB)</th>').join('')+'<th class="no-print"></th></tr></thead><tbody>';
+  let n=0, curSec=null;
+  Q.rows.forEach((r,ri)=>{
+    if(r.section!==curSec){curSec=r.section;html+=`<tr class="sec"><td colspan="${5+nOpt*2+1}">${esc(curSec)}<button class="x no-print" data-addrow="${esc(curSec)}" title="เพิ่มรายการในหมวดนี้" style="float:right;font-size:12px">+ เพิ่มรายการ</button></td></tr>`;}
+    n++;
+    html+=`<tr><td class="muted">${n}</td><td><input class="desc" data-p="rows.${ri}.desc" value="${esc(r.desc)}"></td>`;
+    // Qty: แถว CBM/KGS แสดงค่าที่คำนวณต่อคอลัมน์ (ต่างกันได้) จึงโชว์ "ตามคอลัมน์" · แถว flat แก้ได้
+    html+=`<td class="num">${r.basis==='flat'?`<input class="inline" type="number" step="any" data-p="rows.${ri}.qty" value="${r.qty??1}" style="width:64px">`:`<select class="inline" data-p="rows.${ri}.basis" style="width:70px"><option value="cbm" ${r.basis==='cbm'?'selected':''}>CBM</option><option value="kgs" ${r.basis==='kgs'?'selected':''}>KGS</option><option value="flat">1</option></select>`}</td>`;
+    html+=`<td class="col-unit"><input class="inline" data-p="rows.${ri}.unit" value="${esc(r.unit)}"></td>`;
+    html+=`<td class="col-cur"><select class="inline" data-p="rows.${ri}.cur"><option ${r.cur==='USD'?'selected':''}>USD</option><option ${r.cur==='THB'?'selected':''}>THB</option></select></td>`;
+    Q.options.forEach((o,oi)=>{
+      const a=amount(r,oi), q=qtyFor(r,o);
+      const tip=a!=null?`${fmt(q,r.basis==='cbm'&&o.kind!=='fcl'?3:2)} × ${fmt(num(r.prices[oi]))}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:'';
+      html+=`<td class="num"><input class="inline price" type="number" step="any" data-p="rows.${ri}.prices.${oi}" value="${r.prices[oi]??''}" style="width:96px"></td><td class="num amt" title="${tip}">${fmt(a)}</td>`;
+    });
+    html+=`<td class="no-print"><button class="x" data-delrow="${ri}" title="ลบรายการ">×</button></td></tr>`;
+  });
+  html+='</tbody><tfoot>';
+  html+=`<tr class="total"><td colspan="5">SUBTOTAL</td>${t.map(x=>`<td></td><td class="num amt">${fmt(x.filled?x.sub:null)}</td>`).join('')}<td class="no-print"></td></tr>`;
+  html+=`<tr><td colspan="5">* Duties &amp; Taxes (as per receipt) — factor <input class="inline" type="number" step="0.01" min="0" data-p="taxFactor" value="${Q.taxFactor}" style="width:70px;display:inline-block"> <span class="muted">(0.20 = 20%)</span></td>${t.map(x=>`<td></td><td class="num amt">${fmt(x.filled?x.tax:null)}</td>`).join('')}<td class="no-print"></td></tr>`;
+  html+=`<tr class="grand"><td colspan="5">TOTAL COST (THB)</td>${t.map((x,i)=>`<td></td><td class="num amt ${i===best?'best':''}">${fmt(x.filled?x.total:null)}</td>`).join('')}<td class="no-print"></td></tr>`;
+  html+=`<tr><td colspan="5">Avg. Cost per Unit (THB)</td>${t.map((x,i)=>`<td></td><td class="num amt ${i===best?'best':''}">${fmt(x.filled?x.avg:null,4)}</td>`).join('')}<td class="no-print"></td></tr>`;
+  html+=`<tr><td colspan="5">Transit time / หมายเหตุต่อตัวเลือก</td>${Q.options.map((o,oi)=>`<td colspan="2"><input class="inline" data-p="options.${oi}.transit" value="${esc(o.transit)}" placeholder="เช่น 5 Days"></td>`).join('')}<td class="no-print"></td></tr>`;
+  html+='</tfoot>';
+  $('tbl').innerHTML=html;
+  $('tblNote').textContent = air
+    ? 'แถวหน่วย KGS คูณ "น้ำหนักคิดเงิน (CW)" ของแต่ละคอลัมน์ — ว่างไว้ = ใช้ค่ามากกว่าระหว่าง GW กับ VW · แถวสกุล USD คูณอัตรา BOT · "Duties & Taxes" เป็นค่าประมาณตามสัดส่วนที่ตั้งไว้ ตัวจริงดูจากใบเสร็จ'
+    : 'คอลัมน์ LCL: แถวหน่วย CBM คูณ Measurement (CBM) · คอลัมน์ FCL: แถวหน่วย CBM คิดต่อตู้ (คูณจำนวนตู้) เหมือนที่กรอกจริงใน Excel · แถวสกุล USD คูณอัตรา BOT · "Duties & Taxes" เป็นค่าประมาณตามสัดส่วนที่ตั้งไว้ ตัวจริงดูจากใบเสร็จ';
+}
+
+function renderSummary(){
+  const t=totals(), best=bestIndex(t);
+  $('summary').innerHTML=Q.options.map((o,i)=>`<div class="sum ${i===best?'best':''}">
+    <div class="t"><span>${esc(o.label)||'ตัวเลือก '+(i+1)}</span><span>${KIND_LABEL[o.kind]}${o.kind==='fcl'?' × '+(o.containers||1):''}</span></div>
+    <div class="v">${t[i].filled?fmt(t[i].total,0)+' <span style="font-size:12px;font-weight:400">THB</span>':'<span class="muted">ยังไม่กรอกราคา</span>'}</div>
+    <div class="s">${t[i].filled&&t[i].avg!=null?fmt(t[i].avg,4)+' THB / unit':''}${o.transit?' · '+esc(o.transit):''}${i===best&&t.filter(x=>x.filled).length>1?` · ประหยัดกว่าถัดไป ${fmt(Math.min(...t.filter((x,j)=>j!==i&&x.filled).map(x=>x.total))-t[i].total,0)} THB`:''}</div>
+  </div>`).join('');
+}
+
+function renderDecision(){
+  const d=Q.decision, labels=Q.options.map(o=>o.label).filter(Boolean);
+  $('decisionGrid').innerHTML=[
+    field('Forwarder Selected', `<input data-p="decision.forwarder" value="${esc(d.forwarder)}" list="optList" placeholder="เลือกจากคอลัมน์ หรือพิมพ์เอง">`),
+    field('Customs Broker Selected', `<input data-p="decision.broker" value="${esc(d.broker)}" list="vendorList" placeholder="ชื่อตัวแทนออกของ">`),
+    `<div class="field" style="grid-column:span 2"><label>เหตุผล / หมายเหตุการตัดสินใจ</label><div class="row"><input data-p="decision.remark" value="${esc(d.remark)}" placeholder="เช่น ถูกกว่า 8% และ transit สั้นกว่า 3 วัน"></div></div>`,
+  ].join('')+`<datalist id="optList">${labels.map(l=>`<option value="${esc(l)}">`).join('')}</datalist>`;
+}
+function renderSign(){
+  const s=Q.sign;
+  $('signGrid').innerHTML=[
+    field('Prepared by — Name', inp('sign.preparedName',s.preparedName)),
+    field('Position', inp('sign.preparedPos',s.preparedPos)),
+    field('Date', `<input type="date" data-p="sign.preparedDate" value="${esc(s.preparedDate)}">`),
+    '<div></div>',
+    field('Approved by — Name', inp('sign.approvedName',s.approvedName)),
+    field('Position', inp('sign.approvedPos',s.approvedPos)),
+    field('Date', `<input type="date" data-p="sign.approvedDate" value="${esc(s.approvedDate)}">`),
+  ].join('');
+}
+function renderToolbar(){
+  document.querySelectorAll('#typeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.type===Q.type));
+  const sel=$('savedSel'); const cur=sel.value;
+  sel.innerHTML='<option value="">— ใบเปรียบเทียบที่บันทึกไว้ ('+saved.length+') —</option>'+
+    saved.slice().sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||''))).map(q=>{
+      const tl=TEMPLATES[q.type]?.title.split('—').pop().trim()||q.type;
+      return `<option value="${esc(q.id)}" ${q.id===Q.id?'selected':''}>${esc(q.head?.ref||'(ไม่มีเลขอ้างอิง)')} · ${esc(q.head?.party||'')} · ${tl} · ${esc((q.updatedAt||q.createdAt||'').slice(0,10))}</option>`;}).join('');
+  if(!saved.some(q=>q.id===Q.id))sel.value='';
+  $('btnDel').disabled=!saved.some(q=>q.id===Q.id);
+  $('status').textContent=dirty?'● ยังไม่บันทึก':(Q.updatedAt?'บันทึกล่าสุด '+Q.updatedAt.replace('T',' ').slice(0,16):'ใบใหม่ (ยังไม่บันทึก)');
+}
+function renderAll(){ renderToolbar(); renderHead(); renderTable(); renderSummary(); renderDecision(); renderSign(); }
+function refreshCalc(){ renderTable(); renderSummary(); renderToolbar(); }
+
+// ─── event wiring (delegation — DOM ถูก re-render บ่อย) ──────────────────────
+function setPath(path,val){
+  const parts=path.split('.'); let o=Q;
+  for(let i=0;i<parts.length-1;i++)o=o[parts[i]];
+  o[parts[parts.length-1]]=val;
+}
+function touch(){ dirty=true; try{localStorage.setItem(DRAFT_KEY,JSON.stringify(Q));}catch(e){} }
+
+document.addEventListener('input',e=>{
+  const p=e.target.dataset.p; if(!p)return;
+  let v=e.target.value;
+  if(e.target.type==='number'||p==='taxFactor')v=v===''?null:num(v);
+  setPath(p,v); touch();
+  // ระหว่างพิมพ์ห้ามวาด DOM ใหม่เด็ดขาด (ช่องที่โฟกัสอยู่จะถูกแทนด้วยช่องใหม่ ค่าที่พิมพ์หาย/ไหลไปช่องอื่น
+  // — เคยเกิดจริงตอนทดสอบ: ราคาไหลไปต่อท้าย Total Qty) → อัปเดตเฉพาะเซลล์ยอดเงิน/สรุปแบบ in-place เท่านั้น
+  const affectsCalc = p.startsWith('rows.') || p==='taxFactor' || p.endsWith('.containers') || p.endsWith('.cw')
+    || ['head.cbm','head.gw','head.vw','head.fx','head.qty'].includes(p);
+  if(affectsCalc) updateAmountsInPlace();
+  else if(p.startsWith('options.')&&p.endsWith('.label')){ renderSummary(); renderDecision(); }
+  else renderSummary();
+  renderToolbar();
+});
+// วาดตารางใหม่เฉพาะเมื่อโครงตารางเปลี่ยนจริง (เลือกจาก <select>: ชนิดคอลัมน์ / หน่วยคิด / สกุลเงิน)
+// — select ไม่ใช่การพิมพ์ จึงปลอดภัยที่จะ re-render หลังเลือก
+document.addEventListener('change',e=>{
+  const p=e.target.dataset.p; if(!p)return;
+  if(e.target.tagName==='SELECT'){
+    if(p.endsWith('.kind')){ const oi=+p.split('.')[1]; if(Q.options[oi].kind==='fcl'&&!Q.options[oi].containers)Q.options[oi].containers=1; }
+    refreshCalc();
+  }
+  if(p==='head.ref')autofillFromPO(e.target.value);
+});
+document.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  if(b.dataset.type){ switchType(b.dataset.type); return; }
+  if(b.dataset.delopt!=null){ const oi=+b.dataset.delopt; if(Q.options.length<=1)return; if(!confirm('ลบคอลัมน์ "'+(Q.options[oi].label||'ตัวเลือก '+(oi+1))+'" ?'))return; Q.options.splice(oi,1); Q.rows.forEach(r=>r.prices.splice(oi,1)); touch(); renderAll(); return; }
+  if(b.dataset.delrow!=null){ const ri=+b.dataset.delrow; Q.rows.splice(ri,1); touch(); refreshCalc(); return; }
+  if(b.dataset.addrow!=null){ const sec=b.dataset.addrow; let last=-1; Q.rows.forEach((r,i)=>{if(r.section===sec)last=i;});
+    Q.rows.splice(last+1,0,{id:uid(),section:sec,desc:'',basis:'flat',unit:'SHIP',cur:'THB',qty:1,prices:Q.options.map(()=>null)}); touch(); refreshCalc();
+    const el=document.querySelector(`[data-p="rows.${last+1}.desc"]`); if(el)el.focus(); return; }
+});
+// อัปเดตเฉพาะเซลล์จำนวนเงิน/สรุป โดยไม่ re-render input ที่กำลังพิมพ์ (กัน cursor กระโดด)
+function updateAmountsInPlace(){
+  const rows=[...document.querySelectorAll('#tbl tbody tr:not(.sec)')];
+  let ri=0;
+  Q.rows.forEach((r,i)=>{ const tr=rows[ri++]; if(!tr)return; const cells=tr.querySelectorAll('td.amt');
+    Q.options.forEach((o,oi)=>{ const a=amount(r,oi); if(cells[oi]){cells[oi].textContent=fmt(a);} }); });
+  const t=totals(), best=bestIndex(t);
+  const foot=document.querySelectorAll('#tbl tfoot tr');
+  const setRow=(tr,vals,d)=>{ if(!tr)return; const c=tr.querySelectorAll('td.amt'); vals.forEach((v,i)=>{ if(c[i]){c[i].textContent=fmt(v,d); c[i].classList.toggle('best',i===best&&v!=null);} }); };
+  setRow(foot[0],t.map(x=>x.filled?x.sub:null)); setRow(foot[1],t.map(x=>x.filled?x.tax:null)); setRow(foot[2],t.map(x=>x.filled?x.total:null)); setRow(foot[3],t.map(x=>x.filled?x.avg:null),4);
+  // ป้ายในหัวคอลัมน์ที่อิงค่าจาก head (× CBM / placeholder CW) ให้ตามค่าใหม่ด้วย
+  document.querySelectorAll('#tbl thead tr:first-child th').forEach((th,i)=>{ const o=Q.options[i-5]; if(!o)return;
+    const lbl=th.querySelector('.opt-head .lbl'); if(lbl&&o.kind==='lcl')lbl.textContent='× CBM '+fmt(num(Q.head.cbm),2);
+    const cw=th.querySelector('input[data-p$=".cw"]'); if(cw)cw.placeholder=fmt(chargeableW(o),1); });
+  document.querySelectorAll('#tbl thead .tag-best').forEach(el=>el.remove());
+  if(best>=0){ const th=document.querySelectorAll('#tbl thead tr:first-child th')[5+best]; const r=th&&th.querySelector('.opt-head .r:last-child'); if(r){const s=document.createElement('span');s.className='tag tag-best';s.textContent='ถูกที่สุด';r.appendChild(s);} }
+  renderSummary();
+}
+
+function switchType(type){
+  if(type===Q.type)return;
+  const hasData=Q.rows.some(r=>r.prices.some(p=>p!=null))||Q.head.ref;
+  if(hasData&&!confirm('เปลี่ยนแม่แบบจะเริ่มใบใหม่ (ใบปัจจุบันถ้ายังไม่บันทึกจะหาย) ดำเนินการต่อ?'))return;
+  const keep={ref:Q.head.ref,party:Q.head.party,category:Q.head.category,group:Q.head.group,qty:Q.head.qty,fx:Q.head.fx,fxAsOf:Q.head.fxAsOf,cbm:Q.head.cbm,gw:Q.head.gw,vw:Q.head.vw};
+  Q=newQuote(type); Object.assign(Q.head,keep); dirty=false; touch(); dirty=false; renderAll();
+}
+
+// ─── server I/O ──────────────────────────────────────────────────────────────
+async function api(path,opts){ const r=await fetch(path,{headers:{'Content-Type':'application/json',Accept:'application/json'},...opts}); const j=await r.json().catch(()=>({})); if(!r.ok)throw new Error(j.error||('HTTP '+r.status)); return j; }
+async function loadSaved(){ try{ const j=await api('/api/freight-quotes'); saved=j.rows||[]; }catch(e){ saved=[]; toast('โหลดรายการที่บันทึกไม่ได้: '+e.message,true); } renderToolbar(); }
+async function saveQuote(){
+  const T=TEMPLATES[Q.type];
+  if(!Q.head.ref){ toast('กรอก '+T.refLabel+' ก่อนบันทึก',true); document.querySelector('[data-p="head.ref"]')?.focus(); return; }
+  try{ const j=await api('/api/freight-quotes/upsert',{method:'POST',body:JSON.stringify(Q)}); Q.updatedAt=j.row.updatedAt; dirty=false; try{localStorage.removeItem(DRAFT_KEY);}catch(e){} await loadSaved(); toast('บันทึกแล้ว · '+Q.head.ref); }
+  catch(e){ toast('บันทึกไม่สำเร็จ: '+e.message,true); }
+}
+async function deleteQuote(){
+  if(!saved.some(q=>q.id===Q.id))return;
+  if(!confirm('ลบใบเปรียบเทียบ "'+(Q.head.ref||Q.id)+'" ออกจาก server?'))return;
+  try{ await api('/api/freight-quotes/delete',{method:'POST',body:JSON.stringify({id:Q.id})}); await loadSaved(); Q=newQuote(Q.type); dirty=false; renderAll(); toast('ลบแล้ว'); }
+  catch(e){ toast('ลบไม่สำเร็จ: '+e.message,true); }
+}
+async function loadFx(force){
+  try{ const j=await api('/api/fx-rates'+(force?'?force=1':'')); fxRates={}; (j.rows||[]).forEach(r=>{fxRates[r.currency]=r.thb_per_unit; fxRates[r.currency+'_asOf']=String(r.as_of||'').slice(0,10);}); }
+  catch(e){ fxRates=null; }
+}
+async function loadLists(){
+  try{ const j=await api('/api/import-pos'); pos=(j.rows||[]).map(r=>({po:r.po_number,supplier:r.supplier,cat:r.goods_category,qty:null})); }catch(e){ pos=[]; }
+  try{ const j=await api('/api/vendors'); vendors=(j.rows||[]).map(r=>r.name).filter(Boolean); }catch(e){ vendors=[]; }
+  let dl=$('poList'); if(!dl){dl=document.createElement('datalist');dl.id='poList';document.body.appendChild(dl);}
+  dl.innerHTML=pos.slice(0,400).map(p=>`<option value="${esc(p.po)}">${esc(p.supplier||'')}</option>`).join('');
+  let vl=$('vendorList'); if(!vl){vl=document.createElement('datalist');vl.id='vendorList';document.body.appendChild(vl);}
+  vl.innerHTML=vendors.slice(0,1500).map(v=>`<option value="${esc(v)}">`).join('');
+}
+function autofillFromPO(ref){
+  const p=pos.find(x=>String(x.po).toUpperCase()===String(ref||'').trim().toUpperCase()); if(!p)return;
+  // เติมค่าลงช่องตรงๆ ไม่ renderHead() — ผู้ใช้มักกด Tab ไปช่องถัดไปแล้วเริ่มพิมพ์ทันที ถ้าวาดใหม่ช่องนั้นจะหลุดโฟกัส
+  let changed=false;
+  const setIn=(key,val)=>{ Q.head[key]=val; const el=document.querySelector(`[data-p="head.${key}"]`); if(el)el.value=val; changed=true; };
+  if(!Q.head.party&&p.supplier)setIn('party',p.supplier);
+  if(!Q.head.category&&p.cat)setIn('category',p.cat);
+  if(changed){touch();renderToolbar();toast('เติมข้อมูลจาก PO '+p.po);}
+}
+
+// ─── Excel export (โครงเดียวกับไฟล์ต้นฉบับ) ──────────────────────────────────
+function exportXlsx(){
+  if(!window.XLSX){toast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)',true);return;}
+  const T=TEMPLATES[Q.type], t=totals(), h=Q.head, air=Q.type==='import-air', nOpt=Q.options.length;
+  const aoa=[];
+  aoa.push([T.title]); aoa.push(['Kiss of Beauty Co., Ltd. (Head Office)']); aoa.push([]);
+  aoa.push(['SHIPMENT DETAILS']);
+  aoa.push([T.refLabel,h.ref,'',T.partyLabel,h.party,'',Q.type==='export-sea'?'Incoterm':'Term',h.term]);
+  aoa.push(['PO Category',h.category,'','Product Group',h.group,'','USD Exchange Rate',h.fx,'THB/USD (BOT)'+(h.fxAsOf?' '+h.fxAsOf:'')]);
+  aoa.push(['Total Qty',h.qty,'','Document Ref.',h.docRef,'',air?'Gross Weight (GW)':'Measurement (CBM)',air?h.gw:h.cbm,air?'KGS':'CBM']);
+  if(air)aoa.push(['','','','','','','Volume Weight (VW)',h.vw,'KGS']); else aoa.push(['','','','','','','Gross Weight (GW)',h.gw,'KGS']);
+  aoa.push([]);
+  const optHead=['No.','Description','Qty','Unit','Cur']; Q.options.forEach(o=>{optHead.push(o.label+(o.kind==='fcl'?` (${o.containers||1} x ${KIND_LABEL[o.kind]})`:o.kind==='air'?` (CW ${fmt(chargeableW(o),1)} KGS)`:' (LCL)'),'Amount (THB)');});
+  aoa.push(optHead);
+  let n=0,cur=null;
+  Q.rows.forEach(r=>{
+    if(r.section!==cur){cur=r.section;aoa.push([cur]);}
+    n++; const line=[n,r.desc,r.basis==='flat'?(r.qty??1):(r.basis==='cbm'?'CBM':'KGS'),r.unit,r.cur];
+    Q.options.forEach((o,oi)=>{const p=num(r.prices[oi]),a=amount(r,oi);line.push(p==null?'':p,a==null?'':+a.toFixed(2));});
+    aoa.push(line);
+  });
+  const foot=(label,vals)=>{const l=[label,'','','',''];vals.forEach(v=>l.push('',v==null?'':+v.toFixed(2)));aoa.push(l);};
+  foot('SUBTOTAL',t.map(x=>x.filled?x.sub:null));
+  foot('* Duties & Taxes (as per receipt) — factor '+Q.taxFactor,t.map(x=>x.filled?x.tax:null));
+  foot('TOTAL COST (THB)',t.map(x=>x.filled?x.total:null));
+  foot('Avg. Cost per Unit',t.map(x=>x.filled?x.avg:null));
+  const tr=['Transit time','','','',''];Q.options.forEach(o=>tr.push('',o.transit||''));aoa.push(tr);
+  aoa.push([]);
+  aoa.push(['Make Decision — Forwarder Selected :',Q.decision.forwarder]);
+  aoa.push(['Make Decision — Customs Broker Selected :',Q.decision.broker]);
+  if(Q.decision.remark)aoa.push(['Remark :',Q.decision.remark]);
+  aoa.push([]);
+  aoa.push(['Prepared by',Q.sign.preparedName,Q.sign.preparedPos,Q.sign.preparedDate,'','Approved by',Q.sign.approvedName,Q.sign.approvedPos,Q.sign.approvedDate]);
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:5},{wch:34},{wch:8},{wch:9},{wch:6}].concat(Q.options.flatMap(()=>[{wch:13},{wch:15}]));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,(h.ref||'Comparison').replace(/[\\\/\?\*\[\]:]/g,'-').slice(0,31));
+  XLSX.writeFile(wb,`Freight Comparison - ${(h.ref||Q.type)}.xlsx`);
+}
+
+// ─── misc ────────────────────────────────────────────────────────────────────
+let toastT; function toast(msg,err){ const t=$('toast'); t.textContent=msg; t.className='toast show'+(err?' err':''); clearTimeout(toastT); toastT=setTimeout(()=>t.className='toast',err?4500:2200); }
+window.addEventListener('beforeunload',e=>{ if(dirty){e.preventDefault();e.returnValue='';} });
+
+$('btnNew').onclick=()=>{ if(dirty&&!confirm('ใบปัจจุบันยังไม่บันทึก เริ่มใบใหม่?'))return; Q=newQuote(Q.type); dirty=false; try{localStorage.removeItem(DRAFT_KEY);}catch(e){} renderAll(); };
+$('btnDup').onclick=()=>{ const c=JSON.parse(JSON.stringify(Q)); c.id=uid(); c.updatedAt=null; c.createdAt=new Date().toISOString().slice(0,10); c.head.ref=(c.head.ref||'')+' (copy)'; Q=c; dirty=true; touch(); renderAll(); toast('ทำสำเนาแล้ว — แก้เลขอ้างอิงแล้วบันทึก'); };
+$('btnSave').onclick=saveQuote;
+$('btnDel').onclick=deleteQuote;
+$('btnXlsx').onclick=exportXlsx;
+$('btnPrint').onclick=()=>window.print();
+$('btnAddOpt').onclick=()=>{ if(Q.options.length>=6){toast('สูงสุด 6 คอลัมน์',true);return;} const air=Q.type==='import-air'; Q.options.push({label:'Option '+(Q.options.length+1),kind:air?'air':'lcl',containers:1,cw:null,transit:''}); Q.rows.forEach(r=>r.prices.push(null)); touch(); renderAll(); };
+$('savedSel').onchange=e=>{ const id=e.target.value; if(!id)return; const q=saved.find(x=>x.id===id); if(!q)return; if(dirty&&!confirm('ใบปัจจุบันยังไม่บันทึก เปิดใบอื่นแทน?')){renderToolbar();return;} Q=JSON.parse(JSON.stringify(q)); dirty=false; renderAll(); };
+document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveQuote();} });
+
+(async function init(){
+  let draft=null; try{draft=JSON.parse(localStorage.getItem(DRAFT_KEY)||'null');}catch(e){}
+  await loadFx(false);
+  if(draft&&TEMPLATES[draft.type]){ Q=draft; dirty=true; } else { Q=newQuote('import-sea'); }
+  renderAll();
+  loadSaved(); loadLists();
+})();
+</script>
+</body>
+</html>

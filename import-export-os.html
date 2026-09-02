@@ -278,7 +278,8 @@ const PATHS = {
   split:'M12 3v6 M12 9l-6 4v6 M12 9l6 4v6 M4 21h4 M16 21h4',
   trash:'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13',
   sun:'M12 17a5 5 0 100-10 5 5 0 000 10z M12 1v2 M12 21v2 M4.22 4.22l1.42 1.42 M18.36 18.36l1.42 1.42 M1 12h2 M21 12h2 M4.22 19.78l1.42-1.42 M18.36 5.64l1.42-1.42',
-  moon:'M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z'
+  moon:'M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z',
+  scale:'M12 3v18 M6 21h12 M12 6H4 M12 6h8 M4 6l-2.5 7a2.5 2.5 0 005 0L4 6z M20 6l-2.5 7a2.5 2.5 0 005 0L20 6z'
 };
 function Ico({name,size=18,sw=1.7}){
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -1315,6 +1316,7 @@ class App extends Component {
     // ชื่อหน้า/คำอธิบายอยู่ที่ topbar จุดเดียว (เดิมมีหัวข้อซ้ำอีกชั้นใน subnav กินความสูงฟรี ~56px)
     const {tab}=this.state;
     const page=tab==='container'?{t:'Container Calculator',d:'คำนวณการจัดเรียงสินค้าลงตู้คอนเทนเนอร์'}
+      :tab==='freight'?{t:'Freight Charges Comparison',d:'เปรียบเทียบค่าระวางและค่าใช้จ่ายนำเข้า-ส่งออกจากผู้ให้บริการหลายราย — บันทึกใบเปรียบเทียบไว้บน server'}
       :tab==='verify'?{t:'ตรวจเอกสาร Shipment',d:'เทียบรหัสอ้างอิงข้ามไฟล์ในเครื่อง — ไม่ส่งข้อมูลออกภายนอก'}
       :{t:'Logistics Tracking',d:'ติดตาม Import PO / Export SO จาก Odoo พร้อมบันทึก forwarder / BL-AWB / container และต้นทุนเอง'};
     const iconBtn={display:'flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'var(--radius)',border:'1px solid var(--color-chrome-border)',background:'var(--color-chrome)',cursor:'pointer',flexShrink:0};
@@ -1352,7 +1354,7 @@ class App extends Component {
         <div style={{minWidth:0}}><div className="kobDisplayTight" style={{fontSize:'16px',color:'var(--color-chrome-display)'}}>Import-Export OS</div><div style={{fontSize:'10.5px',color:'var(--color-chrome-muted)'}}>KOB &amp; BTV</div></div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'12px 10px',display:'flex',flexDirection:'column',gap:'1px'}}>
-        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'verify',label:'ตรวจเอกสาร Shipment',icon:'check',active:tab==='verify'}].map(t=>{
+        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'เปรียบเทียบค่าเฟรท',icon:'scale',active:tab==='freight'},{key:'verify',label:'ตรวจเอกสาร Shipment',icon:'check',active:tab==='verify'}].map(t=>{
           const active=t.active;
           return <button key={t.key} onClick={()=>{
             if(t.key==='logistics'){if(!inLogisticsGroup)this.setState({tab:'import',detailId:null});}
@@ -2906,6 +2908,7 @@ class App extends Component {
           {tab==='dashboard'&&this.renderDashboard()}
           {tab==='verify'&&this.renderVerify()}
           {tab==='container'&&<iframe src="/container-loading-calculator.html" title="Container Calculator" style={{flex:1,width:'100%',border:0,background:'var(--color-page-bg)'}}/>}
+          {tab==='freight'&&<iframe src="/freight-comparison.html" title="Freight Charges Comparison" style={{flex:1,width:'100%',border:0,background:'var(--color-page-bg)'}}/>}
         </div>
       </div>
       {this.renderDetail()}

@@ -17,6 +17,7 @@ const TRACKING_FILE = path.join(ROOT, 'tracking_data.json');
 const AUDIT_FILE    = path.join(ROOT, 'tracking_audit.jsonl');
 const VERIFY_RUNS_FILE = path.join(ROOT, 'verify_runs.jsonl');
 const SHIPMENT_RUNS_FILE = path.join(ROOT, 'shipment_runs.jsonl'); // เขียนโดย scan-shipment-docs.mjs
+const FREIGHT_FILE = path.join(ROOT, 'freight_quotes.json'); // ใบเปรียบเทียบค่าเฟรท (freight-comparison.html)
 const BACKUP_DIR    = path.join(ROOT, 'backups');
 const INTEGRITY_SEEN_FILE = path.join(ROOT, 'integrity_seen.json');
 const INTEGRITY_DIGEST_FILE = path.join(ROOT, 'integrity_digest.json');
@@ -76,6 +77,26 @@ function saveTracking(data) {
     writeFileAtomic(TRACKING_FILE, JSON.stringify(data));
     return true;
   } catch(e) { console.error('[Tracking] save error:', e.message); return false; }
+}
+
+// ─── ใบเปรียบเทียบค่าเฟรท (freight-comparison.html) — เก็บทั้งใบเป็น JSON ไฟล์เดียว ──
+// แทนการ copy ชีทใน Import/Export Charges Comparison.xlsx ทีละใบ · ใบหนึ่งไม่กี่ KB จึงเก็บทั้ง object
+// key = id ที่ client สร้าง (fq_<base36>) · เพดาน 2,000 ใบ / 200KB ต่อใบ กันไฟล์บวมจาก client ที่ผิดปกติ
+const FREIGHT_MAX_QUOTES = 2000;
+const FREIGHT_MAX_QUOTE_BYTES = 200 * 1024;
+const FREIGHT_ID_RE = /^fq_[a-z0-9]{6,40}$/;
+function loadFreight() {
+  try {
+    if (fs.existsSync(FREIGHT_FILE)) {
+      const d = JSON.parse(fs.readFileSync(FREIGHT_FILE, 'utf8'));
+      if (Array.isArray(d)) return d;
+    }
+  } catch(e) { console.error('[Freight] load error:', e.message); }
+  return [];
+}
+function saveFreight(rows) {
+  try { writeFileAtomic(FREIGHT_FILE, JSON.stringify(rows)); return true; }
+  catch(e) { console.error('[Freight] save error:', e.message); return false; }
 }
 
 // ─── Audit log: บันทึกทุกการแก้ไข (append-only, ดูย้อนหลังได้) ────
@@ -1910,6 +1931,47 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ── อัตราแลกเปลี่ยนล่าสุดจาก Odoo (ใช้ตอนสร้างรายการใหม่) ──
+    // ── ใบเปรียบเทียบค่าเฟรท ──
+    // GET /api/freight-quotes            → ทุกใบ (เล็ก ไม่กี่ KB/ใบ) ให้ client เลือกเปิด
+    // POST /api/freight-quotes/upsert    body = ใบเดียว (มี id) → แทนที่ใบเดิม id เดียวกัน ไม่แตะใบอื่น
+    // POST /api/freight-quotes/delete    body = { id }
+    if (reqUrl === '/api/freight-quotes' && method === 'GET') {
+      const rows = loadFreight();
+      jsonOk(res, { ok: true, count: rows.length, rows });
+      return;
+    }
+    if (reqUrl === '/api/freight-quotes/upsert' && method === 'POST') {
+      const q = await readJsonBody(req, res, FREIGHT_MAX_QUOTE_BYTES);
+      if (q === null) return;
+      if (!q || typeof q !== 'object' || Array.isArray(q)) { jsonErr(res, 400, 'expected a quote object'); return; }
+      if (!FREIGHT_ID_RE.test(String(q.id || ''))) { jsonErr(res, 400, 'id ไม่ถูกต้อง'); return; }
+      if (!['import-sea', 'import-air', 'export-sea'].includes(q.type)) { jsonErr(res, 400, 'type ไม่ถูกต้อง'); return; }
+      if (!Array.isArray(q.rows) || !Array.isArray(q.options) || !q.head || typeof q.head !== 'object') { jsonErr(res, 400, 'โครงสร้างใบไม่ครบ (head/options/rows)'); return; }
+      const rows = loadFreight();
+      const idx = rows.findIndex(r => r.id === q.id);
+      if (idx < 0 && rows.length >= FREIGHT_MAX_QUOTES) { jsonErr(res, 400, `เก็บได้สูงสุด ${FREIGHT_MAX_QUOTES} ใบ — ลบใบเก่าก่อน`); return; }
+      q.updatedAt = new Date().toISOString();
+      q.savedBy = req.socket.remoteAddress || '';
+      if (idx >= 0) rows[idx] = q; else rows.push(q);
+      if (!saveFreight(rows)) { jsonErr(res, 500, 'บันทึกไฟล์ไม่สำเร็จ'); return; }
+      auditLog(idx >= 0 ? 'freight_update' : 'freight_create', String(q.head.ref || q.id), [q.type], req.socket.remoteAddress);
+      jsonOk(res, { ok: true, row: { id: q.id, updatedAt: q.updatedAt }, count: rows.length });
+      return;
+    }
+    if (reqUrl === '/api/freight-quotes/delete' && method === 'POST') {
+      const body = await readJsonBody(req, res, 4096);
+      if (body === null) return;
+      const id = String(body?.id || '');
+      if (!FREIGHT_ID_RE.test(id)) { jsonErr(res, 400, 'id ไม่ถูกต้อง'); return; }
+      const rows = loadFreight();
+      const next = rows.filter(r => r.id !== id);
+      if (next.length === rows.length) { jsonErr(res, 404, 'ไม่พบใบนี้'); return; }
+      if (!saveFreight(next)) { jsonErr(res, 500, 'บันทึกไฟล์ไม่สำเร็จ'); return; }
+      auditLog('freight_delete', id, [], req.socket.remoteAddress);
+      jsonOk(res, { ok: true, count: next.length });
+      return;
+    }
+
     if (reqUrl === '/api/fx-rates' && method === 'GET') {
       try {
         const rows = await cachedQuery('fx-rates', `
@@ -2011,6 +2073,8 @@ const server = http.createServer(async (req, res) => {
     filePath = path.join(ROOT, 'import-export-os.html');
   } else if (reqUrl === '/container-loading-calculator.html') {
     filePath = path.join(ROOT, 'container-loading-calculator.html');
+  } else if (reqUrl === '/freight-comparison.html') {
+    filePath = path.join(ROOT, 'freight-comparison.html');
   } else if (/^\/vendor\/[\w.-]+\.(js|css|map)$/.test(reqUrl)) {
     filePath = path.join(ROOT, reqUrl);
   } else {

@@ -26,3 +26,5 @@ shipment_runs.jsonl
 shipment_runs.jsonl.1
 ai_usage.jsonl
 tracking_data.json.before-revert
+
+freight_quotes.json
