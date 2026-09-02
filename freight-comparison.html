@@ -125,8 +125,10 @@ th.opt-th{vertical-align:top}
 /* ช่องชื่อคอลัมน์ต้องยอมหด ไม่งั้นมันกิน 100% แล้วดันปุ่มลบ (×) ตกไปบรรทัดถัดไป */
 .opt-head .r>input.inline{flex:1 1 60px;min-width:0;width:auto}
 .opt-head input,.opt-head select{height:26px;font-size:12px;padding:0 6px}
-.opt-head .kind{width:74px;flex:none}
-.opt-head .n{width:64px;flex:none}
+/* ปล่อยให้ select กว้างตามตัวเลือกที่ยาวสุด ("FCL 40'HQ") ไม่งั้นข้อความถูกตัดเป็น "FCL 20'G"
+   แล้วชดเชยด้วยการหดช่องตัวเลข (จำนวนตู้ 1-99 / น้ำหนักคิดเงิน) เพื่อไม่ให้ตารางกว้างขึ้น */
+.opt-head .kind{width:auto;flex:none;padding-right:20px}
+.opt-head .n{width:52px;flex:none}
 .opt-head .lbl{font-size:10.5px;color:var(--color-text-muted);white-space:nowrap}
 .desc{border:0;background:transparent;height:26px;padding:0 4px;width:100%}
 .desc:focus{background:var(--color-surface-muted)}
@@ -191,7 +193,6 @@ th.opt-th{vertical-align:top}
       <button class="btn btn-outline btn-sm no-print" id="btnAddOpt">+ เพิ่มคอลัมน์ตัวเลือก</button>
     </div>
     <div style="overflow-x:auto"><table id="tbl"></table></div>
-    <div class="note" id="tblNote"></div>
   </div>
 
   <div class="card">
@@ -213,7 +214,8 @@ const TEMPLATES={
   'import-sea':{
     title:'IMPORT FREIGHT PRICE COMPARISON — SEA',
     refLabel:'PO Number', partyLabel:'Vendor', termOptions:['EXW','FOB','CFR','CIF','DAP','DDP'],
-    options:[{label:'LCL',kind:'lcl'},{label:"FCL 20'",kind:'fcl'},{label:"FCL 40'HQ",kind:'fcl'}],
+    // ชื่อคอลัมน์เว้นว่างไว้ให้ผู้ใช้พิมพ์ชื่อ Freight Forwarder ที่จะเปรียบเทียบ (ชนิดตู้อยู่ที่ dropdown ด้านล่าง)
+    options:[{label:'',kind:'lcl'},{label:'',kind:'fcl20'},{label:'',kind:'fcl40hq'}],
     sections:[
       {name:'OCEAN FREIGHT',rows:[R('O/F  (Ocean Freight)','cbm','CBM','USD')]},
       {name:'LOCAL CHARGE @ ORIGIN',rows:[R('EXW Charge / Origin Handling','flat','SHIP','USD')]},
@@ -234,7 +236,7 @@ const TEMPLATES={
   'import-air':{
     title:'IMPORT FREIGHT PRICE COMPARISON — AIR',
     refLabel:'PO Number', partyLabel:'Vendor', termOptions:['EXW','FCA','FOB','CPT','CIP','DAP','DDP'],
-    options:[{label:'Option 1 · Forwarder A',kind:'air'},{label:'Option 2 · Forwarder B',kind:'air'},{label:'Option 3 · Forwarder C',kind:'air'}],
+    options:[{label:'',kind:'air'},{label:'',kind:'air'},{label:'',kind:'air'}],
     sections:[
       {name:'AIR FREIGHT',rows:[R('A/F  (Air Freight)','kgs','KGS','USD')]},
       {name:'LOCAL CHARGE @ ORIGIN',rows:[R('Local Charge @ Origin / EXW Charge','flat','SHIP','USD')]},
@@ -247,7 +249,7 @@ const TEMPLATES={
   'export-sea':{
     title:'EXPORT FREIGHT PRICE COMPARISON',
     refLabel:'CI Number', partyLabel:'Consignee', termOptions:['EXW','FOB','CFR','CIF','DAP','DDP'],
-    options:[{label:'Option 1 / LCL',kind:'lcl'},{label:'Option 2 / LCL',kind:'lcl'},{label:'Option 3 / LCL',kind:'lcl'}],
+    options:[{label:'',kind:'lcl'},{label:'',kind:'fcl20'},{label:'',kind:'fcl40hq'}],
     sections:[
       {name:'EXPORT CHARGES — SEA FREIGHT',rows:[R('Sea Freight','cbm','CBM/SHIP','USD')]},
       {name:'LOCAL CHARGES — BANGKOK',rows:[
@@ -264,7 +266,10 @@ const TEMPLATES={
     ],
   },
 };
-const KIND_LABEL={lcl:'LCL',fcl:'FCL',air:'AIR'};
+// ชนิดคอลัมน์ — แยก FCL เป็นสองขนาดเพราะค่า THC/CFS/ค่าลากตู้คิดต่างกันตามขนาดตู้
+const KIND_LABEL={lcl:'LCL',fcl20:"FCL 20'GP",fcl40hq:"FCL 40'HQ",air:'AIR'};
+const SEA_KINDS=['lcl','fcl20','fcl40hq'], AIR_KINDS=['air'];
+const isFcl=k=>k==='fcl20'||k==='fcl40hq';
 const DRAFT_KEY='kobFreightDraft';
 
 // ─── state ───────────────────────────────────────────────────────────────────
@@ -288,10 +293,35 @@ function newQuote(type){
     id:uid(), type, createdAt:today, updatedAt:null,
     head:{ref:'',party:'',category:'',group:'',qty:null,term:T.termOptions[0]==='EXW'&&type!=='export-sea'?'FOB':T.termOptions[0],
           fx:fxRates?.USD?+fxRates.USD.toFixed(4):null, fxAsOf:fxRates?.USD_asOf||'', cbm:null,gw:null,vw:null,docRef:type.startsWith('import')?'SCM-IF-':''},
-    options:T.options.map(o=>({label:o.label,kind:o.kind,containers:1,cw:null,transit:''})),
-    rows:T.sections.flatMap(s=>s.rows.map(r=>({id:uid(),section:s.name,desc:r.desc,basis:r.basis,unit:r.unit,cur:r.cur,qty:r.qty,prices:T.options.map(()=>null)}))),
+    options:T.options.map(o=>({label:o.label,kind:o.kind,containers:1,cw:null})),
+    rows:T.sections.flatMap(s=>s.rows.map(r=>({id:uid(),tkey:s.name+'|'+r.desc,section:s.name,desc:r.desc,basis:r.basis,unit:r.unit,cur:r.cur,qty:r.qty,tpl:true,prices:T.options.map(()=>null)}))),
     taxFactor:0.20,
   };
+}
+
+// แถวมาตรฐานของแม่แบบต้องมีครบเสมอ — ก่อนหน้านี้ปุ่ม × ลบแถวได้ทุกแถวและลบแล้วหายถาวร
+// (ไม่มี undo ไม่มีที่เก็บ) ใบที่ลบ "O/F Ocean Freight" หรือ "EXW Charge" ทิ้งไปจะเทียบราคาขาดไปเงียบ ๆ
+// จึงเติมแถวที่หายกลับตามลำดับของแม่แบบ โดยรักษาราคาและข้อความที่ผู้ใช้แก้ไว้ของแถวที่ยังอยู่
+function ensureTemplateRows(q){
+  const T=TEMPLATES[q.type]; if(!T)return q;
+  const old=Array.isArray(q.rows)?q.rows.slice():[], used=new Set(), out=[];
+  const n=(q.options||[]).length;
+  const key=s=>String(s??'').trim().toLowerCase();
+  T.sections.forEach(s=>{
+    s.rows.forEach(tr=>{
+      const tk=s.name+'|'+tr.desc;
+      // จับคู่ด้วย tkey ก่อน — ผู้ใช้แก้ชื่อรายการได้ ถ้าจับคู่ด้วยชื่อจะกลายเป็นว่าแถวนั้นหาย
+      // แล้วแทรกแถวแม่แบบซ้ำเข้ามาอีกใบ · ใบเก่าที่ยังไม่มี tkey ค่อยถอยไปเทียบชื่อแล้วติดคีย์ให้
+      let i=old.findIndex((r,idx)=>!used.has(idx)&&r.tkey===tk);
+      if(i<0)i=old.findIndex((r,idx)=>!used.has(idx)&&!r.tkey&&key(r.section)===key(s.name)&&key(r.desc)===key(tr.desc));
+      if(i>=0){ used.add(i); old[i].tpl=true; old[i].tkey=tk; old[i].section=s.name; out.push(old[i]); }
+      else out.push({id:uid(),tkey:tk,section:s.name,desc:tr.desc,basis:tr.basis,unit:tr.unit,cur:tr.cur,qty:tr.qty,tpl:true,prices:Array(n).fill(null)});
+    });
+    old.forEach((r,idx)=>{ if(!used.has(idx)&&key(r.section)===key(s.name)){used.add(idx);r.tpl=false;delete r.tkey;r.section=s.name;out.push(r);} }); // แถวที่ผู้ใช้เพิ่มเองในหมวดนี้
+  });
+  old.forEach((r,idx)=>{ if(!used.has(idx)){r.tpl=false;delete r.tkey;out.push(r);} });   // หมวดที่ไม่ตรงแม่แบบ — เก็บไว้ ไม่ทิ้ง
+  q.rows=out;
+  return q;
 }
 
 // ใบที่บันทึกไว้ก่อนหน้า (หรือ draft เก่า) อาจมีจำนวนคอลัมน์ไม่ตรงกับความยาว prices ของแต่ละแถว
@@ -299,16 +329,24 @@ function newQuote(type){
 // จึงปรับความยาวให้ตรงกับ options ทุกครั้งที่รับใบเข้ามา (เติม null / ตัดส่วนเกิน)
 function normalizeQuote(q){
   if(!q||typeof q!=='object')return q;
-  if(!Array.isArray(q.options)||!q.options.length)q.options=[{label:'Option 1',kind:q.type==='import-air'?'air':'lcl',containers:1,cw:null,transit:''}];
+  const air=q.type==='import-air';
+  if(!Array.isArray(q.options)||!q.options.length)q.options=[{label:'',kind:air?'air':'lcl',containers:1,cw:null}];
+  q.options.forEach(o=>{
+    if(o.kind==='fcl')o.kind='fcl20';                                  // ใบเก่าใช้ kind 'fcl' รวมทุกขนาด
+    if(!(air?AIR_KINDS:SEA_KINDS).includes(o.kind))o.kind=air?'air':'lcl';
+    if(o.label==null)o.label='';
+    if(num(o.containers)==null)o.containers=1;
+    if(o.cw===undefined)o.cw=null;
+    delete o.transit;                                                  // ช่อง transit ถูกถอดออกจากหน้าจอแล้ว
+  });
   const n=q.options.length;
-  q.options.forEach(o=>{ if(o.containers==null)o.containers=1; if(o.cw===undefined)o.cw=null; if(o.transit==null)o.transit=''; });
   (q.rows||[]).forEach(r=>{
     if(!Array.isArray(r.prices))r.prices=[];
     if(r.prices.length<n)r.prices=r.prices.concat(Array(n-r.prices.length).fill(null));
     else if(r.prices.length>n)r.prices=r.prices.slice(0,n);
   });
   if(num(q.taxFactor)==null)q.taxFactor=0;
-  return q;
+  return ensureTemplateRows(q);
 }
 
 // ─── คำนวณ (ตรงกับสูตรใน Excel) ─────────────────────────────────────────────
@@ -316,7 +354,7 @@ function normalizeQuote(q){
 // AIR: แถว KGS = น้ำหนักคิดเงินของคอลัมน์นั้น (default = max(GW,VW)) × ราคา · USD คูณอัตรา BOT
 function chargeableW(o){ if(o.cw!=null&&o.cw!=='')return +o.cw; const g=num(Q.head.gw)||0,v=num(Q.head.vw)||0; return Math.max(g,v)||null; }
 function qtyFor(row,o){
-  if(row.basis==='cbm')return o.kind==='fcl'?(num(o.containers)||1):(num(Q.head.cbm)||null);
+  if(row.basis==='cbm')return isFcl(o.kind)?(num(o.containers)||1):(num(Q.head.cbm)||null);
   if(row.basis==='kgs')return chargeableW(o);
   return num(row.qty)??1;
 }
@@ -378,25 +416,28 @@ function renderHead(){
 function renderTable(){
   const T=TEMPLATES[Q.type], t=totals(), M=cmpMeta(t), best=M.best, air=Q.type==='import-air';
   const nOpt=Q.options.length;
+  // ปุ่มลบแถวมีเฉพาะแถวที่ผู้ใช้เพิ่มเอง — แถวมาตรฐานของแม่แบบลบไม่ได้อีกแล้ว (เคยลบแล้วหายถาวร)
+  // ถ้ายังไม่มีแถวที่เพิ่มเอง ก็ไม่ต้องมีคอลัมน์ปุ่มลบให้รกตาราง
+  const xCol=Q.rows.some(r=>!r.tpl)?1:0;
   // Description กิน % ของความกว้างที่เหลือ เพื่อให้ชื่อรายการยาว ๆ ("CFS (Container Freight Station)")
   // ไม่ถูกตัด เมื่อหน้าต่างกว้างขึ้นคอลัมน์นี้จะกว้างตามแทนที่จะปล่อยให้คอลัมน์ราคากินไปหมด
   let html='<thead><tr><th style="width:30px">No.</th><th style="width:28%;min-width:236px">Description</th><th class="num" style="width:70px">Qty</th><th class="col-unit">Unit</th><th class="col-cur">Cur</th>';
   Q.options.forEach((o,oi)=>{
     html+=`<th class="opt-th" colspan="2" style="min-width:182px"><div class="opt-head">
-      <div class="r"><input class="inline" data-p="options.${oi}.label" value="${esc(o.label)}" title="${esc(o.label)}" list="vendorList" placeholder="ชื่อตัวเลือก / forwarder">
+      <div class="r"><input class="inline" data-p="options.${oi}.label" value="${esc(o.label)}" title="${esc(o.label)}" list="vendorList" placeholder="ชื่อ Freight Forwarder">
         ${nOpt>1?`<button class="x no-print" data-delopt="${oi}" title="ลบคอลัมน์นี้">×</button>`:''}</div>
-      <div class="r"><select class="kind" data-p="options.${oi}.kind">${(air?['air']:['lcl','fcl']).map(k=>`<option value="${k}" ${k===o.kind?'selected':''}>${KIND_LABEL[k]}</option>`).join('')}</select>
-        ${o.kind==='fcl'?`<span class="lbl">ตู้</span><input class="n" type="number" min="1" step="1" data-p="options.${oi}.containers" value="${o.containers??1}">`:''}
+      <div class="r"><select class="kind" data-p="options.${oi}.kind">${(air?AIR_KINDS:SEA_KINDS).map(k=>`<option value="${k}" ${k===o.kind?'selected':''}>${KIND_LABEL[k]}</option>`).join('')}</select>
+        ${isFcl(o.kind)?`<span class="lbl">ตู้</span><input class="n" type="number" min="1" step="1" data-p="options.${oi}.containers" value="${o.containers??1}">`:''}
         ${o.kind==='air'?`<span class="lbl">CW</span><input class="n" type="number" step="any" data-p="options.${oi}.cw" value="${o.cw??''}" placeholder="${fmt(chargeableW(o),1)}" title="น้ำหนักคิดเงิน (ว่าง = max(GW,VW))">`:''}
         ${o.kind==='lcl'?`<span class="lbl">× CBM ${fmt(num(Q.head.cbm),2)}</span>`:''}
         ${best===oi?bestTag(M.fair):''}</div>
     </div></th>`;
   });
-  html+='<th class="no-print" style="width:28px"></th></tr>';
-  html+='<tr><th></th><th></th><th></th><th></th><th></th>'+Q.options.map(()=>'<th class="num">Price / Unit</th><th class="num">Amount (THB)</th>').join('')+'<th class="no-print"></th></tr></thead><tbody>';
+  html+=(xCol?'<th class="no-print" style="width:28px"></th>':'')+'</tr>';
+  html+='<tr><th></th><th></th><th></th><th></th><th></th>'+Q.options.map(()=>'<th class="num">Price / Unit</th><th class="num">Amount (THB)</th>').join('')+(xCol?'<th class="no-print"></th>':'')+'</tr></thead><tbody>';
   let n=0, curSec=null;
   Q.rows.forEach((r,ri)=>{
-    if(r.section!==curSec){curSec=r.section;html+=`<tr class="sec"><td colspan="${5+nOpt*2+1}">${esc(curSec)}<button class="x no-print" data-addrow="${esc(curSec)}" title="เพิ่มรายการในหมวดนี้" style="float:right;font-size:12px">+ เพิ่มรายการ</button></td></tr>`;}
+    if(r.section!==curSec){curSec=r.section;html+=`<tr class="sec"><td colspan="${5+nOpt*2+xCol}">${esc(curSec)}<button class="x no-print" data-addrow="${esc(curSec)}" title="เพิ่มรายการในหมวดนี้" style="float:right;font-size:12px">+ เพิ่มรายการ</button></td></tr>`;}
     n++;
     html+=`<tr><td class="muted">${n}</td><td><input class="desc" data-p="rows.${ri}.desc" value="${esc(r.desc)}" title="${esc(r.desc)}"></td>`;
     // Qty: แถว CBM/KGS แสดงค่าที่คำนวณต่อคอลัมน์ (ต่างกันได้) จึงโชว์ "ตามคอลัมน์" · แถว flat แก้ได้
@@ -405,36 +446,32 @@ function renderTable(){
     html+=`<td class="col-cur"><select class="inline" data-p="rows.${ri}.cur"><option ${r.cur==='USD'?'selected':''}>USD</option><option ${r.cur==='THB'?'selected':''}>THB</option></select></td>`;
     Q.options.forEach((o,oi)=>{
       const a=amount(r,oi), q=qtyFor(r,o);
-      const tip=a!=null?`${fmt(q,r.basis==='cbm'&&o.kind!=='fcl'?3:2)} × ${fmt(num(r.prices[oi]))}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:'';
+      const tip=a!=null?`${fmt(q,r.basis==='cbm'&&!isFcl(o.kind)?3:2)} × ${fmt(num(r.prices[oi]))}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:'';
       html+=`<td class="num"><input class="inline price" type="number" step="any" data-p="rows.${ri}.prices.${oi}" value="${r.prices[oi]??''}" style="width:78px"></td><td class="num amt" title="${tip}">${fmt(a)}</td>`;
     });
-    html+=`<td class="no-print"><button class="x" data-delrow="${ri}" title="ลบรายการ">×</button></td></tr>`;
+    html+=(xCol?`<td class="no-print">${r.tpl?'':`<button class="x" data-delrow="${ri}" title="ลบรายการที่เพิ่มเอง">×</button>`}</td>`:'')+'</tr>';
   });
   html+='</tbody><tfoot>';
-  html+=`<tr class="total"><td colspan="5">SUBTOTAL</td>${t.map(x=>`<td></td><td class="num amt">${fmt(x.filled?x.sub:null)}</td>`).join('')}<td class="no-print"></td></tr>`;
-  html+=`<tr><td colspan="5">* Duties &amp; Taxes (as per receipt) — factor <input class="inline" type="number" step="0.01" min="0" data-p="taxFactor" value="${num(Q.taxFactor)??''}" style="width:70px;display:inline-block"> <span class="muted">(0.20 = 20%)</span></td>${t.map(x=>`<td></td><td class="num amt">${fmt(x.filled?x.tax:null)}</td>`).join('')}<td class="no-print"></td></tr>`;
-  html+=`<tr class="grand"><td colspan="5">TOTAL COST (THB)</td>${t.map((x,i)=>`<td></td><td class="num amt ${i===best&&M.fair?'best':''}">${fmt(x.filled?x.total:null)}</td>`).join('')}<td class="no-print"></td></tr>`;
-  html+=`<tr><td colspan="5">Avg. Cost per Unit (THB)</td>${t.map((x,i)=>`<td></td><td class="num amt ${i===best&&M.fair?'best':''}">${fmt(x.filled?x.avg:null,4)}</td>`).join('')}<td class="no-print"></td></tr>`;
-  html+=`<tr><td colspan="5">Transit time / หมายเหตุต่อตัวเลือก</td>${Q.options.map((o,oi)=>`<td colspan="2"><input class="inline" data-p="options.${oi}.transit" value="${esc(o.transit)}" placeholder="เช่น 5 Days"></td>`).join('')}<td class="no-print"></td></tr>`;
+  html+=`<tr class="total"><td colspan="5">SUBTOTAL</td>${t.map(x=>`<td></td><td class="num amt">${fmt(x.filled?x.sub:null)}</td>`).join('')}${xCol?'<td class="no-print"></td>':''}</tr>`;
+  html+=`<tr><td colspan="5">* As per receipt — factor <input class="inline" type="number" step="0.01" min="0" data-p="taxFactor" value="${num(Q.taxFactor)??''}" style="width:70px;display:inline-block"> <span class="muted">(0.20 = 20%)</span></td>${t.map(x=>`<td></td><td class="num amt">${fmt(x.filled?x.tax:null)}</td>`).join('')}${xCol?'<td class="no-print"></td>':''}</tr>`;
+  html+=`<tr class="grand"><td colspan="5">TOTAL COST (THB)</td>${t.map((x,i)=>`<td></td><td class="num amt ${i===best&&M.fair?'best':''}">${fmt(x.filled?x.total:null)}</td>`).join('')}${xCol?'<td class="no-print"></td>':''}</tr>`;
+  html+=`<tr><td colspan="5">Average Cost Per Unit (THB)</td>${t.map((x,i)=>`<td></td><td class="num amt ${i===best&&M.fair?'best':''}">${fmt(x.filled?x.avg:null,4)}</td>`).join('')}${xCol?'<td class="no-print"></td>':''}</tr>`;
   html+='</tfoot>';
   $('tbl').innerHTML=html;
-  $('tblNote').textContent = air
-    ? 'แถวหน่วย KGS คูณ "น้ำหนักคิดเงิน (CW)" ของแต่ละคอลัมน์ — ว่างไว้ = ใช้ค่ามากกว่าระหว่าง GW กับ VW · แถวสกุล USD คูณอัตรา BOT · "Duties & Taxes" เป็นค่าประมาณตามสัดส่วนที่ตั้งไว้ ตัวจริงดูจากใบเสร็จ'
-    : 'คอลัมน์ LCL: แถวหน่วย CBM คูณ Measurement (CBM) · คอลัมน์ FCL: แถวหน่วย CBM คิดต่อตู้ (คูณจำนวนตู้) เหมือนที่กรอกจริงใน Excel · แถวสกุล USD คูณอัตรา BOT · "Duties & Taxes" เป็นค่าประมาณตามสัดส่วนที่ตั้งไว้ ตัวจริงดูจากใบเสร็จ';
 }
 
 function renderSummary(){
   const t=totals(), M=cmpMeta(t), best=M.best, nFilledOpt=t.filter(x=>x.filled).length;
   $('cmpWarn').innerHTML = (best>=0&&!M.fair)
-    ? `<div class="warnbar"><span>⚠</span><span><b>ยอดต่ำสุดยังเทียบกันตรงๆ ไม่ได้</b> — "${esc(Q.options[best].label)||'ตัวเลือก '+(best+1)}" กรอกราคาไว้ ${t[best].filled} รายการ ขณะที่คอลัมน์ที่ครบที่สุดกรอก ${M.maxFilled} รายการ ยอดจึงต่ำกว่าโดยอัตโนมัติเพราะรายการที่ยังไม่กรอกไม่ถูกนับ ไม่ใช่เพราะไม่มีค่าใช้จ่าย — ขอราคาให้ครบทุกช่องก่อนตัดสินใจ</span></div>`
+    ? `<div class="warnbar"><span>⚠</span><span><b>ยอดต่ำสุดยังเทียบกันตรงๆ ไม่ได้</b> — "${esc(Q.options[best].label)||'ตัวเลือก '+(best+1)}" กรอกราคาไว้ ${t[best].filled} รายการ ขณะที่คอลัมน์ที่ครบที่สุดกรอก ${M.maxFilled} รายการ ยอดจึงต่ำกว่าโดยอัตโนมัติเพราะรายการที่ยังไม่กรอกไม่ถูกนับ ไม่ใช่เพราะไม่มีค่าใช้จ่าย — ขอราคาให้ครบทุกช่องก่อนตัดสินใจ · ถ้าช่องที่ว่างคือรายการที่ไม่มีค่าใช้จ่ายจริงในตัวเลือกนี้ ข้ามคำเตือนนี้ได้</span></div>`
     : '';
   $('summary').innerHTML=Q.options.map((o,i)=>{
     const short=t[i].filled>0&&t[i].filled<M.maxFilled?M.maxFilled-t[i].filled:0;
     const gap=i===best&&nFilledOpt>1?Math.min(...t.filter((x,j)=>j!==i&&x.filled).map(x=>x.total))-t[i].total:null;
     return `<div class="sum ${i===best?(M.fair?'best':'warn'):''}">
-    <div class="t"><span>${esc(o.label)||'ตัวเลือก '+(i+1)}</span><span>${KIND_LABEL[o.kind]||''}${o.kind==='fcl'?' × '+(num(o.containers)||1):''}</span></div>
+    <div class="t"><span>${esc(o.label)||'ตัวเลือก '+(i+1)}</span><span>${KIND_LABEL[o.kind]||''}${isFcl(o.kind)?' × '+(num(o.containers)||1)+' ตู้':''}</span></div>
     <div class="v">${t[i].filled?fmt(t[i].total,0)+' <span style="font-size:12px;font-weight:400">THB</span>':'<span class="muted">ยังไม่กรอกราคา</span>'}</div>
-    <div class="s">${t[i].filled&&t[i].avg!=null?fmt(t[i].avg,4)+' THB / unit':''}${o.transit?' · '+esc(o.transit):''}${gap!=null?` · ประหยัดกว่าถัดไป ${fmt(gap,0)} THB`:''}</div>
+    <div class="s">${t[i].filled&&t[i].avg!=null?fmt(t[i].avg,4)+' THB / unit':''}${gap!=null?` · ประหยัดกว่าถัดไป ${fmt(gap,0)} THB`:''}</div>
     ${short?`<div class="s" style="color:var(--color-warn-text)">กรอกน้อยกว่าคอลัมน์ที่ครบที่สุด ${short} รายการ</div>`:''}
   </div>`;}).join('');
 }
@@ -473,7 +510,9 @@ document.addEventListener('input',e=>{
   const affectsCalc = p.startsWith('rows.') || p==='taxFactor' || p.endsWith('.containers') || p.endsWith('.cw')
     || ['head.cbm','head.gw','head.vw','head.fx','head.qty'].includes(p);
   if(affectsCalc) updateAmountsInPlace();
-  else if(p.startsWith('options.')&&p.endsWith('.label')){ renderSummary(); renderDecision(); }
+  // ชื่อคอลัมน์ (forwarder) โผล่ในการ์ดสรุปและแถบเตือน จึงต้องวาดสรุปใหม่ · อัปเดต tooltip ในที่เดิม
+  // ห้ามวาดตารางใหม่ เพราะช่องที่กำลังพิมพ์อยู่จะถูกแทนที่แล้วโฟกัสหลุด
+  else if(p.startsWith('options.')&&p.endsWith('.label')){ e.target.title=v; renderSummary(); }
   else renderSummary();
   renderToolbar();
 });
@@ -482,7 +521,7 @@ document.addEventListener('input',e=>{
 document.addEventListener('change',e=>{
   const p=e.target.dataset.p; if(!p)return;
   if(e.target.tagName==='SELECT'){
-    if(p.endsWith('.kind')){ const oi=+p.split('.')[1]; if(Q.options[oi].kind==='fcl'&&!Q.options[oi].containers)Q.options[oi].containers=1; }
+    if(p.endsWith('.kind')){ const oi=+p.split('.')[1]; if(isFcl(Q.options[oi].kind)&&!Q.options[oi].containers)Q.options[oi].containers=1; }
     refreshCalc();
   }
   if(p==='head.ref')autofillFromPO(e.target.value);
@@ -493,7 +532,7 @@ document.addEventListener('click',e=>{
   if(b.dataset.delopt!=null){ const oi=+b.dataset.delopt; if(Q.options.length<=1)return; if(!confirm('ลบคอลัมน์ "'+(Q.options[oi].label||'ตัวเลือก '+(oi+1))+'" ?'))return; Q.options.splice(oi,1); Q.rows.forEach(r=>r.prices.splice(oi,1)); touch(); renderAll(); return; }
   if(b.dataset.delrow!=null){ const ri=+b.dataset.delrow; Q.rows.splice(ri,1); touch(); refreshCalc(); return; }
   if(b.dataset.addrow!=null){ const sec=b.dataset.addrow; let last=-1; Q.rows.forEach((r,i)=>{if(r.section===sec)last=i;});
-    Q.rows.splice(last+1,0,{id:uid(),section:sec,desc:'',basis:'flat',unit:'SHIP',cur:'THB',qty:1,prices:Q.options.map(()=>null)}); touch(); refreshCalc();
+    Q.rows.splice(last+1,0,{id:uid(),section:sec,desc:'',basis:'flat',unit:'SHIP',cur:'THB',qty:1,tpl:false,prices:Q.options.map(()=>null)}); touch(); refreshCalc();
     const el=document.querySelector(`[data-p="rows.${last+1}.desc"]`); if(el)el.focus(); return; }
 });
 // อัปเดตเฉพาะเซลล์จำนวนเงิน/สรุป โดยไม่ re-render input ที่กำลังพิมพ์ (กัน cursor กระโดด)
@@ -504,7 +543,7 @@ function updateAmountsInPlace(){
     Q.options.forEach((o,oi)=>{ const a=amount(r,oi); if(!cells[oi])return; cells[oi].textContent=fmt(a);
       // tooltip แสดงวิธีคิด (จำนวน × ราคา × เรต) ต้องอัปเดตตามด้วย ไม่งั้นค้างค่าเดิมตั้งแต่ตอน render
       const q=qtyFor(r,o);
-      cells[oi].title=a!=null?`${fmt(q,r.basis==='cbm'&&o.kind!=='fcl'?3:2)} × ${fmt(num(r.prices[oi]))}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:''; }); });
+      cells[oi].title=a!=null?`${fmt(q,r.basis==='cbm'&&!isFcl(o.kind)?3:2)} × ${fmt(num(r.prices[oi]))}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:''; }); });
   const t=totals(), M=cmpMeta(t), best=M.best;
   const foot=document.querySelectorAll('#tbl tfoot tr');
   const setRow=(tr,vals,d)=>{ if(!tr)return; const c=tr.querySelectorAll('td.amt'); vals.forEach((v,i)=>{ if(c[i]){c[i].textContent=fmt(v,d); c[i].classList.toggle('best',i===best&&v!=null&&M.fair);} }); };
@@ -520,7 +559,7 @@ function updateAmountsInPlace(){
 
 function switchType(type){
   if(type===Q.type)return;
-  const hasData=Q.rows.some(r=>r.prices.some(p=>p!=null))||Q.head.ref;
+  const hasData=Q.rows.some(r=>r.prices.some(p=>p!=null))||Q.head.ref||Q.options.some(o=>String(o.label||'').trim());
   if(hasData&&!confirm('เปลี่ยนแม่แบบจะเริ่มใบใหม่ (ใบปัจจุบันถ้ายังไม่บันทึกจะหาย) ดำเนินการต่อ?'))return;
   const keep={ref:Q.head.ref,party:Q.head.party,category:Q.head.category,group:Q.head.group,qty:Q.head.qty,fx:Q.head.fx,fxAsOf:Q.head.fxAsOf,cbm:Q.head.cbm,gw:Q.head.gw,vw:Q.head.vw};
   Q=newQuote(type); Object.assign(Q.head,keep); dirty=false; touch(); dirty=false; renderAll();
@@ -582,7 +621,8 @@ function exportXlsx(){
   aoa.push(['Total Qty',h.qty,'','Document Ref.',h.docRef,'',air?'Gross Weight (GW)':'Measurement (CBM)',air?h.gw:h.cbm,air?'KGS':'CBM']);
   if(air)aoa.push(['','','','','','','Volume Weight (VW)',h.vw,'KGS']); else aoa.push(['','','','','','','Gross Weight (GW)',h.gw,'KGS']);
   aoa.push([]);
-  const optHead=['No.','Description','Qty','Unit','Cur']; Q.options.forEach(o=>{optHead.push(o.label+(o.kind==='fcl'?` (${o.containers||1} x ${KIND_LABEL[o.kind]})`:o.kind==='air'?` (CW ${fmt(chargeableW(o),1)} KGS)`:' (LCL)'),'Amount (THB)');});
+  const optHead=['No.','Description','Qty','Unit','Cur']; Q.options.forEach((o,oi)=>{const nm=String(o.label||'').trim()||('Option '+(oi+1));
+    optHead.push(nm+(isFcl(o.kind)?` (${num(o.containers)||1} x ${KIND_LABEL[o.kind]})`:o.kind==='air'?` (CW ${fmt(chargeableW(o),1)} KGS)`:' (LCL)'),'Amount (THB)');});
   aoa.push(optHead);
   let n=0,cur=null;
   Q.rows.forEach(r=>{
@@ -593,10 +633,9 @@ function exportXlsx(){
   });
   const foot=(label,vals)=>{const l=[label,'','','',''];vals.forEach(v=>l.push('',v==null?'':+v.toFixed(2)));aoa.push(l);};
   foot('SUBTOTAL',t.map(x=>x.filled?x.sub:null));
-  foot('* Duties & Taxes (as per receipt) — factor '+(num(Q.taxFactor)??0),t.map(x=>x.filled?x.tax:null));
+  foot('* As per receipt — factor '+(num(Q.taxFactor)??0),t.map(x=>x.filled?x.tax:null));
   foot('TOTAL COST (THB)',t.map(x=>x.filled?x.total:null));
-  foot('Avg. Cost per Unit',t.map(x=>x.filled?x.avg:null));
-  const tr=['Transit time','','','',''];Q.options.forEach(o=>tr.push('',o.transit||''));aoa.push(tr);
+  foot('Average Cost Per Unit',t.map(x=>x.filled?x.avg:null));
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols']=[{wch:5},{wch:34},{wch:8},{wch:9},{wch:6}].concat(Q.options.flatMap(()=>[{wch:13},{wch:15}]));
   // ชื่อชีทและชื่อไฟล์ต้องผ่านตัวกรองคนละชุด — ชีทห้าม \ / ? * [ ] : · ไฟล์ห้าม < > : " / \ | ? * ด้วย
@@ -616,7 +655,7 @@ $('btnSave').onclick=saveQuote;
 $('btnDel').onclick=deleteQuote;
 $('btnXlsx').onclick=exportXlsx;
 $('btnPrint').onclick=()=>window.print();
-$('btnAddOpt').onclick=()=>{ if(Q.options.length>=6){toast('สูงสุด 6 คอลัมน์',true);return;} const air=Q.type==='import-air'; Q.options.push({label:'Option '+(Q.options.length+1),kind:air?'air':'lcl',containers:1,cw:null,transit:''}); Q.rows.forEach(r=>r.prices.push(null)); touch(); renderAll(); };
+$('btnAddOpt').onclick=()=>{ if(Q.options.length>=6){toast('สูงสุด 6 คอลัมน์',true);return;} const air=Q.type==='import-air'; Q.options.push({label:'',kind:air?'air':'lcl',containers:1,cw:null}); Q.rows.forEach(r=>r.prices.push(null)); touch(); renderAll(); };
 $('savedSel').onchange=e=>{ const id=e.target.value; if(!id)return; const q=saved.find(x=>x.id===id); if(!q)return; if(dirty&&!confirm('ใบปัจจุบันยังไม่บันทึก เปิดใบอื่นแทน?')){renderToolbar();return;} Q=normalizeQuote(JSON.parse(JSON.stringify(q))); dirty=false; renderAll(); };
 document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveQuote();} });
 
