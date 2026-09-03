@@ -244,12 +244,19 @@ const TEMPLATES={
         R('Cleaning Fee','cbm','CBM','THB'),R('DG Surcharge','cbm','CBM','THB'),R('DG Handling','flat','SET','THB'),
         R('PCS','cbm','CBM','THB'),R('Equipment Transfer Fee','cbm','CBM','THB'),R('IMO Admin','cbm','CBM','THB'),
         R('EMC','cbm','CBM','THB'),R('LSS  (Low Sulphur Fuel Surcharge)','cbm','CBM','THB'),R('CIS','cbm','CBM','THB'),
-        R('PSS  (Peak Season Surcharge)','cbm','CBM','THB')]},
+        R('PSS  (Peak Season Surcharge)','cbm','CBM','THB'),
+        // ↓ เพิ่มจาก backtest ใบเสนอราคาจริง 18 ใบ 15 เจ้า (2026-09-03) — forwarder เสนอมาจริงแต่เดิมไม่มีแถวให้ลง
+        R('Port Charge','cbm','CBM','THB'),R('EIR  (Equipment Interchange Receipt)','flat','CNTR','THB'),
+        R('Seal Fee','flat','SET','THB')]},
       {name:'INLAND & CUSTOMS CLEARANCE',rows:[
         R('Handling','flat','SHIP','THB'),R('Container Maintenance','cbm','CBM','THB'),R('Inspection Fee','flat','SHIP','THB'),
         R('Paperless Registration','flat','TIME','THB'),R('Customs Clearance','flat','SHIP','THB'),
         R('Transportation  (4 wheels)','flat','TRIP','THB'),R('Transportation  (6 wheels)','flat','TRIP','THB'),
-        R("Transportation  (FCL 20' / 40')",'flat','20/40','THB'),R('Service Charge','flat','SHIP','THB'),R('Clearance  (FDA)','flat','SHIP','THB')]},
+        R("Transportation  (FCL 20' / 40')",'flat','20/40','THB'),R('Service Charge','flat','SHIP','THB'),R('Clearance  (FDA)','flat','SHIP','THB'),
+        // ↓ เพิ่มจาก backtest ใบเสนอราคาจริง 18 ใบ 15 เจ้า (2026-09-03) — forwarder เสนอมาจริงแต่เดิมไม่มีแถวให้ลง
+        R('Form E / Form AK  (Certificate of Origin)','flat','SET','THB'),R('Courier Fee  (ส่งเอกสาร/ฟอร์ม)','flat','SET','THB'),
+        R('Documentation Fee','flat','SET','THB'),R('Surrender Fee / Telex Release','flat','SET','THB'),
+        R('Insurance','flat','SHIP','THB'),R('Other Charges','flat','SHIP','THB')]},
     ],
   },
   'import-air':{
@@ -262,7 +269,12 @@ const TEMPLATES={
       {name:'LOCAL CHARGE @ BANGKOK',rows:[
         R('D/O  (Delivery Order)','flat','SHIP','THB'),R('AWB Document','flat','SET','THB'),R('Customs Clearance','flat','SHIP','THB'),
         R('Transportation  (4 wheels)','flat','TRIP','THB'),R('Transportation  (6 wheels)','flat','TRIP','THB'),R('Service Charge','flat','SHIP','THB'),
-        R('Inspection Charge','flat','SHIP','THB'),R('DG Surcharge','kgs','KGS','THB'),R('DG Handling','flat','SET','THB'),R('Clearance  (FDA)','flat','SHIP','THB')]},
+        R('Inspection Charge','flat','SHIP','THB'),R('DG Surcharge','kgs','KGS','THB'),R('DG Handling','flat','SET','THB'),R('Clearance  (FDA)','flat','SHIP','THB'),
+        // ↓ เพิ่มจาก backtest ใบเสนอราคาจริง 18 ใบ 15 เจ้า (2026-09-03) — forwarder เสนอมาจริงแต่เดิมไม่มีแถวให้ลง
+        R('THC  (Terminal Handling Charge)','kgs','KGS','THB'),R('Handling','flat','SHIP','THB'),
+        R('Documentation Fee','flat','SET','THB'),R('Paperless Registration / EDI','flat','TIME','THB'),
+        R('Form E / Form AK  (Certificate of Origin)','flat','SET','THB'),R('Courier Fee  (ส่งเอกสาร/ฟอร์ม)','flat','SET','THB'),
+        R('Insurance','flat','SHIP','THB'),R('Other Charges','flat','SHIP','THB')]},
     ],
   },
   'export-sea':{
@@ -277,7 +289,12 @@ const TEMPLATES={
         R('DG Surcharge @ SIN','flat','SHIP','THB'),R('DG Handling','flat','SHIP','THB'),R('DG Sticker','flat','PER PC','THB'),
         R('Customs Clearance','flat','ENTRY','THB'),R('Form D / CO','flat','SET','THB'),R("Transportation (20'/40')",'flat',"20'/40'",'THB'),
         R('Transportation 4-Wheel','flat','TRIP','THB'),R('Transportation 6-Wheel','flat','TRIP','THB'),R('Documentation','flat','SET','THB'),
-        R('X-Ray Charge','flat','SHIP','THB'),R('Inspection Charge','flat','SHIP','THB'),R('Lashing Charge','flat','SHIP','THB')]},
+        R('X-Ray Charge','flat','SHIP','THB'),R('Inspection Charge','flat','SHIP','THB'),R('Lashing Charge','flat','SHIP','THB'),
+        // ↓ เพิ่มจาก backtest ใบเสนอราคาจริง 18 ใบ 15 เจ้า (2026-09-03) — forwarder เสนอมาจริงแต่เดิมไม่มีแถวให้ลง
+        R('Cleaning Fee','flat','CNTR','THB'),R('VGM  (Verified Gross Mass)','flat','SET','THB'),
+        R('EIR  (Equipment Interchange Receipt)','flat','CNTR','THB'),R('Port Charge','cbm','CBM','THB'),
+        R('Courier Fee  (ส่งเอกสาร/ฟอร์ม)','flat','SET','THB'),R('Insurance','flat','SHIP','THB'),
+        R('Other Charges','flat','SHIP','THB')]},
       {name:'DESTINATION CHARGES',rows:[
         R('Customs Clearance (Dest.)','flat','ENTRY','THB'),R('D/O','flat','SHIP','THB'),R('THC (Dest.)','cbm','CBM/CON','THB'),
         R('CFS (Dest.)','cbm','CBM','THB'),R('Seal Fee (Dest.)','flat','SET','THB'),R('Surrender Fee (Dest.)','flat','SET','THB'),
