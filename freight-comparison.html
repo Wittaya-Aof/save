@@ -144,6 +144,29 @@ th.opt-th{vertical-align:top}
 .desc:focus{background:var(--color-surface-muted)}
 .x{border:0;background:transparent;color:var(--color-text-muted);cursor:pointer;font-size:14px;line-height:1;padding:2px 6px;border-radius:var(--radius-xs)}
 .x:hover{color:var(--color-danger-text);background:var(--color-danger-soft)}
+.tierlink{display:block;margin-top:2px;font-size:10px;line-height:1.3;color:var(--color-text-tertiary);background:none;border:0;padding:0;cursor:pointer;text-align:right;width:100%;font-family:inherit}
+.tierlink:hover{color:var(--color-text);text-decoration:underline}
+.tierlink.on{color:var(--color-text);font-weight:500}
+.tierlink.out{color:var(--color-danger-text)}
+.tierval{display:block;font-family:var(--font-mono);font-size:12px;text-align:right;padding:0 4px;color:var(--color-text)}
+.tierval.out{color:var(--color-danger-text)}
+td.num input.price.frompdf{box-shadow:inset 0 0 0 1px var(--color-warn-border)}
+.srcdot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--color-warn);margin-left:3px;vertical-align:middle}
+.mask{position:fixed;inset:0;background:rgba(23,23,23,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+.mask[hidden]{display:none}
+.panel{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-pop);max-width:980px;width:100%;max-height:88vh;display:flex;flex-direction:column}
+.panel h3{margin:0;font-size:14px;font-weight:500}
+.panel .ph{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--color-border)}
+.panel .pb{padding:14px 16px;overflow:auto;flex:1}
+.panel .pf{display:flex;gap:8px;align-items:center;padding:11px 16px;border-top:1px solid var(--color-border)}
+.panel table{min-width:0}
+.tiergrid{display:grid;grid-template-columns:1fr 1fr 1fr 30px;gap:6px 8px;align-items:center;max-width:460px}
+.tiergrid .h{font-size:11px;color:var(--color-text-tertiary)}
+.dropzone{position:absolute;inset:0;background:var(--color-brand-soft);border:2px dashed var(--color-brand-deep);border-radius:var(--radius-lg);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:var(--color-text);z-index:20;pointer-events:none}
+.dropzone[hidden]{display:none}
+.pv-row{border-bottom:1px solid var(--color-border)}
+.pv-warn{color:var(--color-warn-text)}
+.pv-mute{color:var(--color-text-muted)}
 .muted{color:var(--color-text-muted);font-size:12px}
 .note{font-size:12px;color:var(--color-text-tertiary);padding:8px 16px 12px;border-top:1px dashed var(--color-border)}
 .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--color-text);color:var(--color-page-bg);padding:9px 14px;border-radius:var(--radius);font-size:12.5px;box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity .2s}
@@ -206,12 +229,14 @@ th.opt-th{vertical-align:top}
     <div class="card-body"><div class="grid" id="headGrid"></div></div>
   </div>
 
-  <div class="card">
+  <div class="card" style="position:relative" id="chargeCard">
     <div class="card-header">Charge items <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— ช่องพื้นเหลือง = กรอกราคาต่อหน่วย · ว่าง = ไม่มีค่าใช้จ่ายรายการนั้น</span>
       <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm no-print" id="btnReadPdf" title="อ่านใบเสนอราคา PDF แล้วเติมราคาให้ (ลากไฟล์มาวางบนการ์ดนี้ก็ได้)">อ่านจาก PDF</button>
       <button class="btn btn-outline btn-sm no-print" id="btnAddOpt">+ เพิ่มคอลัมน์ตัวเลือก</button>
     </div>
     <div style="overflow-x:auto"><table id="tbl"></table></div>
+    <div class="dropzone" id="dropzone" hidden>วางไฟล์ PDF ใบเสนอราคาที่นี่</div>
   </div>
 
   <div class="card">
@@ -219,6 +244,8 @@ th.opt-th{vertical-align:top}
     <div class="card-body"><div id="cmpWarn"></div><div class="summary" id="summary"></div></div>
   </div>
 </div>
+<input type="file" id="pdfInput" accept="application/pdf" hidden>
+<div class="mask" id="mask" hidden><div class="panel"><div class="ph"><h3 id="mTitle"></h3><div class="spacer"></div><button class="x" id="mClose" title="ปิด">×</button></div><div class="pb" id="mBody"></div><div class="pf" id="mFoot"></div></div></div>
 <div class="toast" id="toast"></div>
 
 <script src="/vendor/xlsx.full.min.js"></script>
@@ -329,7 +356,7 @@ function newQuote(type){
     id:uid(), type, createdAt:today, updatedAt:null,
     head:{ref:'',party:'',category:'',group:'',qty:null,term:T.termOptions[0]==='EXW'&&type!=='export-sea'?'FOB':T.termOptions[0],
           fx:fxRates?.USD?+fxRates.USD.toFixed(4):null, fxAsOf:fxRates?.USD_asOf||'', cbm:null,gw:null,vw:null,docRef:type.startsWith('import')?'SCM-IF-':''},
-    options:T.options.map(o=>({label:o.label,kind:o.kind,containers:1,cw:null})),
+    options:T.options.map(o=>({label:o.label,kind:o.kind,containers:1,cw:null,tiers:[]})),
     rows:T.sections.flatMap(s=>s.rows.map(r=>({id:uid(),tkey:s.name+'|'+r.desc,section:s.name,desc:r.desc,basis:r.basis,unit:r.unit,cur:r.cur,qty:r.qty,tpl:true,prices:T.options.map(()=>null)}))),
     taxFactor:0.20,
   };
@@ -373,10 +400,12 @@ function normalizeQuote(q){
     if(o.label==null)o.label='';
     if(num(o.containers)==null)o.containers=1;
     if(o.cw===undefined)o.cw=null;
+    if(!Array.isArray(o.tiers))o.tiers=[];
     delete o.transit;                                                  // ช่อง transit ถูกถอดออกจากหน้าจอแล้ว
   });
   const n=q.options.length;
   (q.rows||[]).forEach(r=>{
+    if(!r.src||typeof r.src!=='object')r.src={};   // ที่มาของราคาต่อคอลัมน์ (ไฟล์ PDF ที่อ่านมา)
     if(!Array.isArray(r.prices))r.prices=[];
     if(r.prices.length<n)r.prices=r.prices.concat(Array(n-r.prices.length).fill(null));
     else if(r.prices.length>n)r.prices=r.prices.slice(0,n);
@@ -389,14 +418,45 @@ function normalizeQuote(q){
 // LCL: แถว CBM = CBM × ราคา · FCL: แถว CBM = จำนวนตู้ × ราคา (ในชีทจริงผู้ใช้กรอกทับสูตรเป็นต่อตู้อยู่แล้ว)
 // AIR: แถว KGS = น้ำหนักคิดเงินของคอลัมน์นั้น (default = max(GW,VW)) × ราคา · USD คูณอัตรา BOT
 function chargeableW(o){ if(o.cw!=null&&o.cw!=='')return +o.cw; const g=num(Q.head.gw)||0,v=num(Q.head.vw)||0; return Math.max(g,v)||null; }
+// ── ค่าระวางแบบขั้นบันได ────────────────────────────────────────────────────
+// ใบเสนอราคาจริงคิดค่าระวางเป็นช่วง เช่น Free 1-2.99 cbm · USD 10 ที่ 3-4.99 · USD 12 ที่ 5-7.99
+// ถ้ากรอกราคาเดียวแล้วชิปเม้นอยู่คนละช่วง ยอดจะผิดทันที และถ้าปริมาณ "เกินช่วงที่เขาเสนอ"
+// แปลว่ายังไม่มีราคาสำหรับชิปเม้นนี้ — ต้องเตือน ไม่ใช่คิดด้วยขั้นสุดท้ายเงียบ ๆ
+function freightTkey(){ const T=TEMPLATES[Q.type]; const s=T&&T.sections[0]; return s?s.name+'|'+s.rows[0].desc:''; }
+function isFreightRow(r){ return !!r.tpl && r.tkey===freightTkey(); }
+function hasTiers(o){ return Array.isArray(o.tiers)&&o.tiers.some(t=>num(t.price)!=null||num(t.min)!=null||num(t.max)!=null); }
+// คืน {price} เมื่อเข้าช่วง · {out:true} เมื่อปริมาณอยู่นอกทุกช่วง · {noQty:true} เมื่อยังไม่รู้ปริมาณ
+function tierHit(o,qty){
+  const ts=(o.tiers||[]).filter(t=>num(t.min)!=null||num(t.max)!=null||num(t.price)!=null);
+  if(!ts.length)return null;
+  if(qty==null)return {noQty:true};
+  for(const t of ts){ const mn=num(t.min), mx=num(t.max);
+    if((mn==null||qty>=mn)&&(mx==null||qty<=mx))return {price:num(t.price),tier:t}; }
+  return {out:true};
+}
+function tierRange(o){
+  const ts=(o.tiers||[]).filter(t=>num(t.min)!=null||num(t.max)!=null);
+  if(!ts.length)return '';
+  const lo=Math.min(...ts.map(t=>num(t.min)??Infinity)), hi=Math.max(...ts.map(t=>num(t.max)??-Infinity));
+  return (isFinite(lo)?fmt(lo,2):'0')+'–'+(isFinite(hi)?fmt(hi,2):'∞');
+}
+
 function qtyFor(row,o){
   if(row.basis==='cbm')return isFcl(o.kind)?(num(o.containers)||1):(num(Q.head.cbm)||null);
   if(row.basis==='kgs')return chargeableW(o);
   return num(row.qty)??1;
 }
 function amount(row,oi){
-  const p=num(row.prices[oi]); if(p==null)return null;
-  const q=qtyFor(row,Q.options[oi]); if(q==null)return null;
+  const o=Q.options[oi];
+  const q=qtyFor(row,o);
+  let p;
+  if(isFreightRow(row)&&hasTiers(o)){
+    const h=tierHit(o,q);
+    if(!h||h.out||h.noQty)return null;      // นอกช่วงที่เสนอราคา = ยังไม่มีราคา ไม่ใช่ 0
+    p=h.price;
+  } else p=num(row.prices[oi]);
+  if(p==null)return null;
+  if(q==null)return null;
   const rate=row.cur==='USD'?(num(Q.head.fx)||0):1;
   if(row.cur==='USD'&&!rate)return null;
   return q*p*rate;
@@ -482,8 +542,20 @@ function renderTable(){
     html+=`<td class="col-cur"><select class="inline" data-p="rows.${ri}.cur"><option ${r.cur==='USD'?'selected':''}>USD</option><option ${r.cur==='THB'?'selected':''}>THB</option></select></td>`;
     Q.options.forEach((o,oi)=>{
       const a=amount(r,oi), q=qtyFor(r,o);
-      const tip=a!=null?`${fmt(q,r.basis==='cbm'&&!isFcl(o.kind)?3:2)} × ${fmt(num(r.prices[oi]))}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:'';
-      html+=`<td class="num"><input class="inline price" type="number" step="any" data-p="rows.${ri}.prices.${oi}" value="${r.prices[oi]??''}" style="width:78px"></td><td class="num amt" title="${tip}">${fmt(a)}</td>`;
+      const fr=isFreightRow(r), th=fr?tierHit(o,q):null;
+      const used=(th&&th.price!=null)?th.price:num(r.prices[oi]);
+      const tip=a!=null?`${fmt(q,r.basis==='cbm'&&!isFcl(o.kind)?3:2)} × ${fmt(used)}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:'';
+      let cell;
+      if(fr&&hasTiers(o)){
+        const lbl=th&&th.out?'นอกช่วง':(th&&th.noQty?'รอปริมาณ':fmt(th&&th.price,2));
+        cell=`<span class="tierval${th&&th.out?' out':''}" title="${th&&th.out?'ปริมาณของชิปเม้นอยู่นอกช่วงที่เสนอราคาไว้ ('+esc(tierRange(o))+')':'ราคาตามขั้นบันไดที่ตรงกับปริมาณ'}">${lbl}</span>`
+          +`<button class="tierlink on no-print" data-tier="${oi}">${(o.tiers||[]).length} ขั้น · แก้ไข</button>`;
+      }else{
+        const src=r.src&&r.src[oi];
+        cell=`<input class="inline price${src?' frompdf':''}" type="number" step="any" data-p="rows.${ri}.prices.${oi}" value="${r.prices[oi]??''}" style="width:78px"${src?` title="เติมจากไฟล์ ${esc(src)} — ยังไม่ได้ตรวจ"`:''}>`
+          +(fr?`<button class="tierlink no-print" data-tier="${oi}">+ ขั้นบันได</button>`:'');
+      }
+      html+=`<td class="num pc">${cell}</td><td class="num amt" title="${tip}">${fmt(a)}</td>`;
     });
     html+=(xCol?`<td class="no-print">${r.tpl?'':`<button class="x" data-delrow="${ri}" title="ลบรายการที่เพิ่มเอง">×</button>`}</td>`:'')+'</tr>';
   });
@@ -498,9 +570,16 @@ function renderTable(){
 
 function renderSummary(){
   const t=totals(), M=cmpMeta(t), best=M.best, nFilledOpt=t.filter(x=>x.filled).length;
-  $('cmpWarn').innerHTML = (best>=0&&!M.fair)
-    ? `<div class="warnbar"><span>⚠</span><span><b>ยอดต่ำสุดยังเทียบกันตรงๆ ไม่ได้</b> — "${esc(Q.options[best].label)||'ตัวเลือก '+(best+1)}" กรอกราคาไว้ ${t[best].filled} รายการ ขณะที่คอลัมน์ที่ครบที่สุดกรอก ${M.maxFilled} รายการ ยอดจึงต่ำกว่าโดยอัตโนมัติเพราะรายการที่ยังไม่กรอกไม่ถูกนับ ไม่ใช่เพราะไม่มีค่าใช้จ่าย — ขอราคาให้ครบทุกช่องก่อนตัดสินใจ · ถ้าช่องที่ว่างคือรายการที่ไม่มีค่าใช้จ่ายจริงในตัวเลือกนี้ ข้ามคำเตือนนี้ได้</span></div>`
-    : '';
+  const warns=[];
+  if(best>=0&&!M.fair)warns.push(`<b>ยอดต่ำสุดยังเทียบกันตรงๆ ไม่ได้</b> — "${esc(Q.options[best].label)||'ตัวเลือก '+(best+1)}" กรอกราคาไว้ ${t[best].filled} รายการ ขณะที่คอลัมน์ที่ครบที่สุดกรอก ${M.maxFilled} รายการ ยอดจึงต่ำกว่าโดยอัตโนมัติเพราะรายการที่ยังไม่กรอกไม่ถูกนับ ไม่ใช่เพราะไม่มีค่าใช้จ่าย — ขอราคาให้ครบทุกช่องก่อนตัดสินใจ · ถ้าช่องที่ว่างคือรายการที่ไม่มีค่าใช้จ่ายจริงในตัวเลือกนี้ ข้ามคำเตือนนี้ได้`);
+  const fRow=Q.rows.find(isFreightRow);
+  if(fRow)Q.options.forEach((o,i)=>{
+    if(!hasTiers(o))return;
+    const h=tierHit(o,qtyFor(fRow,o));
+    if(h&&h.out)warns.push(`<b>${esc(o.label)||'ตัวเลือก '+(i+1)} ยังไม่มีราคาสำหรับชิปเม้นนี้</b> — ขั้นบันไดค่าระวางที่เสนอมาครอบคลุม ${esc(tierRange(o))} ${fRow.basis==='kgs'?'กก.':'ลบ.ม.'} แต่ชิปเม้นนี้อยู่ที่ ${fmt(qtyFor(fRow,o),2)} ซึ่งอยู่นอกช่วง ต้องขอราคาเพิ่มจากผู้ให้บริการ ไม่ใช่ใช้ขั้นสุดท้ายแทน`);
+    if(h&&h.noQty)warns.push(`${esc(o.label)||'ตัวเลือก '+(i+1)} ตั้งขั้นบันไดไว้แล้ว แต่ยังไม่ได้กรอก ${fRow.basis==='kgs'?'น้ำหนัก':'Measurement (CBM)'} จึงยังเลือกขั้นไม่ได้`);
+  });
+  $('cmpWarn').innerHTML = warns.map(w=>`<div class="warnbar"><span>⚠</span><span>${w}</span></div>`).join('');
   $('summary').innerHTML=Q.options.map((o,i)=>{
     const short=t[i].filled>0&&t[i].filled<M.maxFilled?M.maxFilled-t[i].filled:0;
     const gap=i===best&&nFilledOpt>1?Math.min(...t.filter((x,j)=>j!==i&&x.filled).map(x=>x.total))-t[i].total:null;
@@ -569,6 +648,7 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b)return;
   if(b.dataset.type){ switchType(b.dataset.type); return; }
   if(b.dataset.delopt!=null){ const oi=+b.dataset.delopt; if(Q.options.length<=1)return; if(!confirm('ลบคอลัมน์ "'+(Q.options[oi].label||'ตัวเลือก '+(oi+1))+'" ?'))return; Q.options.splice(oi,1); Q.rows.forEach(r=>r.prices.splice(oi,1)); touch(); renderAll(); return; }
+  if(b.dataset.tier!=null){ openTierEditor(+b.dataset.tier); return; }
   if(b.dataset.delrow!=null){ const ri=+b.dataset.delrow; Q.rows.splice(ri,1); touch(); refreshCalc(); return; }
   if(b.dataset.addrow!=null){ const sec=b.dataset.addrow; let last=-1; Q.rows.forEach((r,i)=>{if(r.section===sec)last=i;});
     Q.rows.splice(last+1,0,{id:uid(),section:sec,desc:'',basis:'flat',unit:'SHIP',cur:'THB',qty:1,tpl:false,prices:Q.options.map(()=>null)}); touch(); refreshCalc();
@@ -591,6 +671,13 @@ function updateAmountsInPlace(){
   document.querySelectorAll('#tbl thead tr:first-child th').forEach((th,i)=>{ const o=Q.options[i-5]; if(!o)return;
     const lbl=th.querySelector('.opt-head .lbl'); if(lbl&&o.kind==='lcl')lbl.textContent='× CBM '+fmt(num(Q.head.cbm),2);
     const cw=th.querySelector('input[data-p$=".cw"]'); if(cw)cw.placeholder=fmt(chargeableW(o),1); });
+  // ค่าที่ขั้นบันไดเลือกได้ ขึ้นกับ CBM/น้ำหนักที่เพิ่งพิมพ์ จึงต้องอัปเดตในที่เดิมด้วย
+  const fRow=Q.rows.find(isFreightRow);
+  if(fRow){ const tr=rows[Q.rows.indexOf(fRow)];
+    if(tr)Q.options.forEach((o,oi)=>{ const el=tr.querySelectorAll('td.pc')[oi]?.querySelector('.tierval'); if(!el)return;
+      const h=tierHit(o,qtyFor(fRow,o));
+      el.textContent=h&&h.out?'นอกช่วง':(h&&h.noQty?'รอปริมาณ':fmt(h&&h.price,2));
+      el.classList.toggle('out',!!(h&&h.out)); }); }
   document.querySelectorAll('#tbl thead .tag-best,#tbl thead .tag-warn').forEach(el=>el.remove());
   if(best>=0){ const th=document.querySelectorAll('#tbl thead tr:first-child th')[5+best]; const r=th&&th.querySelector('.opt-head .r:last-child'); if(r)r.insertAdjacentHTML('beforeend',bestTag(M.fair)); }
   renderSummary();
@@ -683,6 +770,172 @@ function exportXlsx(){
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,safeSheet);
   XLSX.writeFile(wb,`Freight Comparison - ${safeFile}.xlsx`);
 }
+
+
+// ─── กล่องซ้อน (modal) ใช้ร่วมกันทั้งตัวแก้ขั้นบันไดและหน้าตรวจผลอ่าน PDF ─────
+function openModal(title,bodyHtml,footHtml){
+  $('mTitle').textContent=title; $('mBody').innerHTML=bodyHtml; $('mFoot').innerHTML=footHtml||'';
+  $('mask').hidden=false;
+}
+function closeModal(){ $('mask').hidden=true; $('mBody').innerHTML=''; $('mFoot').innerHTML=''; $('mBody').oninput=null; $('mBody').onclick=null; }
+$('mClose').onclick=closeModal;
+$('mask').addEventListener('mousedown',e=>{ if(e.target===$('mask'))closeModal(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('mask').hidden)closeModal(); });
+
+// ─── ตัวแก้ขั้นบันไดค่าระวางของคอลัมน์หนึ่ง ─────────────────────────────────
+let tierOi=-1;
+function tierUnitLabel(){ const r=Q.rows.find(isFreightRow); return r&&r.basis==='kgs'?'กก.':'ลบ.ม. (CBM)'; }
+function renderTierRows(){
+  const o=Q.options[tierOi]; const ts=o.tiers||[];
+  return `<div class="tiergrid">
+    <div class="h">ตั้งแต่ (${tierUnitLabel()})</div><div class="h">ถึง</div><div class="h">ราคาต่อหน่วย</div><div></div>
+    ${ts.map((t,i)=>`<input type="number" step="any" data-t="${i}.min" value="${t.min??''}" placeholder="ไม่จำกัด">
+      <input type="number" step="any" data-t="${i}.max" value="${t.max??''}" placeholder="ไม่จำกัด">
+      <input type="number" step="any" data-t="${i}.price" value="${t.price??''}" placeholder="0 = ฟรี">
+      <button class="x" data-trem="${i}" title="ลบขั้นนี้">×</button>`).join('')}
+  </div>
+  <button class="btn btn-outline btn-sm" id="tAdd" style="margin-top:10px">+ เพิ่มขั้น</button>
+  <p class="muted" style="margin:12px 0 0;line-height:1.5">ปล่อยว่าง = ไม่จำกัด · ราคา 0 = ฟรี ·
+  ถ้าปริมาณของชิปเม้นอยู่นอกทุกช่วง ระบบจะไม่คิดราคาให้และขึ้นคำเตือน แทนที่จะใช้ขั้นสุดท้ายแทนเงียบ ๆ<br>
+  ขั้นบันไดใช้กับแถวค่าระวางหลักเท่านั้น (${esc((Q.rows.find(isFreightRow)||{}).desc||'')}) แถวอื่นกรอกราคาตรง ๆ</p>`;
+}
+function openTierEditor(oi){
+  tierOi=oi; const o=Q.options[oi];
+  if(!Array.isArray(o.tiers))o.tiers=[];
+  if(!o.tiers.length)o.tiers.push({min:null,max:null,price:null});
+  openModal('ขั้นบันไดค่าระวาง — '+(o.label||'ตัวเลือก '+(oi+1)), renderTierRows(),
+    `<button class="btn btn-danger btn-sm" id="tClear">ลบขั้นบันไดทั้งหมด</button><div class="spacer"></div>
+     <button class="btn btn-outline" id="tCancel">ปิด</button><button class="btn btn-primary" id="tOk">ใช้ค่านี้</button>`);
+  wireTierEditor();
+}
+function wireTierEditor(){
+  const o=Q.options[tierOi];
+  $('mBody').oninput=e=>{ const k=e.target.dataset.t; if(!k)return;
+    const [i,f]=k.split('.'); o.tiers[+i][f]=e.target.value===''?null:num(e.target.value); };
+  $('mBody').onclick=e=>{ const b=e.target.closest('button'); if(!b)return;
+    if(b.id==='tAdd'){ o.tiers.push({min:null,max:null,price:null}); $('mBody').innerHTML=renderTierRows(); wireTierEditor(); }
+    else if(b.dataset.trem!=null){ o.tiers.splice(+b.dataset.trem,1); $('mBody').innerHTML=renderTierRows(); wireTierEditor(); } };
+  $('tClear').onclick=()=>{ o.tiers=[]; closeModal(); touch(); refreshCalc(); toast('ลบขั้นบันไดแล้ว — กลับไปกรอกราคาตรง ๆ'); };
+  $('tCancel').onclick=closeModal;
+  $('tOk').onclick=()=>{ o.tiers=(o.tiers||[]).filter(t=>num(t.min)!=null||num(t.max)!=null||num(t.price)!=null);
+    closeModal(); touch(); refreshCalc(); toast(o.tiers.length?'ตั้งขั้นบันได '+o.tiers.length+' ขั้น':'ไม่มีขั้นบันได'); };
+}
+
+// ─── อ่านใบเสนอราคา PDF ─────────────────────────────────────────────────────
+// เจตนา: เป็น "ผู้ช่วยกรอก" ไม่ใช่ "คำนวณอัตโนมัติ" — เติมเฉพาะช่องว่าง ทำเครื่องหมายทุกช่องที่เติม
+// และไม่ตัดสินว่าเจ้าไหนถูกที่สุดจากข้อมูลที่คนยังไม่ยืนยัน (ค่าระวางหลัก AI จับได้ราว 59% เท่านั้น)
+let pdfData=null, pdfName='';
+async function readPdf(file){
+  if(!file)return;
+  if(!/\.pdf$/i.test(file.name)){ toast('รองรับเฉพาะไฟล์ PDF',true); return; }
+  if(file.size>6*1024*1024){ toast('ไฟล์ใหญ่เกิน 6MB',true); return; }
+  const btn=$('btnReadPdf'); const old=btn.textContent; btn.disabled=true; btn.textContent='กำลังอ่าน…';
+  try{
+    const buf=await file.arrayBuffer();
+    let bin=''; const b=new Uint8Array(buf);
+    for(let i=0;i<b.length;i+=0x8000)bin+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));
+    const j=await api('/api/freight-extract',{method:'POST',body:JSON.stringify({filename:file.name,type:Q.type,dataBase64:btoa(bin)})});
+    pdfData=j.data; pdfName=file.name;
+    if(pdfData.unreadable){ toast('อ่านไฟล์นี้ไม่ออก (น่าจะเป็นไฟล์สแกน) — ต้องกรอกเอง',true); return; }
+    openPreview();
+  }catch(e){ toast('อ่านไฟล์ไม่สำเร็จ: '+e.message,true); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+// คัดบรรทัดที่ "ใช้ได้กับคอลัมน์นี้": loadType ตรงกับชนิดคอลัมน์ หรือเอกสารไม่ระบุ (null) · ถ้าหลายบรรทัดชี้แถวเดียวกัน
+// เอาตัวที่ระบุชนิดตรงก่อน ตัวที่ไม่ระบุรองลงมา ที่เหลือถือว่าซ้ำและไม่เติม
+function pickForColumn(lines,oi){
+  const kind=Q.options[oi].kind;
+  const byDesc=new Map(); Q.rows.forEach((r,i)=>{ if(!byDesc.has(r.desc))byDesc.set(r.desc,i); });
+  const usable=lines.filter(l=>l.mappedTo&&byDesc.has(l.mappedTo)&&l.amount!=null);
+  const fit=l=>l.loadType==null?1:(l.loadType===kind?2:0);
+  const best=new Map(), dup=[], wrongKind=[];
+  usable.forEach(l=>{ const f=fit(l); if(f===0){wrongKind.push(l);return;}
+    const cur=best.get(l.mappedTo); if(!cur||fit(cur)<f){ if(cur)dup.push(cur); best.set(l.mappedTo,l); } else dup.push(l); });
+  const mapped=[...best.values()];
+  const other=lines.filter(l=>!mapped.includes(l)&&!dup.includes(l)&&!wrongKind.includes(l));
+  return {mapped,dup,wrongKind,other,byDesc};
+}
+let pvCol=0;
+function openPreview(){
+  const d=pdfData, lines=(d.lines||[]);
+  if(pvCol>=Q.options.length)pvCol=0;
+  const {mapped,dup,wrongKind,other,byDesc}=pickForColumn(lines,pvCol);
+  const opts=Q.options.map((o,i)=>`<option value="${i}" ${i===pvCol?'selected':''}>${esc(o.label)||'ตัวเลือก '+(i+1)} · ${KIND_LABEL[o.kind]||''}</option>`).join('');
+  const head=[['ผู้ให้บริการ',d.forwarder],['วันที่',d.quoteDate],['ใช้ได้ถึง',d.validUntil],['เทอม',d.incoterm],
+    ['ท่าต้นทาง',d.pol],['ท่าปลายทาง',d.pod],['Transit',d.transitDays?d.transitDays+' วัน':null]]
+    .filter(x=>x[1]).map(x=>`<span style="margin-right:14px"><span class="muted">${x[0]}</span> ${esc(x[1])}</span>`).join('');
+  const rowHtml=mapped.map((l,i)=>{
+    const ri=byDesc.get(l.mappedTo), r=Q.rows[ri];
+    // แถว basis 'cbm' ในคอลัมน์ FCL คิดต่อตู้อยู่แล้ว (qtyFor ใช้จำนวนตู้) เอกสารเขียน /20'GP (flat) จึงไม่ใช่ความขัดแย้งจริง
+    const fclFlatOk=isFcl(Q.options[pvCol].kind)&&r.basis==='cbm'&&l.basis==='flat';
+    const clash=l.basis&&r.basis&&l.basis!==r.basis&&!fclFlatOk;
+    return `<tr class="pv-row"><td><input type="checkbox" data-pv="${i}" checked style="width:auto;height:auto"></td>
+      <td>${esc(l.sourceLabel)}${l.loadType?` <span class="pv-mute">· ${esc(KIND_LABEL[l.loadType]||l.loadType)}</span>`:''}</td>
+      <td class="num">${esc(l.currency||'')} ${fmt(l.amount)}</td>
+      <td>${esc(l.unit||'')}</td>
+      <td>${esc(l.mappedTo)}${clash?` <span class="pv-warn" title="เอกสารคิดเป็น ${esc(l.basis)} แต่แถวนี้ตั้งไว้เป็น ${esc(r.basis)} — ตรวจก่อนใช้">⚠ หน่วยไม่ตรง</span>`:''}
+        ${l.confidence!=='high'?`<span class="pv-mute"> · มั่นใจ${l.confidence==='medium'?'ปานกลาง':'ต่ำ'}</span>`:''}</td></tr>`;
+  }).join('');
+  const kindNow=KIND_LABEL[Q.options[pvCol].kind]||'';
+  const skippedHtml=(wrongKind.length||dup.length)?`<p style="margin:14px 0 4px;font-size:12px;font-weight:500">ไม่เติมลงคอลัมน์ ${esc(kindNow)} นี้ ${wrongKind.length+dup.length} รายการ</p>
+       <ul class="muted" style="margin:0;padding-left:18px;line-height:1.7">${wrongKind.map(l=>`<li>${esc(l.sourceLabel)} ${esc(l.currency||'')} ${fmt(l.amount)} — เป็นราคาของ ${esc(KIND_LABEL[l.loadType]||l.loadType)} ไม่ใช่ ${esc(kindNow)}</li>`).join('')}${dup.map(l=>`<li>${esc(l.sourceLabel)} ${esc(l.currency||'')} ${fmt(l.amount)} — ซ้ำแถว "${esc(l.mappedTo)}" ใช้ค่าที่ระบุชนิดตู้ตรงกว่าแทน</li>`).join('')}</ul>`:'';
+  const allTiers=(d.freightTiers||[]).filter(t=>t.price!=null||t.min!=null||t.max!=null);
+  const kindSel=Q.options[pvCol].kind;
+  const tiers=isFcl(kindSel)?[]:allTiers.filter(t=>t.loadType==null||t.loadType===kindSel);
+  const flatFreight=isFcl(kindSel)?allTiers.find(t=>t.loadType===kindSel&&num(t.price)!=null):null;
+  openModal('ตรวจผลอ่านไฟล์ — '+pdfName,
+    `<div style="font-size:12.5px;margin-bottom:10px">${head||'<span class="muted">ไม่พบข้อมูลหัวเอกสาร</span>'}</div>
+     <div class="field" style="max-width:340px;margin-bottom:12px"><label>เติมลงคอลัมน์</label><div class="row"><select id="pvCol">${opts}</select></div></div>
+     ${tiers.length?`<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-bottom:10px"><input type="checkbox" id="pvTiers" checked style="width:auto;height:auto"> ตั้งขั้นบันไดค่าระวาง ${tiers.length} ขั้นให้คอลัมน์นี้ (${tiers.map(t=>`${t.min??''}-${t.max??''}: ${t.price??'ไม่มีตัวเลข'}`).join(' · ')})</label>`:''}
+     ${flatFreight?`<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-bottom:10px"><input type="checkbox" id="pvFlat" checked style="width:auto;height:auto"> ใส่ค่าระวางต่อตู้ ${esc(flatFreight.currency||'')} ${fmt(flatFreight.price)} ลงแถวค่าระวางหลัก (ถ้ายังว่าง)</label>`:''}
+     ${mapped.length?`<table style="min-width:0"><thead><tr><th style="width:28px"></th><th>รายการในเอกสาร</th><th class="num">ราคา</th><th>หน่วย</th><th>จะลงแถว</th></tr></thead><tbody>${rowHtml}</tbody></table>`
+       :'<p class="muted">ไม่มีรายการที่แมปเข้าแม่แบบได้เลย</p>'}
+     ${skippedHtml}
+     ${other.length?`<p style="margin:14px 0 4px;font-size:12px;font-weight:500">ไม่ได้เติมให้ ${other.length} รายการ — ต้องดูเอง</p>
+       <ul class="muted" style="margin:0;padding-left:18px;line-height:1.7">${other.map(l=>`<li>${esc(l.sourceLabel)} ${l.atActual?'<span class="pv-warn">— คิดตามจริง ไม่มีตัวเลข</span>':(l.amount==null?'— ไม่มีตัวเลข':'— ไม่มีแถวที่ตรงในแม่แบบ')}</li>`).join('')}</ul>`:''}
+     ${(d.conditions||[]).length?`<p style="margin:14px 0 4px;font-size:12px;font-weight:500">เงื่อนไขในเอกสาร (ไม่ได้รวมในราคา)</p>
+       <ul class="muted" style="margin:0;padding-left:18px;line-height:1.7">${d.conditions.map(c=>`<li>${esc(c)}</li>`).join('')}</ul>`:''}
+     <div class="warnbar" style="margin-top:14px"><span>⚠</span><span>ระบบเติม<b>เฉพาะช่องที่ยังว่าง</b> และทำเครื่องหมายไว้ทุกช่อง — <b>ค่าระวางหลักเป็นส่วนที่อ่านพลาดบ่อยที่สุด</b> ให้ตรวจกับเอกสารก่อนใช้ตัดสินใจเสมอ</span></div>`,
+    `<span class="muted" id="pvCount">${mapped.length} รายการที่จะเติม</span><div class="spacer"></div>
+     <button class="btn btn-outline" id="pvCancel">ยกเลิก</button>
+     <button class="btn btn-primary" id="pvOk"${mapped.length||tiers.length||flatFreight?'':' disabled'}>เติมลงตาราง</button>`);
+  $('pvCancel').onclick=closeModal;
+  $('pvOk').onclick=()=>applyPdf(mapped,tiers,flatFreight);
+  $('pvCol').onchange=e=>{ pvCol=+e.target.value; openPreview(); };   // เปลี่ยนคอลัมน์ → คัดบรรทัดใหม่ตามชนิดตู้
+}
+function applyPdf(mapped,tiers,flatFreight){
+  const oi=pvCol;
+  const picks=[...$('mBody').querySelectorAll('[data-pv]')].filter(c=>c.checked).map(c=>+c.dataset.pv);
+  const byDesc=new Map(); Q.rows.forEach((r,i)=>{ if(!byDesc.has(r.desc))byDesc.set(r.desc,i); });
+  let filled=0, skipped=0;
+  picks.forEach(i=>{
+    const l=mapped[i], ri=byDesc.get(l.mappedTo); if(ri==null)return;
+    const r=Q.rows[ri];
+    if(num(r.prices[oi])!=null){ skipped++; return; }        // ห้ามทับของที่คนกรอกไว้
+    r.prices[oi]=l.amount;
+    if(!r.src||typeof r.src!=='object')r.src={};
+    r.src[oi]=pdfName; filled++;
+  });
+  if(tiers.length&&$('pvTiers')&&$('pvTiers').checked){
+    Q.options[oi].tiers=tiers.map(t=>({min:num(t.min),max:num(t.max),price:num(t.price)}));
+  }
+  if(flatFreight&&$('pvFlat')&&$('pvFlat').checked){
+    const fr=Q.rows.find(isFreightRow);
+    if(fr&&num(fr.prices[oi])==null){ fr.prices[oi]=num(flatFreight.price); if(!fr.src||typeof fr.src!=='object')fr.src={}; fr.src[oi]=pdfName; filled++; }
+    else if(fr) skipped++;
+  }
+  if(!String(Q.options[oi].label||'').trim()&&pdfData.forwarder)
+    Q.options[oi].label=String(pdfData.forwarder).replace(/\s*(CO\.?,?\s*LTD\.?|LIMITED|COMPANY)\.?.*$/i,'').trim().slice(0,40);
+  closeModal(); touch(); renderAll();
+  toast(`เติม ${filled} รายการลง "${Q.options[oi].label||'ตัวเลือก '+(oi+1)}"`+(skipped?` · ข้าม ${skipped} ช่องที่มีค่าอยู่แล้ว`:'')+' — ตรวจก่อนใช้');
+}
+$('btnReadPdf').onclick=()=>$('pdfInput').click();
+$('pdfInput').onchange=e=>{ readPdf(e.target.files[0]); e.target.value=''; };
+(function(){ const card=$('chargeCard'), dz=$('dropzone'); let depth=0;
+  ['dragenter','dragover'].forEach(ev=>card.addEventListener(ev,e=>{ e.preventDefault(); if(ev==='dragenter')depth++; dz.hidden=false; }));
+  card.addEventListener('dragleave',()=>{ if(--depth<=0){depth=0;dz.hidden=true;} });
+  card.addEventListener('drop',e=>{ e.preventDefault(); depth=0; dz.hidden=true; readPdf(e.dataTransfer.files&&e.dataTransfer.files[0]); });
+})();
 
 // ─── misc ────────────────────────────────────────────────────────────────────
 let toastT; function toast(msg,err){ const t=$('toast'); t.textContent=msg; t.className='toast show'+(err?' err':''); clearTimeout(toastT); toastT=setTimeout(()=>t.className='toast',err?4500:2200); }

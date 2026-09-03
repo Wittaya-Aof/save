@@ -85,6 +85,138 @@ function saveTracking(data) {
 const FREIGHT_MAX_QUOTES = 2000;
 const FREIGHT_MAX_QUOTE_BYTES = 200 * 1024;
 const FREIGHT_ID_RE = /^fq_[a-z0-9]{6,40}$/;
+
+// ─── อ่านใบเสนอราคา PDF ด้วย OpenAI ─────────────────────────────────────────
+// ท่อเดียวกับ scan-shipment-docs.mjs (Responses API + input_file + strict json_schema)
+// วัดจริงกับใบเสนอราคา 18 ใบ 15 เจ้า: อ่านตัวเลข/หน่วยถูกเกือบทั้งหมด · แมปเข้าแม่แบบ 86% ·
+// "At actual" ไม่เคยถูกแปลงเป็น 0 · แต่ **ค่าระวางหลักจับได้แค่ ~59%** เพราะแต่ละเจ้าจัดตารางคนละแบบ
+// → ฝั่ง client จึงต้องให้คนยืนยันเสมอ และห้ามตัดสินว่าเจ้าไหนถูกสุดจากข้อมูลที่ยังไม่ยืนยัน
+const FREIGHT_PDF_MAX_BYTES = 6 * 1024 * 1024;
+const FREIGHT_EXTRACT_RATE = 40;                      // ครั้ง/ชั่วโมง/IP
+const FREIGHT_TEMPLATE_ROWS = {
+  'import-sea': ['O/F  (Ocean Freight)', 'EXW Charge / Origin Handling', 'D/O  (Delivery Order)',
+    'THC  (Terminal Handling Charge)', 'CFS  (Container Freight Station)', 'Status', 'Facilities',
+    'Cleaning Fee', 'DG Surcharge', 'DG Handling', 'PCS', 'Equipment Transfer Fee', 'IMO Admin', 'EMC',
+    'LSS  (Low Sulphur Fuel Surcharge)', 'CIS', 'PSS  (Peak Season Surcharge)', 'Port Charge',
+    'EIR  (Equipment Interchange Receipt)', 'Seal Fee', 'Handling', 'Container Maintenance',
+    'Inspection Fee', 'Paperless Registration', 'Customs Clearance', 'Transportation  (4 wheels)',
+    'Transportation  (6 wheels)', "Transportation  (FCL 20' / 40')", 'Service Charge', 'Clearance  (FDA)',
+    'Form E / Form AK  (Certificate of Origin)', 'Courier Fee  (ส่งเอกสาร/ฟอร์ม)', 'Documentation Fee',
+    'Surrender Fee / Telex Release', 'Insurance', 'Other Charges'],
+  'import-air': ['A/F  (Air Freight)', 'Local Charge @ Origin / EXW Charge', 'D/O  (Delivery Order)',
+    'AWB Document', 'Customs Clearance', 'Transportation  (4 wheels)', 'Transportation  (6 wheels)',
+    'Service Charge', 'Inspection Charge', 'DG Surcharge', 'DG Handling', 'Clearance  (FDA)',
+    'THC  (Terminal Handling Charge)', 'Handling', 'Documentation Fee', 'Paperless Registration / EDI',
+    'Form E / Form AK  (Certificate of Origin)', 'Courier Fee  (ส่งเอกสาร/ฟอร์ม)', 'Insurance', 'Other Charges'],
+  'export-sea': ['Sea Freight', 'THC', 'CFS', 'Seal Fee', 'B/L Fee', 'Surrender Fee', 'Handling Charge',
+    'DG Surcharge @ BKK', 'DG Surcharge @ SIN', 'DG Handling', 'DG Sticker', 'Customs Clearance',
+    'Form D / CO', "Transportation (20'/40')", 'Transportation 4-Wheel', 'Transportation 6-Wheel',
+    'Documentation', 'X-Ray Charge', 'Inspection Charge', 'Lashing Charge', 'Cleaning Fee',
+    'VGM  (Verified Gross Mass)', 'EIR  (Equipment Interchange Receipt)', 'Port Charge',
+    'Courier Fee  (ส่งเอกสาร/ฟอร์ม)', 'Insurance', 'Other Charges',
+    'Customs Clearance (Dest.)', 'D/O', 'THC (Dest.)', 'CFS (Dest.)', 'Seal Fee (Dest.)',
+    'Surrender Fee (Dest.)', 'CIC', 'LSS', 'Handling Charge (Dest.)', 'DG Fee (Dest.)'],
+};
+const FREIGHT_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['forwarder', 'quoteDate', 'validUntil', 'incoterm', 'mode', 'pol', 'pod', 'transitDays',
+    'currencyNote', 'freightTiers', 'lines', 'conditions', 'unreadable'],
+  properties: {
+    forwarder: { type: ['string', 'null'] },
+    quoteDate: { type: ['string', 'null'], description: 'YYYY-MM-DD' },
+    validUntil: { type: ['string', 'null'], description: 'YYYY-MM-DD' },
+    incoterm: { type: ['string', 'null'] },
+    mode: { type: ['string', 'null'], enum: ['sea', 'air', null] },
+    pol: { type: ['string', 'null'] }, pod: { type: ['string', 'null'] },
+    transitDays: { type: ['number', 'null'] },
+    currencyNote: { type: ['string', 'null'] },
+    unreadable: { type: 'boolean' },
+    freightTiers: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['min', 'max', 'currency', 'price', 'unit', 'loadType'],
+        properties: {
+          min: { type: ['number', 'null'] }, max: { type: ['number', 'null'] },
+          currency: { type: ['string', 'null'] }, price: { type: ['number', 'null'] },
+          unit: { type: ['string', 'null'] },
+          loadType: { type: ['string', 'null'], enum: ['lcl', 'fcl20', 'fcl40hq', 'air', null] },
+        },
+      },
+    },
+    lines: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['sourceLabel', 'currency', 'amount', 'atActual', 'unit', 'basis', 'loadType', 'mappedTo', 'confidence'],
+        properties: {
+          sourceLabel: { type: 'string' },
+          currency: { type: ['string', 'null'] },
+          amount: { type: ['number', 'null'] },
+          atActual: { type: 'boolean' },
+          unit: { type: ['string', 'null'] },
+          basis: { type: ['string', 'null'], enum: ['cbm', 'kgs', 'flat', null] },
+          loadType: { type: ['string', 'null'], enum: ['lcl', 'fcl20', 'fcl40hq', 'air', null] },
+          mappedTo: { type: ['string', 'null'] },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+        },
+      },
+    },
+    conditions: { type: 'array', items: { type: 'string' } },
+  },
+};
+let _openaiClient = null;
+async function extractFreightQuote(dataBase64, filename, qType) {
+  if (!_openaiClient) {
+    const OpenAI = require('openai');
+    _openaiClient = new (OpenAI.default || OpenAI)({ apiKey: process.env.OPENAI_API_KEY, timeout: 120000, maxRetries: 1 });
+  }
+  const rows = FREIGHT_TEMPLATE_ROWS[qType] || FREIGHT_TEMPLATE_ROWS['import-sea'];
+  const system = `คุณคือผู้ช่วยอ่านใบเสนอราคาค่าขนส่งระหว่างประเทศ (freight quotation)
+หน้าที่: สกัดรายการค่าใช้จ่ายทุกบรรทัดตามที่เขียนในเอกสาร แล้วแมปเข้าแถวของแม่แบบที่ให้มา
+
+กฎเด็ดขาด
+- ห้ามเดาตัวเลขที่ไม่ได้เขียนไว้ ไม่มีตัวเลข = amount null
+- "At actual" / "As per receipt" / "ตามจริง" → amount null และ atActual true **ห้ามใส่ 0**
+- หนึ่งบรรทัดที่มีหลายราคา (4 ล้อ/6 ล้อ, 20'/40') ให้แยกเป็นหลาย line พร้อมระบุ loadType ถ้าระบุได้
+- ค่าระวางที่เป็นขั้นบันไดตามช่วงปริมาตร/น้ำหนัก ให้ใส่ freightTiers เท่านั้น **ห้ามใส่ซ้ำใน lines**
+- basis: /RT /cbm /CBM = cbm · /kg /kgs = kgs · /entry /set /shpt /trip /wheel /cntr /container = flat
+- mappedTo ต้องคัดลอกข้อความจากรายการแม่แบบให้ตรงตัวอักษร ถ้าไม่มีแถวที่ตรงจริง ๆ ให้ null (ห้ามสร้างชื่อใหม่)
+- เงื่อนไขที่ทำให้ราคาเปลี่ยน (EBS/CIC, VAT, peak surcharge, lift on-off, ข้อจำกัด, วันหมดอายุ) → conditions ห้ามบวกเข้าราคา
+- ถ้าอ่านไม่ออกหรือไม่ใช่ใบเสนอราคา → unreadable true
+
+รายการแม่แบบที่แมปได้:
+${rows.map(r => '- ' + r).join('\n')}`;
+  const t0 = Date.now();
+  const resp = await _openaiClient.responses.create({
+    model: process.env.VERIFY_MODEL || 'gpt-5.4-mini',
+    input: [
+      { role: 'system', content: [{ type: 'input_text', text: system }] },
+      { role: 'user', content: [
+        { type: 'input_text', text: 'สกัดข้อมูลจากใบเสนอราคานี้' },
+        { type: 'input_file', filename, file_data: `data:application/pdf;base64,${dataBase64}` },
+      ] },
+    ],
+    text: { format: { type: 'json_schema', name: 'freight_quote', strict: true, schema: FREIGHT_SCHEMA } },
+    max_output_tokens: 8000,
+  });
+  if (resp.status === 'incomplete') throw new Error('AI ตอบไม่จบ: ' + (resp.incomplete_details?.reason || 'ไม่ทราบสาเหตุ'));
+  const parsed = JSON.parse(resp.output_text);
+  // กันไม่ให้ชื่อแถวที่โมเดลกุขึ้นมาหลุดไปถึง client — แมปได้เฉพาะแถวที่มีอยู่จริงในแม่แบบ
+  const set = new Set(rows);
+  (parsed.lines || []).forEach(l => { if (l.mappedTo && !set.has(l.mappedTo)) l.mappedTo = null; });
+  const u = resp.usage || {};
+  const usage = { input: u.input_tokens || 0, cachedInput: u.input_tokens_details?.cached_tokens || 0,
+    output: u.output_tokens || 0, ms: Date.now() - t0 };
+  try {
+    fs.appendFileSync(path.join(ROOT, 'ai_usage.jsonl'), JSON.stringify({
+      ts: new Date().toISOString(), model: process.env.VERIFY_MODEL || 'gpt-5.4-mini', calls: 1,
+      input: usage.input, cachedInput: usage.cachedInput, output: usage.output, reasoning: 0,
+      source: 'freight-extract', file: filename,
+    }) + '\n', 'utf8');
+  } catch (e) { console.error('[freight-extract usage]', e.message); }
+  return { parsed, usage };
+}
 function loadFreight() {
   try {
     if (fs.existsSync(FREIGHT_FILE)) {
@@ -1938,6 +2070,33 @@ const server = http.createServer(async (req, res) => {
     if (reqUrl === '/api/freight-quotes' && method === 'GET') {
       const rows = loadFreight();
       jsonOk(res, { ok: true, count: rows.length, rows });
+      return;
+    }
+    // POST /api/freight-extract  body = { filename, dataBase64, type }
+    // อ่านใบเสนอราคา PDF ด้วย OpenAI แล้วคืนโครงสร้างค่าใช้จ่าย — ไม่เขียนอะไรลงดิสก์นอกจาก log โทเคน
+    // client เป็นคนตัดสินใจว่าจะเอาค่าไหนลงช่องไหน (server ไม่แตะใบเปรียบเทียบ)
+    if (reqUrl === '/api/freight-extract' && method === 'POST') {
+      if (!rateLimit('freight-extract:' + (req.socket.remoteAddress || '?'), FREIGHT_EXTRACT_RATE, 60 * 60 * 1000)) {
+        jsonErr(res, 429, `อ่านไฟล์ได้สูงสุด ${FREIGHT_EXTRACT_RATE} ครั้ง/ชั่วโมง — ลองใหม่ภายหลัง`); return;
+      }
+      if (!process.env.OPENAI_API_KEY) { jsonErr(res, 503, 'ยังไม่ได้ตั้ง OPENAI_API_KEY ใน .env จึงอ่านไฟล์อัตโนมัติไม่ได้'); return; }
+      const body = await readJsonBody(req, res, FREIGHT_PDF_MAX_BYTES * 2);
+      if (body === null) return;
+      const b64 = String(body?.dataBase64 || '');
+      const filename = String(body?.filename || 'quotation.pdf').slice(0, 120);
+      const qType = ['import-sea', 'import-air', 'export-sea'].includes(body?.type) ? body.type : 'import-sea';
+      if (!b64) { jsonErr(res, 400, 'ไม่มีข้อมูลไฟล์'); return; }
+      const approxBytes = Math.floor(b64.length * 3 / 4);
+      if (approxBytes > FREIGHT_PDF_MAX_BYTES) {
+        jsonErr(res, 400, `ไฟล์ใหญ่เกิน ${Math.round(FREIGHT_PDF_MAX_BYTES / 1024 / 1024)}MB`); return;
+      }
+      if (!Buffer.from(b64.slice(0, 16), 'base64').toString('latin1').startsWith('%PDF-')) {
+        jsonErr(res, 400, 'ไฟล์นี้ไม่ใช่ PDF'); return;
+      }
+      try {
+        const data = await extractFreightQuote(b64, filename, qType);
+        jsonOk(res, { ok: true, filename, data: data.parsed, usage: data.usage });
+      } catch (e) { jsonErrEx(res, 502, 'อ่านใบเสนอราคาไม่สำเร็จ', e); }
       return;
     }
     if (reqUrl === '/api/freight-quotes/upsert' && method === 'POST') {
