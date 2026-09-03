@@ -28,6 +28,32 @@ const check = (name, pass, detail) => { results.push({ name, pass: !!pass, detai
   // ค่าเริ่มต้นของใบใหม่ ต้องอ่านก่อนที่เทสข้ออื่นจะพิมพ์อะไรลงไป
   const initialLabels = await page.$$eval('#tbl thead [data-p$=".label"]', els => els.map(e => e.value));
 
+  // ── 0. ตัวเลือกแม่แบบต้องเด่นและดูออกว่ากดได้ ─────────────────────────────
+  await page.waitForSelector('#typeSeg button.on');
+  await page.waitForTimeout(400);                       // รอ transition จบก่อนวัดสี ไม่งั้นอ่านได้ค่ากลางทาง
+  const seg = await page.evaluate(() => {
+    const lum = c => { const [r, g, b] = c.match(/\d+/g).map(Number).map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }); return .2126 * r + .7152 * g + .0722 * b; };
+    const cr = (a, b) => { const l1 = lum(a), l2 = lum(b); return (Math.max(l1, l2) + .05) / (Math.min(l1, l2) + .05); };
+    const bs = [...document.querySelectorAll('#typeSeg button')];
+    const on = bs.find(b => b.classList.contains('on'));
+    const s = getComputedStyle(on);
+    return {
+      count: bs.length,
+      allHaveIcon: bs.every(b => !!b.querySelector('svg')),
+      height: Math.round(on.getBoundingClientRect().height),
+      activeContrast: +cr(s.color, s.backgroundColor).toFixed(2),
+      activeOpaque: !/rgba\(0, 0, 0, 0\)/.test(s.backgroundColor),
+      aria: bs.map(b => b.getAttribute('aria-selected')).join(','),
+      hasLabel: !!document.querySelector('.seglbl'),
+    };
+  });
+  check('ตัวเลือกแม่แบบ 3 ปุ่ม มีไอคอนโหมดขนส่งครบ และมีป้ายกำกับ',
+    seg.count === 3 && seg.allHaveIcon && seg.hasLabel, JSON.stringify(seg));
+  check('ปุ่มใหญ่พอกด (สูง ≥ 34px) และตัวที่เลือกเป็นพื้นทึบตัดกันชัด (≥ 7:1)',
+    seg.height >= 34 && seg.activeOpaque && seg.activeContrast >= 7,
+    `สูง ${seg.height}px · contrast ${seg.activeContrast}`);
+  check('aria-selected ตรงกับแม่แบบที่เปิดอยู่', seg.aria === 'true,false,false', seg.aria);
+
   // ── 1. การ์ดที่ถอดออก ─────────────────────────────────────────────────────
   const cards = await page.$$eval('.card .card-header', els => els.map(e => e.textContent.trim().split('—')[0].trim()));
   check('การ์ดเหลือ 3 ใบ (ไม่มี Make decision / Prepared by)',
@@ -247,6 +273,10 @@ const check = (name, pass, detail) => { results.push({ name, pass: !!pass, detai
   }));
   check('สลับเป็นแม่แบบทางอากาศ: ทุกคอลัมน์เป็น AIR และมีช่อง Volume Weight',
     airOk.kinds.every(k => k === 'air') && airOk.hasVW, JSON.stringify(airOk));
+  const segAfter = await page.$$eval('#typeSeg button', bs =>
+    bs.map(b => (b.classList.contains('on') ? 'on:' : '') + b.getAttribute('aria-selected')).join(','));
+  check('กดสลับแม่แบบแล้วปุ่มที่เลือกย้ายตาม (ทั้งสีและ aria)',
+    segAfter === 'false,on:true,false', segAfter);
 
   await page.screenshot({ path: SP + 'pw-freight-ui.png', fullPage: false });
   check('ไม่มี pageerror / console error ตลอดการทดสอบ', errors.length === 0, errors.slice(0, 3).join(' | '));

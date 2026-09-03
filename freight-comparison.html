@@ -66,10 +66,20 @@ body{margin:0;font-family:var(--font-body);font-weight:400;-webkit-font-smoothin
 .header p{margin:2px 0 0;font-size:12.5px;color:var(--color-text-tertiary)}
 .embedded .header{display:none}
 .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 20px;background:var(--color-surface);border-bottom:1px solid var(--color-border);position:sticky;top:0;z-index:5}
-.seg{display:inline-flex;border:1px solid var(--color-border);border-radius:var(--radius);overflow:hidden}
-.seg button{border:0;background:transparent;padding:0 12px;height:32px;font:inherit;font-size:12.5px;font-weight:500;color:var(--color-text-secondary);cursor:pointer;border-right:1px solid var(--color-border)}
+/* ตัวเลือกแม่แบบ = สวิตช์หลักของทั้งโมดูล เดิมดูเหมือนตัวกรองเล็ก ๆ จนไม่มีใครสังเกตว่ากดได้
+   จึงทำให้เด่นขึ้นด้วย: มีป้ายกำกับ · ปุ่มใหญ่ขึ้น · มีไอคอนโหมดขนส่ง · ตัวที่เลือกเป็นพื้นทึบตัดกันสูง
+   ⚠ ไม่ใช้เขียว emerald ตรงนี้ เพราะธีมสงวนไว้ให้ปุ่ม CTA (บันทึก) เป็นสีเดียวในหน้า
+   ถ้าใส่เขียวสองที่ในแถบเดียวกันจะกลายเป็นแย่งความสนใจกันเองแทนที่จะเน้น */
+.segwrap{display:inline-flex;align-items:center;gap:8px}
+/* ใช้ ink-mute (4.95) ไม่ใช่ ink-mute-2 (2.81) — ป้ายนี้ต้องอ่านออก ไม่ใช่ caption จาง ๆ */
+.seglbl{font-size:11px;font-weight:500;letter-spacing:.4px;text-transform:uppercase;color:var(--color-text-tertiary);white-space:nowrap}
+.seg{display:inline-flex;border:1px solid var(--color-border-strong);border-radius:var(--radius);overflow:hidden;background:var(--color-surface-muted)}
+.seg button{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;padding:0 14px;height:36px;font:inherit;font-size:13px;font-weight:500;color:var(--color-text-tertiary);cursor:pointer;border-right:1px solid var(--color-border);white-space:nowrap;transition:background .12s,color .12s}
 .seg button:last-child{border-right:0}
-.seg button.on{background:var(--color-surface-muted2);color:var(--color-text)}
+.seg button svg{width:15px;height:15px;flex:none}
+.seg button:hover:not(.on){background:var(--color-surface);color:var(--color-text)}
+.seg button.on{background:var(--color-text);color:var(--color-page-bg)}
+.seg button:focus-visible{outline:2px solid var(--color-text);outline-offset:-2px}
 .spacer{flex:1}
 /* กว้างเต็มหน้าต่าง (มีเพดานกันจอ ultrawide) — เดิมคาไว้ที่ 1240px ทำให้ตารางเลื่อนแนวนอน
    ทั้งที่หน้าจอยังเหลือที่ว่างอีกหลายร้อย px ทางขวา */
@@ -163,10 +173,19 @@ th.opt-th{vertical-align:top}
 </div>
 
 <div class="toolbar">
-  <div class="seg" id="typeSeg">
-    <button data-type="import-sea">Import · ทางเรือ</button>
-    <button data-type="import-air">Import · ทางอากาศ</button>
-    <button data-type="export-sea">Export · ทางเรือ</button>
+  <div class="segwrap">
+    <span class="seglbl">แม่แบบ</span>
+    <div class="seg" id="typeSeg" role="tablist" aria-label="เลือกแม่แบบใบเปรียบเทียบ">
+      <button data-type="import-sea" role="tab" title="นำเข้าทางเรือ — เทียบ LCL / FCL 20'GP / FCL 40'HQ">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.8 13.8h18.4l-2.4 4.6a1.2 1.2 0 0 1-1.1.6H6.3a1.2 1.2 0 0 1-1.1-.6L2.8 13.8Z"/><path d="M8.6 13.4V8.2h4.6l2 3.1v2.1H8.6Z"/></svg>
+        Import · ทางเรือ</button>
+      <button data-type="import-air" role="tab" title="นำเข้าทางอากาศ — คิดตามน้ำหนักคิดเงิน (CW)">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.5 11.1 21 3.2c.5-.2 1 .3.8.8l-7.9 18.5c-.2.5-.9.5-1.1 0l-2.5-6.6 5.4-6.6-6.6 5.4-6.6-2.5c-.5-.2-.5-.9 0-1.1Z"/></svg>
+        Import · ทางอากาศ</button>
+      <button data-type="export-sea" role="tab" title="ส่งออกทางเรือ — ค่าใช้จ่ายต้นทาง/ปลายทาง">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.8 13.8h18.4l-2.4 4.6a1.2 1.2 0 0 1-1.1.6H6.3a1.2 1.2 0 0 1-1.1-.6L2.8 13.8Z"/><path d="M8.6 13.4V8.2h4.6l2 3.1v2.1H8.6Z"/></svg>
+        Export · ทางเรือ</button>
+    </div>
   </div>
   <select id="savedSel" style="width:auto;height:32px" title="ใบเปรียบเทียบที่บันทึกไว้บน server">
     <option value="">— ใบเปรียบเทียบที่บันทึกไว้ —</option>
@@ -477,7 +496,10 @@ function renderSummary(){
 }
 
 function renderToolbar(){
-  document.querySelectorAll('#typeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.type===Q.type));
+  document.querySelectorAll('#typeSeg button').forEach(b=>{
+    const on=b.dataset.type===Q.type;
+    b.classList.toggle('on',on); b.setAttribute('aria-selected',String(on));
+  });
   const sel=$('savedSel');
   sel.innerHTML='<option value="">— ใบเปรียบเทียบที่บันทึกไว้ ('+saved.length+') —</option>'+
     saved.slice().sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||''))).map(q=>{
