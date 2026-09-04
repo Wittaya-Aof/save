@@ -7,7 +7,9 @@
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 const URL = 'http://127.0.0.1:3000/freight-comparison.html';
-const SP = (process.env.SHOT_DIR || '.').replace(/\\/g, '/').replace(/\/?$/, '/');
+// ภาพเป็น opt-in: ไม่ตั้ง SHOT_DIR = ไม่เขียนไฟล์ใด ๆ ลงดิสก์
+const SP = process.env.SHOT_DIR ? process.env.SHOT_DIR.replace(/\\/g, '/').replace(/\/?$/, '/') : null;
+const shot = async (target, name, opts) => { if (SP) await target.screenshot({ ...(opts || {}), path: SP + name }); };
 const FIX = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'kyoei-extract.json'), 'utf8'));
 
 const results = [];
@@ -62,7 +64,7 @@ const check = (name, pass, detail) => results.push({ name, pass: !!pass, detail 
   await fill('head.cbm', ''); await page.waitForTimeout(150); c = await cell();
   check('ยังไม่กรอก CBM → บอกว่า "รอปริมาณ" และเตือนให้กรอก', c.tier === 'รอปริมาณ' && /ยังไม่ได้กรอก/.test(c.warn), c.tier);
   await fill('head.cbm', 6);
-  await page.screenshot({ path: SP + 'pw-tier.png', clip: { x: 0, y: 0, width: 1500, height: 560 } });
+  await shot(page, 'pw-tier.png', { clip: { x: 0, y: 0, width: 1500, height: 560 } });
 
   // ── B. อ่าน PDF (mock ผลลัพธ์จริงของ KYOEI) ───────────────────────────────
   // คอลัมน์ 2 เป็น FCL 20'GP · ในเอกสาร Cleaning มี 2 ราคา: 300 (20'GP) กับ 600 (40'HQ)
@@ -102,7 +104,7 @@ const check = (name, pass, detail) => results.push({ name, pass: !!pass, detail 
   });
   check('คอลัมน์ FCL 20\'GP: Cleaning 600 ของ 40\'HQ ถูกคัดออก · เสนอค่าระวางต่อตู้ 250 · ไม่เสนอ "ขั้นบันได CBM" ให้ตู้ FCL',
     pv3.clean600Out && pv3.flatOffer && pv3.noCbmTiers, JSON.stringify(pv3));
-  await page.screenshot({ path: SP + 'pw-pdf-preview.png' });
+  await shot(page, 'pw-pdf-preview.png');
   await page.click('#pvOk');
   await page.waitForSelector('#mask', { state: 'hidden' });
   await page.waitForTimeout(250);

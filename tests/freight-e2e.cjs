@@ -1,7 +1,9 @@
 // ทดสอบโมดูลเปรียบเทียบค่าเฟรทด้วยเบราว์เซอร์จริง: 0 pageerror ทั้งสองธีม + กรอกเคสจริงจาก Excel แล้วเทียบยอด
 const { chromium } = require('playwright');
-// ภาพหน้าจอเก็บที่ SHOT_DIR (ถ้าตั้ง) ไม่งั้นลงโฟลเดอร์ปัจจุบัน — รันจากรากโปรเจกต์: NODE_PATH=./node_modules node tests/freight-e2e.cjs
-const SP = (process.env.SHOT_DIR || '.').replace(/\\/g, '/').replace(/\/?$/, '/');
+// ตั้ง SHOT_DIR ถ้าอยากได้ภาพหน้าจอ · ไม่ตั้ง = ไม่เขียนไฟล์เลย — รันจากรากโปรเจกต์: NODE_PATH=./node_modules node tests/freight-e2e.cjs
+// ภาพเป็น opt-in: ไม่ตั้ง SHOT_DIR = ไม่เขียนไฟล์ใด ๆ ลงดิสก์ (ให้ตัวรีวิวแบบอ่านอย่างเดียวรันได้)
+const SP = process.env.SHOT_DIR ? process.env.SHOT_DIR.replace(/\\/g, '/').replace(/\/?$/, '/') : null;
+const shot = async (target, name, opts) => { if (SP) await target.screenshot({ ...(opts || {}), path: SP + name }); };
 (async () => {
   const browser = await chromium.launch();
   const out = { errors: [], console: [] };
@@ -44,7 +46,7 @@ const SP = (process.env.SHOT_DIR || '.').replace(/\\/g, '/').replace(/\/?$/, '/'
       await page.click('#btnSave'); await page.waitForTimeout(600);
       out.saved = await page.$eval('#savedSel', s => [...s.options].map(o => o.textContent).slice(0, 3));
       out.status = await page.$eval('#status', s => s.textContent);
-      await page.screenshot({ path: SP + 'pw-freight-light.png', fullPage: true });
+      await shot(page, 'pw-freight-light.png', { fullPage: true });
       // ลบทิ้งไม่ให้ค้างในไฟล์ข้อมูลจริง
       page.on('dialog', d => d.accept());
       await page.click('#btnDel'); await page.waitForTimeout(500);
@@ -58,7 +60,7 @@ const SP = (process.env.SHOT_DIR || '.').replace(/\\/g, '/').replace(/\/?$/, '/'
       const af = await page.$$eval('#tbl tfoot tr', trs => trs.slice(0, 4).map(tr => tr.querySelector('td.amt').textContent.trim()));
       out.air = { subtotal: af[0], tax: af[1], total: af[2], avg: af[3] }; // Excel: 44,897.10 / 8,979.42 / 53,876.52 / 53.8765
     } else {
-      await page.screenshot({ path: SP + 'pw-freight-dark.png', fullPage: false });
+      await shot(page, 'pw-freight-dark.png', { fullPage: false });
       // แอปหลัก: กดแท็บใหม่แล้ว iframe ต้องโหลด
       const main = await ctx.newPage();
       main.on('pageerror', e => out.errors.push('main: ' + e.message));
@@ -67,7 +69,7 @@ const SP = (process.env.SHOT_DIR || '.').replace(/\\/g, '/').replace(/\/?$/, '/'
       const fr = await main.waitForSelector('iframe[src="/freight-comparison.html"]', { timeout: 10000 });
       const frame = await fr.contentFrame(); await frame.waitForSelector('#tbl tbody tr');
       out.mainTab = { title: await frame.title(), embeddedHeaderHidden: await frame.$eval('.header', el => getComputedStyle(el).display) };
-      await main.screenshot({ path: SP + 'pw-freight-inapp.png' });
+      await shot(main, 'pw-freight-inapp.png');
     }
     await ctx.close();
   }

@@ -9,7 +9,9 @@
 // รันจากรากโปรเจกต์: NODE_PATH=./node_modules node tests/freight-ui.cjs
 const { chromium } = require('playwright');
 const URL = 'http://127.0.0.1:3000/freight-comparison.html';
-const SP = (process.env.SHOT_DIR || '.').replace(/\\/g, '/').replace(/\/?$/, '/');
+// ภาพเป็น opt-in: ไม่ตั้ง SHOT_DIR = ไม่เขียนไฟล์ใด ๆ ลงดิสก์
+const SP = process.env.SHOT_DIR ? process.env.SHOT_DIR.replace(/\\/g, '/').replace(/\/?$/, '/') : null;
+const shot = async (target, name, opts) => { if (SP) await target.screenshot({ ...(opts || {}), path: SP + name }); };
 
 const results = [];
 const check = (name, pass, detail) => { results.push({ name, pass: !!pass, detail }); };
@@ -278,7 +280,7 @@ const check = (name, pass, detail) => { results.push({ name, pass: !!pass, detai
   check('กดสลับแม่แบบแล้วปุ่มที่เลือกย้ายตาม (ทั้งสีและ aria)',
     segAfter === 'false,on:true,false', segAfter);
 
-  await page.screenshot({ path: SP + 'pw-freight-ui.png', fullPage: false });
+  await shot(page, 'pw-freight-ui.png', { fullPage: false });
   check('ไม่มี pageerror / console error ตลอดการทดสอบ', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   await browser.close();
