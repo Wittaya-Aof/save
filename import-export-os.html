@@ -463,7 +463,7 @@ class App extends Component {
       const saved=localStorage.getItem('kobTheme');
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
-    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},landed:null,costDetail:null,billTarget:null,alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,verifyFiles:[],verifyPo:'',verifyMode:'import',verifyNote:'',verifyLoading:false,verifyResult:null,verifyError:null,auditLog:null,auditLoading:false,verifyRuns:null,verifyRunsPo:'',shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},landed:null,costDetail:null,billTarget:null,alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,auditLog:null,auditLoading:false,shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
@@ -534,9 +534,6 @@ class App extends Component {
       this.setState({auditLog:j.entries,auditLoading:false});
     }catch(e){this.setState({auditLoading:false});}
   }
-  // ── ประวัติการตรวจเอกสารของ PO นี้ (artifact ที่ server เก็บไว้ต่อรอบ) ──
-  // ก่อนหน้านี้ผลตรวจถูกทิ้งหลังปิดหน้า ทำให้ตรวจซ้ำก็เริ่มจากศูนย์ — ตอนนี้ดึงมาโชว์ในแผงรายละเอียด
-  // ได้ว่า shipment ใบนี้เคยตรวจเมื่อไหร่ เจอปัญหาอะไร โดยไม่ต้องอัปโหลดไฟล์ซ้ำ
   // ชิปเม้นทั้งหมดที่การสแกนเอกสารเจอสำหรับ PO นี้ (รวมใบที่ยังไม่มีการ์ด)
   async loadShipmentRuns(poNo){
     if(!poNo)return;
@@ -549,17 +546,6 @@ class App extends Component {
       const j=await r.json();
       if(this.state.shipRunsPo===poNo)this.setState({shipRuns:j.runs||[]});
     }catch(e){ if(this.state.shipRunsPo===poNo)this.setState({shipRuns:[]}); }
-  }
-  async loadVerifyRuns(poNo){
-    if(!poNo)return;
-    if(this.state.verifyRunsPo===poNo&&this.state.verifyRuns)return;
-    this.setState({verifyRunsPo:poNo,verifyRuns:null});
-    try{
-      const r=await fetchTimeout('/api/verify-runs?limit=5&po='+encodeURIComponent(poNo),{headers:{Accept:'application/json'}},12000);
-      const j=await r.json();
-      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
-      if(this.state.verifyRunsPo===poNo)this.setState({verifyRuns:j.runs||[]});
-    }catch(e){ if(this.state.verifyRunsPo===poNo)this.setState({verifyRuns:[]}); }
   }
   // เปิด PO/SO ที่คลิกจาก audit log — หาใน shipment ปัจจุบันด้วย poNo แล้วสลับ tab+เปิด detail
   jumpToAuditEntry(poSo){
@@ -582,7 +568,7 @@ class App extends Component {
   componentDidUpdate(prevProps,prevState){
     if(this.state.detailId&&this.state.detailId!==prevState.detailId){
       const sel=this.allShipments().find(s=>s.id===this.state.detailId);
-      if(sel){this.loadPoLines(sel);this.loadVerifyRuns(sel._splitBase||sel.poNo);this.loadShipmentRuns(sel._splitBase||sel.poNo);}
+      if(sel){this.loadPoLines(sel);this.loadShipmentRuns(sel._splitBase||sel.poNo);}
     }
   }
   // PO ที่แยกเป็น shipment ย่อย (_synthetic) ไม่มี PO จริงคู่กัน — โชว์รายการสินค้าของ PO ต้นฉบับแทน
@@ -1201,56 +1187,6 @@ class App extends Component {
     this.showToast('ดาวน์โหลดรายงานสรุปแล้ว ('+(impRows.length+expRows.length)+' รายการ)','success');
   }
 
-  // ── AI ตรวจเอกสาร (layer 4): อัปโหลดเอกสาร shipment → เรียก /api/verify-shipment ──
-  onVerifyFilesAdd(fileList){
-    const incoming=Array.from(fileList||[]);
-    if(!incoming.length)return;
-    this.setState(s=>({verifyFiles:[...s.verifyFiles,...incoming],verifyResult:null,verifyError:null}));
-  }
-  removeVerifyFile(idx){
-    this.setState(s=>({verifyFiles:s.verifyFiles.filter((_,i)=>i!==idx)}));
-  }
-  async submitVerify(){
-    const {verifyFiles,verifyPo,verifyMode,verifyNote}=this.state;
-    if(!verifyFiles.length){this.showToast('กรุณาเลือกไฟล์ก่อน','info');return;}
-    this.setState({verifyLoading:true,verifyResult:null,verifyError:null});
-    const fd=new FormData();
-    fd.append('mode',verifyMode);
-    if((verifyPo||'').trim())fd.append('po',verifyPo.trim());
-    if((verifyNote||'').trim())fd.append('note',verifyNote.trim());
-    verifyFiles.forEach(f=>fd.append('files',f,f.name));
-    try{
-      const r=await fetchTimeout('/api/verify-shipment',{method:'POST',body:fd},240000);
-      const j=await r.json();
-      if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
-      this.setState({verifyResult:j,verifyLoading:false});
-      if(j.etdSaved)this.showToast('บันทึก ETD ของ '+verifyPo.trim()+' อัตโนมัติจาก B/L แล้ว','success');
-    }catch(e){
-      this.setState({verifyLoading:false,verifyError:e.name==='AbortError'?'หมดเวลารอ (เกิน 4 นาที) — ลองใหม่หรือลดจำนวนไฟล์':e.message});
-    }
-  }
-  exportVerifyExcel(){
-    if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
-    const j=this.state.verifyResult;if(!j)return;
-    const rows=[
-      ...j.sections.correct.map(t=>({สถานะ:'✅ ถูกต้อง',รายการ:t})),
-      ...j.sections.review.map(t=>({สถานะ:'🟡 ควรตรวจสอบ',รายการ:t})),
-      ...j.sections.errors.map(t=>({สถานะ:'❌ ต้องแก้ไข',รายการ:t})),
-    ];
-    const wb=XLSX.utils.book_new();
-    const ws=XLSX.utils.json_to_sheet(rows);
-    ws['!cols']=[{wch:14},{wch:90}];
-    XLSX.utils.book_append_sheet(wb,ws,'ตรวจเอกสาร');
-    if(j.taxCheck){
-      const wsTax=XLSX.utils.json_to_sheet([j.taxCheck]);
-      XLSX.utils.book_append_sheet(wb,wsTax,'ภาษีนำเข้า');
-    }
-    const wsSum=XLSX.utils.json_to_sheet([{สรุป:j.summary}]);
-    wsSum['!cols']=[{wch:100}];
-    XLSX.utils.book_append_sheet(wb,wsSum,'สรุป');
-    XLSX.writeFile(wb,'verify-shipment-'+new Date().toISOString().slice(0,10)+'.xlsx');
-    this.showToast('ดาวน์โหลด Excel แล้ว','success');
-  }
 
   // ── รายการต้องติดตาม: ETA เลยกำหนด หรือใกล้ถึงใน 3 วัน ──
   alerts(){
@@ -1317,7 +1253,6 @@ class App extends Component {
     const {tab}=this.state;
     const page=tab==='container'?{t:'Container Calculator',d:'คำนวณการจัดเรียงสินค้าลงตู้คอนเทนเนอร์'}
       :tab==='freight'?{t:'Freight Charges Comparison',d:'เปรียบเทียบค่าระวางและค่าใช้จ่ายนำเข้า-ส่งออกจากผู้ให้บริการหลายราย — บันทึกใบเปรียบเทียบไว้บน server'}
-      :tab==='verify'?{t:'ตรวจเอกสาร Shipment',d:'เทียบรหัสอ้างอิงข้ามไฟล์ในเครื่อง — ไม่ส่งข้อมูลออกภายนอก'}
       :{t:'Logistics Tracking',d:'ติดตาม Import PO / Export SO จาก Odoo พร้อมบันทึก forwarder / BL-AWB / container และต้นทุนเอง'};
     const iconBtn={display:'flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'var(--radius)',border:'1px solid var(--color-chrome-border)',background:'var(--color-chrome)',cursor:'pointer',flexShrink:0};
     return <header style={{display:'flex',alignItems:'center',gap:'12px',padding:'0 22px',height:'60px',background:'var(--color-chrome)',borderBottom:'1px solid var(--color-chrome-border)',flexShrink:0}}>
@@ -1354,7 +1289,7 @@ class App extends Component {
         <div style={{minWidth:0}}><div className="kobDisplayTight" style={{fontSize:'16px',color:'var(--color-chrome-display)'}}>Import-Export OS</div><div style={{fontSize:'10.5px',color:'var(--color-chrome-muted)'}}>KOB &amp; BTV</div></div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'12px 10px',display:'flex',flexDirection:'column',gap:'1px'}}>
-        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'Freight Charges Comparison',icon:'scale',active:tab==='freight'},{key:'verify',label:'ตรวจเอกสาร Shipment',icon:'check',active:tab==='verify'}].map(t=>{
+        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'Freight Charges Comparison',icon:'scale',active:tab==='freight'}].map(t=>{
           const active=t.active;
           return <button key={t.key} onClick={()=>{
             if(t.key==='logistics'){if(!inLogisticsGroup)this.setState({tab:'import',detailId:null});}
@@ -2365,37 +2300,6 @@ class App extends Component {
               }
               return null;
             })()}
-            {(()=>{
-              // ผลตรวจเอกสารล่าสุดของ PO นี้ — เชื่อม "การตรวจเอกสาร" กับ "record ของ shipment"
-              // ซึ่งเดิมแยกกันสิ้นเชิง (ตรวจแล้วผลหายไป ไม่มีร่องรอยที่ตัว shipment)
-              const runs=this.state.verifyRuns;
-              if(this.state.verifyRunsPo!==(sel._splitBase||sel.poNo))return null;
-              if(!runs)return null;
-              if(!runs.length)return <div style={{marginBottom:'18px'}}>
-                <SectionTitle>ผลตรวจเอกสาร</SectionTitle>
-                <div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่เคยตรวจเอกสารของ PO นี้ — ไปที่เมนู "ตรวจเอกสาร Shipment" แล้วใส่เลข PO นี้</div>
-              </div>;
-              const last=runs[0];
-              const bad=(last.counts&&last.counts.errors)||0;
-              return <div style={{marginBottom:'18px'}}>
-                <SectionTitle>ผลตรวจเอกสาร</SectionTitle>
-                <div style={{background:bad?'var(--color-danger-soft)':'var(--color-success-soft)',border:'1px solid '+(bad?'var(--color-danger-border)':'var(--color-success-border)'),borderRadius:'var(--radius)',padding:'10px 12px'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',gap:'8px',fontSize:'12px',fontWeight:500,color:bad?'var(--color-danger-text)':'var(--color-success-text)'}}>
-                    <span>{bad?('พบต้องแก้ไข '+bad+' จุด'):'ผ่านทุกข้อที่ตรวจได้'}</span>
-                    <span style={{color:'var(--color-text-muted)',fontWeight:400}}>{new Date(last.ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</span>
-                  </div>
-                  <div style={{fontSize:'11px',color:'var(--color-text-tertiary)',marginTop:'4px'}}>
-                    ✅ {last.counts?last.counts.correct:0} · 🟡 {last.counts?last.counts.review:0} · ❌ {bad} · จากไฟล์ที่อ่านได้ {last.filesProcessed} ไฟล์{runs.length>1?(' · ตรวจมาแล้ว '+runs.length+' รอบ'):''}
-                  </div>
-                  {bad>0&&<div style={{display:'flex',flexDirection:'column',gap:'4px',marginTop:'8px'}}>
-                    {(last.errors||[]).slice(0,3).map((e,i)=>(
-                      <div key={i} style={{fontSize:'11px',color:'var(--color-danger-text)',lineHeight:1.45}}>• {e}</div>
-                    ))}
-                    {(last.errors||[]).length>3&&<div style={{fontSize:'10.5px',color:'var(--color-text-muted)'}}>และอีก {(last.errors||[]).length-3} จุด</div>}
-                  </div>}
-                </div>
-              </div>;
-            })()}
             <SectionTitle>ไทม์ไลน์</SectionTitle>
             <div style={{display:'flex',flexDirection:'column'}}>
               {timeline.map(s=>(
@@ -2796,87 +2700,6 @@ class App extends Component {
     </>;
   }
 
-  // ── AI ตรวจเอกสาร: หน้าอัปโหลด + ผลลัพธ์ ──
-  renderVerify(){
-    const {verifyFiles,verifyPo,verifyMode,verifyNote,verifyLoading,verifyResult,verifyError}=this.state;
-    const box={border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',background:'var(--color-surface)',padding:'20px',boxShadow:'var(--shadow-card)'};
-    const modeBtn=(k,label,first)=><button onClick={()=>this.setState({verifyMode:k,verifyResult:null,verifyError:null})} disabled={verifyLoading}
-      style={{padding:'0 16px',height:'34px',border:0,borderLeft:first?0:'1px solid var(--color-border)',background:verifyMode===k?'var(--color-brand-soft)':'transparent',color:verifyMode===k?'var(--color-brand)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:verifyMode===k?500:500,cursor:verifyLoading?'default':'pointer'}}>{label}</button>;
-    return <div style={{flex:1,overflow:'auto',padding:'20px 22px',display:'flex',flexDirection:'column',gap:'14px',maxWidth:'760px'}}>
-      <div style={box}>
-        <Field label="ประเภท shipment">
-          <div style={{display:'inline-flex',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',overflow:'hidden'}}>{modeBtn('import','ขาเข้า (Import)',true)}{modeBtn('export','ขาออก (Export)')}</div>
-        </Field>
-        <div style={{height:'14px'}}/>
-        <Field label="เลข PO/SO" hint="ไม่บังคับ — ถ้าใส่ไว้ ระบบจะบันทึก ETD ที่ดึงได้จาก B/L ให้เลขนี้อัตโนมัติ">
-          <input style={INP} value={verifyPo} placeholder="เช่น KOBPO2607-00485" onChange={e=>this.setState({verifyPo:e.target.value})}/>
-        </Field>
-        <div style={{height:'14px'}}/>
-        <Field label="หมายเหตุ / เงื่อนไขเพิ่มเติม" hint="ไม่บังคับ — ใส่ FTA ที่ใช้ (ACFTA/ATIGA), ประเทศปลายทาง หรือ HS code ที่อยากเน้น ใช้เป็น hint ให้กฎในเครื่องเท่านั้น ไม่ใช่ AI">
-          <textarea style={{...INP,height:'62px',padding:'9px 11px',resize:'vertical',fontFamily:'inherit'}} value={verifyNote} placeholder="เช่น ใช้สิทธิ ACFTA ส่งไปเวียดนาม HS 3304.99.30" onChange={e=>this.setState({verifyNote:e.target.value})}/>
-        </Field>
-        <div style={{height:'14px'}}/>
-        <div onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();this.onVerifyFilesAdd(e.dataTransfer.files);}}
-             style={{border:'1px dashed var(--color-border)',borderRadius:'var(--radius)',padding:'24px',textAlign:'center',background:'var(--color-surface-muted)'}}>
-          <div style={{color:'var(--color-text-tertiary)',fontSize:'12.5px',marginBottom:'4px'}}>ลากไฟล์มาวางที่นี่</div>
-          <div style={{color:'var(--color-text-muted)',fontSize:'11px',marginBottom:'12px'}}>Invoice / Packing List / B/L (ขาออกใช้ กศก.101/1) · PDF, Excel, รูปภาพ</div>
-          <label style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 15px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>
-            <Ico name="plus" size={14} sw={2}/> เลือกไฟล์
-            <input type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style={{display:'none'}}
-                   onChange={e=>{this.onVerifyFilesAdd(e.target.files);e.target.value='';}}/>
-          </label>
-        </div>
-        {verifyFiles.length>0&&<div style={{marginTop:'14px',display:'flex',flexDirection:'column',gap:'6px'}}>
-          {verifyFiles.map((f,i)=><div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'7px 11px',borderRadius:'var(--radius-sm)',background:'var(--color-surface-muted)',fontSize:'12.5px'}}>
-            <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--color-text)'}}>{f.name}</span>
-            <button onClick={()=>this.removeVerifyFile(i)} style={{border:0,background:'transparent',color:'var(--color-text-muted)',cursor:'pointer',fontSize:'15px',lineHeight:1,padding:'0 4px'}}>×</button>
-          </div>)}
-        </div>}
-        <button onClick={()=>this.submitVerify()} disabled={verifyLoading}
-                style={{marginTop:'16px',display:'flex',alignItems:'center',gap:'8px',padding:'10px 20px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:verifyLoading?'default':'pointer',opacity:verifyLoading?0.75:1}}>
-          {verifyLoading&&<span style={{display:'flex',animation:'kobSpin 1s linear infinite'}}><Ico name="sync" size={15} sw={2}/></span>}
-          {verifyLoading?'กำลังตรวจสอบ…':'เริ่มตรวจสอบ'}
-        </button>
-      </div>
-      {verifyError&&<div style={{...box,borderColor:'var(--color-danger-border)',background:'var(--color-danger-soft)',color:'var(--color-danger)',fontSize:'13px'}}>{verifyError}</div>}
-      {verifyResult&&<div style={box}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'14px'}}>
-          <div style={{fontSize:'13.5px',fontWeight:500,color:'var(--color-text)'}}>ผลตรวจสอบ</div>
-          <button onClick={()=>this.exportVerifyExcel()} style={{display:'flex',alignItems:'center',gap:'6px',padding:'6px 13px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12px',fontWeight:500,cursor:'pointer'}}>
-            <Ico name="dl" size={14} sw={1.8}/> Export Excel
-          </button>
-        </div>
-        {[
-          {icon:'✅',title:'ส่วนที่ถูกต้อง',items:verifyResult.sections.correct,color:'var(--color-success)'},
-          {icon:'🟡',title:'ค่าประมาณการในร่าง / ประเด็นที่ควรตรวจสอบ',items:verifyResult.sections.review,color:'var(--color-warn-text)'},
-          {icon:'❌',title:'ข้อผิดพลาดที่ต้องแก้ไข',items:verifyResult.sections.errors,color:'var(--color-danger)'},
-        ].map((sec,i)=><div key={i} style={{marginBottom:'16px'}}>
-          <div style={{fontSize:'12.5px',fontWeight:500,color:sec.color,marginBottom:'7px'}}>{sec.icon} {sec.title} ({sec.items.length})</div>
-          {sec.items.length?<ul style={{margin:0,paddingLeft:'20px',display:'flex',flexDirection:'column',gap:'5px'}}>
-            {sec.items.map((t,j)=><li key={j} style={{fontSize:'12.5px',color:'var(--color-text-secondary)'}}>{t}</li>)}
-          </ul>:<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>— ไม่มี —</div>}
-        </div>)}
-        <div>
-          <div style={{fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',marginBottom:'7px'}}>📋 สรุป + ข้อเสนอแนะ</div>
-          <div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',lineHeight:1.6}}>{verifyResult.summary}</div>
-        </div>
-        {verifyResult.meta&&verifyResult.meta.filesSkipped&&verifyResult.meta.filesSkipped.length>0&&<div style={{marginTop:'14px',padding:'10px 12px',borderRadius:'var(--radius-sm)',background:'var(--color-warn-soft)',fontSize:'11.5px',color:'var(--color-warn-text)'}}>
-          ข้ามไฟล์ {verifyResult.meta.filesSkipped.length} ไฟล์: {verifyResult.meta.filesSkipped.map(f=>f.name+' ('+f.reason+')').join(', ')}
-        </div>}
-        {verifyResult.shipmentInfo&&verifyResult.shipmentInfo.etd&&<div style={{marginTop:'14px',padding:'10px 12px',borderRadius:'var(--radius-sm)',background:verifyResult.etdSaved?'var(--color-success-soft)':'var(--color-surface-muted)',fontSize:'11.5px',color:verifyResult.etdSaved?'var(--color-success-text)':'var(--color-text-secondary)'}}>
-          ดึง ETD จาก B/L ได้: <b>{verifyResult.shipmentInfo.etd}</b>{verifyResult.shipmentInfo.vessel?' ('+verifyResult.shipmentInfo.vessel+')':''}
-          {Array.isArray(verifyResult.fieldsSaved)&&verifyResult.fieldsSaved.length
-            ? ' — บันทึกให้ '+verifyResult.po+' แล้ว ('+verifyResult.fieldsSaved.join(', ')+') พร้อมบันทึกที่มาว่ามาจากเอกสารใบนี้'
-            : (verifyResult.po
-                ? (Array.isArray(verifyResult.fieldsSaved)
-                    ? ' — ไม่ได้ทับของเดิม (ช่องเหล่านี้มีค่าอยู่แล้ว)'
-                    : ' — บันทึกไม่สำเร็จ')
-                : ' — ใส่เลข PO ด้านบนก่อนตรวจ ถ้าต้องการบันทึกอัตโนมัติ')}
-        </div>}
-      </div>}
-    </div>;
-  }
-
   render(){
     const {tab,view,toast}=this.state;
     const isBoard=tab==='import'||tab==='export';
@@ -2906,7 +2729,6 @@ class App extends Component {
             </div>
           </>}
           {tab==='dashboard'&&this.renderDashboard()}
-          {tab==='verify'&&this.renderVerify()}
           {tab==='container'&&<iframe src="/container-loading-calculator.html" title="Container Calculator" style={{flex:1,width:'100%',border:0,background:'var(--color-page-bg)'}}/>}
           {tab==='freight'&&<iframe src="/freight-comparison.html" title="Freight Charges Comparison" style={{flex:1,width:'100%',border:0,background:'var(--color-page-bg)'}}/>}
         </div>
@@ -2923,7 +2745,8 @@ function SectionTitle({children}){
   return <div className="kobEyebrow" style={{fontSize:'12px',color:'var(--color-text-tertiary)',paddingBottom:'9px',borderBottom:'1px solid var(--color-border)',marginBottom:'13px'}}>{children}</div>;
 }
 // แปลง provenance tag `<origin>[:<ref>]@<iso>` เป็นข้อความไทยสั้นๆ ที่คนอ่านรู้เรื่อง
-// origin ที่เจอจริง: manual (คนกรอกผ่านหน้าเว็บ) · verify:<ไฟล์> (สกัดจากเอกสารที่อัปโหลด)
+// origin ที่เจอจริง: manual (คนกรอกผ่านหน้าเว็บ) · verify:<ไฟล์> (ข้อมูลเก่าจากโมดูลตรวจเอกสารที่ถอดออกแล้ว —
+// ยังต้องแปลผลได้เพราะ record เดิมอ้างอยู่)
 function srcLabel(tag){
   if(!tag)return null;
   const at=String(tag).lastIndexOf('@');

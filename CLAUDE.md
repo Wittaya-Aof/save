@@ -1011,6 +1011,29 @@ NODE_PATH=./node_modules node tests/freight-review.cjs   # finding จากร�
   (เดิม default เขียน `pw-*.png` ลง CWD ทำให้ตัวรีวิวที่ถูกสั่ง "ห้ามแก้ไฟล์" รันเทสไม่ได้ — Codex รายงานเองว่าติดตรงนี้)
   ⚠ `freight-e2e`/`freight-pdf` ยังบันทึกใบทดสอบขึ้น server แล้วลบทิ้ง · อ่านอย่างเดียวจริง ๆ ให้รันแค่ `freight-ui` + `freight-review`
 
+## ถอดโมดูล "ตรวจเอกสาร Shipment" ออก (2026-09-04 — AOF สั่ง)
+
+ถอดทั้งชุดตามคำสั่ง · ตัดโค้ดรวม **~21,400 ตัวอักษร** + ลบไฟล์ lib 3 ไฟล์ (**72.8 KB**)
+
+| ที่ตัด | รายละเอียด |
+|---|---|
+| frontend | state 9 ฟิลด์ · `loadVerifyRuns()` · 4 method (อัปโหลด/ส่งตรวจ/ส่งออก Excel) · `renderVerify()` (8.2 KB) · เมนูซ้าย · หัวเรื่องแท็บ · แผง "ผลตรวจเอกสาร" ในการ์ด shipment |
+| server | `POST /api/verify-shipment` · `GET /api/verify-runs` · `appendVerifyRun()` + การหมุนไฟล์ · `require('./lib/verify-shipment-local')` · `VERIFY_RUNS_FILE` |
+| ไฟล์ | `lib/verify-shipment-local.js` (38.8 KB) · `lib/verify-shipment.js` (11.0 KB) · `lib/verify-shipment-prompt.js` (23.0 KB) · `verify_runs.jsonl` (0 ไบต์ — ไม่เคยมีข้อมูลจริง) · 2 บรรทัดใน `.gitignore` |
+
+**เก็บไว้โดยตั้งใจ 2 อย่าง**
+- **`lib/pdf-extract-worker.cjs`** — `scan-shipment-docs.mjs` ใช้อยู่ (ตรวจแล้วก่อนลบ) ถ้าลบไปด้วยการสแกนเอกสารอัตโนมัติจะพังทันที
+- **การแปลที่มา `verify:<ไฟล์>` ใน `_src`** ทั้งฝั่ง server และ UI — record เดิมใน `tracking_data.json`
+  ยังอ้าง origin นี้อยู่ ถ้าถอดตัวแปลออก การ์ดที่เคยได้ค่าจากการตรวจเอกสารจะแสดงที่มาผิด
+  (แก้คอมเมนต์ให้บอกว่าเป็น "ข้อมูลเก่าจากโมดูลที่ถอดออกแล้ว")
+
+**ผลข้างเคียงที่ต้องรู้:** ไม่มี code path ไหนเขียน `vessel`/`bl_awb`/`etd` จากเอกสารอีกแล้ว
+เหลือแค่ `scan-shipment-docs.mjs` (โฟลเดอร์อัตโนมัติ) กับการกรอกมือ
+
+**ทดสอบหลังถอด:** endpoint ทั้งสองตอบ **404** · แอปหลักเหลือ 3 เมนู ไม่มีคำว่า "ตรวจเอกสาร Shipment"
+เหลืออยู่ในหน้า · light+dark **0 pageerror** · `freight-ui` 36/36 · `freight-review` 8/8 ·
+`freight-pdf` 17/17 · `freight-e2e` ยอดตรง Excel · `pack-invariants` 42 scenario 0 violation · `pack-capacity` ผ่าน
+
 ## ยังไม่แก้ (ตั้งใจ)
 - ~~pinwheel / tail rotation สำหรับพาเลท~~ **ทำครบแล้ว** (2026-08-01) — ดูหัวข้อ "แผนผังพื้นพาเลท
   แบบสลับทิศ" ด้านบน · 20'GP + standard ได้ 10 ใบ = optimal ที่พิสูจน์แล้ว

@@ -9,13 +9,11 @@ const { Pool } = require('pg');
 const fs    = require('fs');
 const path  = require('path');
 const crypto = require('crypto');
-const { verifyShipmentLocal } = require('./lib/verify-shipment-local');
 
 const PORT = 3000;
 const ROOT = __dirname;
 const TRACKING_FILE = path.join(ROOT, 'tracking_data.json');
 const AUDIT_FILE    = path.join(ROOT, 'tracking_audit.jsonl');
-const VERIFY_RUNS_FILE = path.join(ROOT, 'verify_runs.jsonl');
 const SHIPMENT_RUNS_FILE = path.join(ROOT, 'shipment_runs.jsonl'); // เขียนโดย scan-shipment-docs.mjs
 const FREIGHT_FILE = path.join(ROOT, 'freight_quotes.json'); // ใบเปรียบเทียบค่าเฟรท (freight-comparison.html)
 const BACKUP_DIR    = path.join(ROOT, 'backups');
@@ -240,41 +238,6 @@ function auditLog(action, poSo, fields, ip) {
   } catch(e) { console.error('[Audit]', e.message); }
 }
 
-// ─── ผลตรวจเอกสาร: เก็บเป็น artifact แบบ append-only ────────────────────────
-// เก็บเฉพาะสิ่งที่ตอบคำถามภายหลังได้: ตรวจเมื่อไหร่ · ของ PO ไหน · ไฟล์อะไร · เจอปัญหาอะไร ·
-// สกัดค่าอะไรได้ (ไม่เก็บเนื้อไฟล์ ไม่เก็บ base64 — ไฟล์ต้นทางอยู่ที่เครื่องผู้ใช้อยู่แล้ว)
-// รูปแบบเดียวกับ tracking_audit.jsonl (1 บรรทัด = 1 การรัน) อ่านง่ายด้วย grep และต่อท้ายได้แบบ atomic
-const VERIFY_RUNS_MAX_BYTES = 5 * 1024 * 1024;
-function appendVerifyRun(result, ip) {
-  try {
-    // หมุนไฟล์เมื่อโตเกิน 5MB — ต่างจาก audit log ที่บรรทัดสั้นคงที่ ไฟล์นี้เก็บข้อความผลตรวจซึ่งยาวกว่ามาก
-    try {
-      if (fs.existsSync(VERIFY_RUNS_FILE) && fs.statSync(VERIFY_RUNS_FILE).size > VERIFY_RUNS_MAX_BYTES) {
-        fs.renameSync(VERIFY_RUNS_FILE, VERIFY_RUNS_FILE + '.1');
-      }
-    } catch (rotErr) { console.error('[VerifyRuns] หมุนไฟล์ไม่สำเร็จ:', rotErr.message); }
-    const sec = result.sections || {};
-    fs.appendFileSync(VERIFY_RUNS_FILE, JSON.stringify({
-      ts: new Date().toISOString(),
-      po: result.po || '',
-      mode: (result.meta && result.meta.mode) || '',
-      status: result.status || '',
-      counts: {
-        correct: (sec.correct || []).length,
-        review: (sec.review || []).length,
-        errors: (sec.errors || []).length,
-      },
-      // เก็บ error เต็มข้อความ (สั้นและเป็นสิ่งที่ต้องตามแก้) ส่วน review/correct เก็บไว้ดูย้อนได้เหมือนกัน
-      errors: sec.errors || [],
-      review: sec.review || [],
-      correct: sec.correct || [],
-      filesProcessed: (result.meta && result.meta.filesProcessed) || 0,
-      filesSkipped: (result.meta && result.meta.filesSkipped) || [],
-      shipmentInfo: result.shipmentInfo || null,
-      ip: ip || '',
-    }) + '\n', 'utf8');
-  } catch (e) { console.error('[VerifyRuns]', e.message); }
-}
 
 // ─── Provenance: บันทึกว่า "ค่าแต่ละฟิลด์มาจากไหน" ───────────────────────────
 // ที่มาของปัญหา (วัดจริง 2026-07-31): tracking_data.json มี 1,040 record แต่ 1,027 record (98.8%)
@@ -286,7 +249,7 @@ function appendVerifyRun(result, ip) {
 // เก็บเป็นสตริงสั้นต่อฟิลด์ `<origin>[:<ref>]@<iso>` ไม่ใช่ object ซ้อน — ไฟล์นี้ 550KB แล้ว
 // และ **stamp เฉพาะฟิลด์ที่เปลี่ยนจริงในรอบนั้น** (ใช้ผลจาก changed ที่คำนวณไว้แล้วสำหรับ audit)
 // จึงโตตามการแก้จริงของผู้ใช้ ไม่ใช่โตตามจำนวน record
-// origin ที่ใช้จริง: manual (คนกรอกผ่านหน้าเว็บ) · verify:<ชื่อไฟล์> (สกัดจากเอกสารที่อัปโหลด)
+// origin ที่ใช้จริง: manual (คนกรอกผ่านหน้าเว็บ) · verify:<ชื่อไฟล์> (ข้อมูลเก่าจากโมดูลตรวจเอกสารที่ถอดออกแล้ว)
 // ค่าที่ไม่มี _src เลย = ไม่ทราบที่มา (ข้อมูลก่อนเริ่มเก็บ provenance) — หน้าเว็บแสดงตามนั้นตรงๆ ไม่เดา
 const PROVENANCE_FIELDS = new Set([
   'etd', 'eta', 'actualDate', 'bl', 'bl_awb', 'container', 'vessel', 'voyage', 'forwarder',
@@ -1086,7 +1049,7 @@ const SECURITY_HEADERS = {
 };
 
 // ─── rate limiter แบบง่าย (in-memory, per-IP fixed window) ─────────
-// ใช้กับ endpoint ที่แพง (verify-shipment = spawn child process ต่อ PDF) กันคนยิงรัวจนทรัพยากรหมด
+// ใช้กับ endpoint ที่แพง (freight-extract เรียก OpenAI · integrity สแกนทั้งไฟล์ข้อมูล) กันคนยิงรัวจนทรัพยากรหมด
 // single-process นี้เสิร์ฟ production ทั้งระบบ ถ้าล้ม = ทุกคนใช้งานไม่ได้พร้อมกัน
 const _rateBuckets = new Map();
 function rateLimit(key, max, windowMs) {
@@ -1822,7 +1785,7 @@ const server = http.createServer(async (req, res) => {
       if (input === null) return;
       try {
         const recs  = Array.isArray(input) ? input : [input];
-        // ที่มาของค่าในรอบนี้ — client ส่ง _origin มาได้ (verify-shipment ส่ง 'verify:<ไฟล์>')
+        // ที่มาของค่าในรอบนี้ — client ส่ง _origin มาได้ (ข้อมูลเก่ามี 'verify:<ไฟล์>' จากโมดูลตรวจเอกสารที่ถอดออกแล้ว)
         // ไม่ส่ง = คนกรอกผ่านหน้าเว็บ ซึ่งเป็นกรณีปกติ
         const origin = sanitizeOrigin(!Array.isArray(input) && input._origin ? input._origin : 'manual');
         const nowIso = new Date().toISOString();
@@ -2012,32 +1975,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ── ประวัติการตรวจเอกสาร — GET /api/verify-runs?po=<เลข PO>&limit=20 ──
-    // ไม่ใส่ po = คืนรอบล่าสุดทั้งหมด (ใช้โชว์ในหน้าตรวจเอกสาร)
-    // ใส่ po = คืนเฉพาะของ PO นั้น (ใช้โชว์ในแผงรายละเอียด shipment)
-    if (reqUrl === '/api/verify-runs' && method === 'GET') {
-      const params = new URL('http://x' + req.url).searchParams;
-      const po     = (params.get('po') || '').trim();
-      const limit  = Math.min(Math.max(parseInt(params.get('limit')) || 20, 1), 200);
-      try {
-        let runs = [];
-        if (fs.existsSync(VERIFY_RUNS_FILE)) {
-          runs = fs.readFileSync(VERIFY_RUNS_FILE, 'utf8').split('\n').filter(Boolean)
-            .map(l => { try { return JSON.parse(l); } catch (e) { return null; } })
-            .filter(Boolean);
-          if (po) runs = runs.filter(r => r.po === po);
-          runs = runs.slice(-limit).reverse();
-        }
-        jsonOk(res, { ok: true, count: runs.length, runs });
-      } catch (e) { jsonErrEx(res, 500, 'verify-runs', e); }
-      return;
-    }
-
-    // ── ชิปเม้นที่สแกนเจอจากเอกสาร — GET /api/shipment-runs?po=<เลข PO>&limit=20 ──
-    // การ์ด 1 ใบเก็บได้ชิปเม้นเดียว แต่ PO เดียวแบ่งส่งได้หลายชิปเม้น (คนละ B/L/เรือ/ตู้)
-    // endpoint นี้คืน "ทุกชิปเม้นที่เอกสารบอก" ของ PO นั้น เพื่อให้หน้าเว็บเห็นว่ามีชิปเม้นที่ยัง
-    // ไม่มีการ์ด แล้วกดสร้างการ์ดจากข้อมูลนั้นได้เลยโดยไม่ต้องพิมพ์ใหม่
-    // ค้นด้วย base PO (ตัด " (n)" ออก) จึงเห็นชิปเม้นของพี่น้องทุกใบในกลุ่มเดียวกัน
     if (reqUrl === '/api/shipment-runs' && method === 'GET') {
       const params = new URL('http://x' + req.url).searchParams;
       const po     = (params.get('po') || '').trim().replace(/\s*\(\d+\)\s*$/, '').toUpperCase();
@@ -2154,69 +2091,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ── ตรวจเอกสาร shipment (layer 4) — ตรวจในเครื่องล้วนๆ ด้วย regex/keyword ──
-    // multipart/form-data: field "mode" (import|export) + field "files" (หลายไฟล์)
-    // ไม่มี network call ออกไปที่ไหนเลย ไม่มีค่าใช้จ่าย (เดิมเรียก Anthropic API ตรง แต่ผู้ใช้ขอ
-    // ให้เปลี่ยนเป็นตรวจในเครื่องแทน หลัง API key ใช้งานไม่ได้ — ดู lib/verify-shipment.js
-    // สำหรับเวอร์ชัน AI เดิมถ้าต้องการกลับไปใช้ในอนาคต)
-    if (reqUrl === '/api/verify-shipment' && method === 'POST') {
-      // endpoint แพง (spawn child process ต่อ PDF) — จำกัด 10 ครั้ง/นาที ต่อ IP กันยิงรัวจนทรัพยากรหมด
-      if (!rateLimit('verify:' + (req.socket.remoteAddress || '?'), 10, 60 * 1000)) {
-        jsonErr(res, 429, 'เรียกตรวจเอกสารบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่');
-        return;
-      }
-      try {
-        const result = await verifyShipmentLocal(req);
-        // ── บันทึกผลตรวจเป็น artifact (append-only) ──
-        // เดิม endpoint นี้คืน sections/shipmentInfo/meta ที่อ้างชื่อไฟล์ต้นทางครบทุกบรรทัด
-        // แต่เก็บกลับแค่ etd ฟิลด์เดียว ที่เหลือหายไปกับ response → ตรวจ shipment เดิมซ้ำก็เริ่มจากศูนย์
-        // ทุกครั้ง ไม่มีทางถามว่า "เคยตรวจแล้วเจอ error อะไร" หรือ "เลขตู้นี้มาจากไฟล์ไหน"
-        // ตรงกับหลัก "the agent forgets, the graph does not" (ดู CLAUDE.md หัวข้อรีวิว loop/graph)
-        appendVerifyRun(result, req.socket.remoteAddress);
-        // ── เขียนค่าที่สกัดได้กลับเข้า tracking พร้อม provenance ──
-        // เดิมเขียนแค่ etd — แต่ vessel/BL ที่สกัดได้สำเร็จก็มีค่า (ผู้ใช้กรอกเองแค่ 131/181 record)
-        // ทุกค่าที่เขียนกลับติด _src = 'verify:<ไฟล์ต้นทาง>' เพื่อให้รู้ภายหลังว่ามาจากเอกสารใบไหน
-        // ไม่ทับค่าที่มีอยู่แล้ว (คนกรอกไว้เองถือว่าตั้งใจ) — เติมเฉพาะช่องที่ยังว่าง
-        const si = result.shipmentInfo || {};
-        const fill = {};
-        if (si.etd) fill.etd = si.etd;
-        if (si.vessel) fill.vessel = si.vessel;
-        if (si.blOrAwbNo) fill.bl_awb = si.blOrAwbNo;
-        if (result.po && Object.keys(fill).length) {
-          try {
-            const data   = loadTracking();
-            const idx    = data.findIndex(r => (r.po_so || r.id) === result.po);
-            const before = idx >= 0 ? data[idx] : null;
-            const applied = {};
-            Object.keys(fill).forEach(k => {
-              const cur = before ? before[k] : undefined;
-              if (cur === undefined || cur === null || cur === '') applied[k] = fill[k];
-            });
-            if (Object.keys(applied).length) {
-              const ref  = si.sourceFile || 'อัปโหลด';
-              const iso  = new Date().toISOString();
-              const src  = stampProvenance(before && before._src, Object.keys(applied), 'verify:' + ref, iso);
-              const rec  = { ...(before || {}), po_so: result.po, ...applied, _src: src, _ts: Date.now() };
-              if (idx >= 0) data[idx] = rec; else data.push(rec);
-              saveTracking(data);
-              auditLog(before ? 'update' : 'create', result.po, Object.keys(applied), req.socket.remoteAddress);
-              result.fieldsSaved = Object.keys(applied);
-            } else {
-              result.fieldsSaved = [];   // มีค่าอยู่แล้วทุกช่อง ไม่ทับของเดิม
-            }
-            result.etdSaved = !!applied.etd;   // คงชื่อเดิมไว้ให้ frontend ที่ใช้อยู่
-          } catch (saveErr) {
-            console.error('[API] verify-shipment: บันทึกค่าที่สกัดได้ไม่สำเร็จ:', saveErr.message);
-            result.etdSaved = false;
-          }
-        }
-        jsonOk(res, result);
-      } catch (e) {
-        console.error('[API] verify-shipment:', e.message);
-        jsonErr(res, 400, e.message);
-      }
-      return;
-    }
 
     jsonErr(res, 404, 'API endpoint not found');
     return;
@@ -2261,8 +2135,7 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// /api/verify-shipment (ตรวจในเครื่อง) เร็วกว่าตอนเรียก AI มาก แต่ยังตั้ง timeout ไว้กว้างๆ
-// เผื่อเคสไฟล์เยอะ/PDF ใหญ่ผิดปกติที่ extraction อาจใช้เวลานานกว่าปกติ
+// /api/freight-extract ส่ง PDF ให้ OpenAI อ่าน จึงตั้ง timeout ไว้กว้าง เผื่อไฟล์ใหญ่/โมเดลตอบช้า
 server.requestTimeout = 6 * 60 * 1000;
 server.headersTimeout = 65 * 1000;
 
