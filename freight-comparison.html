@@ -404,12 +404,17 @@ function normalizeQuote(q){
     delete o.transit;                                                  // ช่อง transit ถูกถอดออกจากหน้าจอแล้ว
   });
   const n=q.options.length;
+  let dropped=0;
   (q.rows||[]).forEach(r=>{
     if(!r.src||typeof r.src!=='object')r.src={};   // ที่มาของราคาต่อคอลัมน์ (ไฟล์ PDF ที่อ่านมา)
     if(!Array.isArray(r.prices))r.prices=[];
     if(r.prices.length<n)r.prices=r.prices.concat(Array(n-r.prices.length).fill(null));
-    else if(r.prices.length>n)r.prices=r.prices.slice(0,n);
+    else if(r.prices.length>n){
+      dropped+=r.prices.slice(n).filter(p=>num(p)!=null).length;   // นับเฉพาะที่มีค่าจริง ช่องว่างไม่ใช่การสูญเสีย
+      r.prices=r.prices.slice(0,n);
+    }
   });
+  if(dropped)normWarn=`ใบนี้มีราคา ${dropped} ช่องที่อยู่เกินจำนวนคอลัมน์ (ตอนนี้มี ${n} คอลัมน์) — ตัดออกแล้วเพราะไม่มีคอลัมน์รองรับ ถ้าต้องใช้ให้เพิ่มคอลัมน์แล้วกรอกใหม่`;
   if(num(q.taxFactor)==null)q.taxFactor=0;
   return ensureTemplateRows(q);
 }
@@ -568,18 +573,29 @@ function renderTable(){
   $('tbl').innerHTML=html;
 }
 
-function renderSummary(){
-  const t=totals(), M=cmpMeta(t), best=M.best, nFilledOpt=t.filter(x=>x.filled).length;
-  const warns=[];
-  if(best>=0&&!M.fair)warns.push(`<b>ยอดต่ำสุดยังเทียบกันตรงๆ ไม่ได้</b> — "${esc(Q.options[best].label)||'ตัวเลือก '+(best+1)}" กรอกราคาไว้ ${t[best].filled} รายการ ขณะที่คอลัมน์ที่ครบที่สุดกรอก ${M.maxFilled} รายการ ยอดจึงต่ำกว่าโดยอัตโนมัติเพราะรายการที่ยังไม่กรอกไม่ถูกนับ ไม่ใช่เพราะไม่มีค่าใช้จ่าย — ขอราคาให้ครบทุกช่องก่อนตัดสินใจ · ถ้าช่องที่ว่างคือรายการที่ไม่มีค่าใช้จ่ายจริงในตัวเลือกนี้ ข้ามคำเตือนนี้ได้`);
+// คำเตือนต้องสร้างจากที่เดียว แล้วใช้ได้ทั้งบนหน้าจอและในไฟล์ที่ส่งออก
+// ถ้าปล่อยให้คำเตือนอยู่แค่บนหน้าจอ ไฟล์ Excel ที่ถูกส่งต่อไปตัดสินใจจะไม่มีอะไรบอกเลย
+function compareWarnings(){
+  const t=totals(), M=cmpMeta(t), best=M.best, out=[];
+  const nameOf=(o,i)=>String(o.label||'').trim()||('ตัวเลือก '+(i+1));
+  if(best>=0&&!M.fair)out.push(`ยอดต่ำสุดยังเทียบกันตรงๆ ไม่ได้ — "${nameOf(Q.options[best],best)}" กรอกราคาไว้ ${t[best].filled} รายการ ขณะที่คอลัมน์ที่ครบที่สุดกรอก ${M.maxFilled} รายการ ยอดจึงต่ำกว่าโดยอัตโนมัติเพราะรายการที่ยังไม่กรอกไม่ถูกนับ ไม่ใช่เพราะไม่มีค่าใช้จ่าย — ขอราคาให้ครบทุกช่องก่อนตัดสินใจ · ถ้าช่องที่ว่างคือรายการที่ไม่มีค่าใช้จ่ายจริงในตัวเลือกนี้ ข้ามคำเตือนนี้ได้`);
   const fRow=Q.rows.find(isFreightRow);
   if(fRow)Q.options.forEach((o,i)=>{
     if(!hasTiers(o))return;
     const h=tierHit(o,qtyFor(fRow,o));
-    if(h&&h.out)warns.push(`<b>${esc(o.label)||'ตัวเลือก '+(i+1)} ยังไม่มีราคาสำหรับชิปเม้นนี้</b> — ขั้นบันไดค่าระวางที่เสนอมาครอบคลุม ${esc(tierRange(o))} ${fRow.basis==='kgs'?'กก.':'ลบ.ม.'} แต่ชิปเม้นนี้อยู่ที่ ${fmt(qtyFor(fRow,o),2)} ซึ่งอยู่นอกช่วง ต้องขอราคาเพิ่มจากผู้ให้บริการ ไม่ใช่ใช้ขั้นสุดท้ายแทน`);
-    if(h&&h.noQty)warns.push(`${esc(o.label)||'ตัวเลือก '+(i+1)} ตั้งขั้นบันไดไว้แล้ว แต่ยังไม่ได้กรอก ${fRow.basis==='kgs'?'น้ำหนัก':'Measurement (CBM)'} จึงยังเลือกขั้นไม่ได้`);
+    if(h&&h.out)out.push(`${nameOf(o,i)} ยังไม่มีราคาสำหรับชิปเม้นนี้ — ขั้นบันไดค่าระวางที่เสนอมาครอบคลุม ${tierRange(o)} ${fRow.basis==='kgs'?'กก.':'ลบ.ม.'} แต่ชิปเม้นนี้อยู่ที่ ${fmt(qtyFor(fRow,o),2)} ซึ่งอยู่นอกช่วง ต้องขอราคาเพิ่มจากผู้ให้บริการ ไม่ใช่ใช้ขั้นสุดท้ายแทน`);
+    if(h&&h.noQty)out.push(`${nameOf(o,i)} ตั้งขั้นบันไดไว้แล้ว แต่ยังไม่ได้กรอก ${fRow.basis==='kgs'?'น้ำหนัก':'Measurement (CBM)'} จึงยังเลือกขั้นไม่ได้`);
   });
-  $('cmpWarn').innerHTML = warns.map(w=>`<div class="warnbar"><span>⚠</span><span>${w}</span></div>`).join('');
+  return out;
+}
+function renderSummary(){
+  const t=totals(), M=cmpMeta(t), best=M.best, nFilledOpt=t.filter(x=>x.filled).length;
+  // ตัวหนาเฉพาะประโยคแรก (ก่อน " — ") ที่เหลือเป็นคำอธิบาย
+  $('cmpWarn').innerHTML = compareWarnings().map(w=>{
+    const i=w.indexOf(' — ');
+    const head=i>0?`<b>${esc(w.slice(0,i))}</b>${esc(w.slice(i))}`:esc(w);
+    return `<div class="warnbar"><span>⚠</span><span>${head}</span></div>`;
+  }).join('');
   $('summary').innerHTML=Q.options.map((o,i)=>{
     const short=t[i].filled>0&&t[i].filled<M.maxFilled?M.maxFilled-t[i].filled:0;
     const gap=i===best&&nFilledOpt>1?Math.min(...t.filter((x,j)=>j!==i&&x.filled).map(x=>x.total))-t[i].total:null;
@@ -605,7 +621,8 @@ function renderToolbar(){
   $('btnDel').disabled=!saved.some(q=>q.id===Q.id);
   $('status').textContent=dirty?'● ยังไม่บันทึก':(Q.updatedAt?'บันทึกล่าสุด '+Q.updatedAt.replace('T',' ').slice(0,16):'ใบใหม่ (ยังไม่บันทึก)');
 }
-function renderAll(){ renderToolbar(); renderHead(); renderTable(); renderSummary(); }
+function renderAll(){ renderToolbar(); renderHead(); renderTable(); renderSummary();
+  if(normWarn){ const w=normWarn; normWarn=''; setTimeout(()=>toast(w,true),0); } }
 function refreshCalc(){ renderTable(); renderSummary(); renderToolbar(); }
 
 // ─── event wiring (delegation — DOM ถูก re-render บ่อย) ──────────────────────
@@ -649,7 +666,10 @@ document.addEventListener('click',e=>{
   if(b.dataset.type){ switchType(b.dataset.type); return; }
   if(b.dataset.delopt!=null){ const oi=+b.dataset.delopt; if(Q.options.length<=1)return; if(!confirm('ลบคอลัมน์ "'+(Q.options[oi].label||'ตัวเลือก '+(oi+1))+'" ?'))return; Q.options.splice(oi,1); Q.rows.forEach(r=>r.prices.splice(oi,1)); touch(); renderAll(); return; }
   if(b.dataset.tier!=null){ openTierEditor(+b.dataset.tier); return; }
-  if(b.dataset.delrow!=null){ const ri=+b.dataset.delrow; Q.rows.splice(ri,1); touch(); refreshCalc(); return; }
+  if(b.dataset.delrow!=null){ const ri=+b.dataset.delrow, r=Q.rows[ri]; if(!r)return;
+    const hasContent=String(r.desc||'').trim()||(r.prices||[]).some(p=>num(p)!=null);
+    if(hasContent&&!confirm('ลบรายการ "'+(String(r.desc||'').trim()||'(ยังไม่ตั้งชื่อ)')+'" ?\nข้อมูลในแถวนี้จะหายและกู้คืนไม่ได้'))return;
+    Q.rows.splice(ri,1); touch(); refreshCalc(); return; }
   if(b.dataset.addrow!=null){ const sec=b.dataset.addrow; let last=-1; Q.rows.forEach((r,i)=>{if(r.section===sec)last=i;});
     Q.rows.splice(last+1,0,{id:uid(),section:sec,desc:'',basis:'flat',unit:'SHIP',cur:'THB',qty:1,tpl:false,prices:Q.options.map(()=>null)}); touch(); refreshCalc();
     const el=document.querySelector(`[data-p="rows.${last+1}.desc"]`); if(el)el.focus(); return; }
@@ -683,12 +703,31 @@ function updateAmountsInPlace(){
   renderSummary();
 }
 
+const defaultDocRef=t=>String(t||'').startsWith('import')?'SCM-IF-':'';
+// "มีข้อมูลแล้วหรือยัง" ต้องนับทุกอย่างที่ผู้ใช้พิมพ์ ไม่ใช่แค่ราคา — เดิมนับแค่ prices/ref/label
+// ทำให้คนที่เพิ่งเพิ่มแถวเองหรือกรอกหัวเอกสารไว้ กดสลับแม่แบบแล้วของหายโดยไม่มีอะไรถาม
+function quoteHasUserData(){
+  const h=Q.head;
+  if(Q.rows.some(r=>r.prices.some(p=>num(p)!=null)))return true;
+  if(Q.rows.some(r=>!r.tpl&&String(r.desc||'').trim()))return true;                       // แถวที่เพิ่มเอง
+  if(Q.rows.some(r=>r.tpl&&r.tkey&&String(r.desc||'').trim()!==r.tkey.split('|').slice(1).join('|')))return true; // แถวแม่แบบที่แก้ชื่อ
+  if(Q.options.some(o=>String(o.label||'').trim()||hasTiers(o)))return true;
+  if(String(h.docRef||'').trim()&&String(h.docRef).trim()!==defaultDocRef(Q.type))return true;
+  return ['ref','party','category','group','qty','cbm','gw','vw'].some(k=>{
+    const v=h[k]; return v!=null&&String(v).trim()!=='';
+  });
+}
 function switchType(type){
   if(type===Q.type)return;
-  const hasData=Q.rows.some(r=>r.prices.some(p=>p!=null))||Q.head.ref||Q.options.some(o=>String(o.label||'').trim());
-  if(hasData&&!confirm('เปลี่ยนแม่แบบจะเริ่มใบใหม่ (ใบปัจจุบันถ้ายังไม่บันทึกจะหาย) ดำเนินการต่อ?'))return;
-  const keep={ref:Q.head.ref,party:Q.head.party,category:Q.head.category,group:Q.head.group,qty:Q.head.qty,fx:Q.head.fx,fxAsOf:Q.head.fxAsOf,cbm:Q.head.cbm,gw:Q.head.gw,vw:Q.head.vw};
-  Q=newQuote(type); Object.assign(Q.head,keep); dirty=false; touch(); dirty=false; renderAll();
+  if(quoteHasUserData()&&!confirm('เปลี่ยนแม่แบบจะเริ่มใบใหม่ — รายการที่เพิ่มเอง ราคา และขั้นบันไดที่ตั้งไว้จะหาย (ใบที่ยังไม่บันทึกกู้คืนไม่ได้) ดำเนินการต่อ?'))return;
+  const h=Q.head;
+  const keep={ref:h.ref,party:h.party,category:h.category,group:h.group,qty:h.qty,fx:h.fx,fxAsOf:h.fxAsOf,cbm:h.cbm,gw:h.gw,vw:h.vw};
+  // docRef เก็บต่อเมื่อผู้ใช้พิมพ์เพิ่มจากค่าเริ่มต้นของแม่แบบเดิม (ไม่งั้นใช้ค่าเริ่มต้นของแม่แบบใหม่)
+  const dr=String(h.docRef||'').trim();
+  if(dr&&dr!==defaultDocRef(Q.type))keep.docRef=h.docRef;
+  Q=newQuote(type); Object.assign(Q.head,keep);
+  if(TEMPLATES[type].termOptions.includes(h.term))Q.head.term=h.term;   // เทอมเดิมถ้าแม่แบบใหม่มีให้เลือก
+  dirty=false; touch(); dirty=false; renderAll();
 }
 
 // ─── server I/O ──────────────────────────────────────────────────────────────
@@ -762,6 +801,9 @@ function exportXlsx(){
   foot('* As per receipt — factor '+(num(Q.taxFactor)??0),t.map(x=>x.filled?x.tax:null));
   foot('TOTAL COST (THB)',t.map(x=>x.filled?x.total:null));
   foot('Average Cost Per Unit',t.map(x=>x.filled?x.avg:null));
+  const warns=compareWarnings();
+  if(warns.length){ aoa.push([]); aoa.push(['*** คำเตือน — อ่านก่อนใช้ตัวเลขนี้ตัดสินใจ ***']);
+    warns.forEach((w,i)=>aoa.push([(i+1)+'. '+w])); }
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols']=[{wch:5},{wch:34},{wch:8},{wch:9},{wch:6}].concat(Q.options.flatMap(()=>[{wch:13},{wch:15}]));
   // ชื่อชีทและชื่อไฟล์ต้องผ่านตัวกรองคนละชุด — ชีทห้าม \ / ? * [ ] : · ไฟล์ห้าม < > : " / \ | ? * ด้วย
@@ -825,6 +867,7 @@ function wireTierEditor(){
 // เจตนา: เป็น "ผู้ช่วยกรอก" ไม่ใช่ "คำนวณอัตโนมัติ" — เติมเฉพาะช่องว่าง ทำเครื่องหมายทุกช่องที่เติม
 // และไม่ตัดสินว่าเจ้าไหนถูกที่สุดจากข้อมูลที่คนยังไม่ยืนยัน (ค่าระวางหลัก AI จับได้ราว 59% เท่านั้น)
 let pdfData=null, pdfName='';
+let normWarn='';   // ข้อความเตือนจาก normalizeQuote() — โชว์หลัง render เพราะตอน normalize ยังไม่มี DOM
 async function readPdf(file){
   if(!file)return;
   if(!/\.pdf$/i.test(file.name)){ toast('รองรับเฉพาะไฟล์ PDF',true); return; }
