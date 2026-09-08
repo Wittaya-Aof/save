@@ -1819,6 +1819,10 @@ const server = http.createServer(async (req, res) => {
         const isEmpty = v => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
         let applied = 0;
         const rejected = [];
+        // record ที่ server "ตั้งใจข้าม" — ต่างจาก rejected (ค่าผิด) และต่างจากเขียนสำเร็จ
+        // ⚠ เดิมเส้นทางนี้ `return` เงียบ ตอบ 200 โดยไม่นับที่ไหนเลย → ตัวเรียก (scan-shipment-docs.mjs)
+        //   แยกไม่ออกว่า "เขียนแล้ว" หรือ "ข้ามไป" จึง log ว่าสำเร็จทุกครั้ง (บั๊กจริง 2026-09-08)
+        const skippedRecords = [];
         recs.forEach(r => {
           const key = r && (r.po_so || r.id);
           if (key == null) return;
@@ -1875,7 +1879,9 @@ const server = http.createServer(async (req, res) => {
               else if (!isEmpty(before.vessel) && !isEmpty(r.vessel)) idMismatch = !same(before.vessel, r.vessel);
               else if (!isEmpty(before.bl_awb) && !isEmpty(r.bl_awb)) idMismatch = !same(before.bl_awb, r.bl_awb);
               if (idMismatch) {
-                console.log(`[Upsert] ${key} ข้ามทั้ง record — เป็นคนละชิปเม้น (ในระบบ bl=${before.bl_awb || '-'}/เรือ=${before.vessel || '-'} · ที่ส่งมา bl=${r.bl_awb || '-'}/เรือ=${r.vessel || '-'})`);
+                const why = `คนละชิปเม้น (ในระบบ bl=${before.bl_awb || '-'}/เรือ=${before.vessel || '-'} · ที่ส่งมา bl=${r.bl_awb || '-'}/เรือ=${r.vessel || '-'})`;
+                console.log(`[Upsert] ${key} ข้ามทั้ง record — ${why}`);
+                skippedRecords.push({ po_so: key, reason: why });
                 return;
               }
               const skipped = [], forced = [];
@@ -1947,7 +1953,8 @@ const server = http.createServer(async (req, res) => {
         });
         const ok = saveTracking(data);
         if (rejected.length) console.error('[Upsert] ปฏิเสธค่าที่ผิดปกติ:', JSON.stringify(rejected));
-        jsonOk(res, { ok, applied, total: data.length, rejected });
+        if (skippedRecords.length) console.log(`[Upsert] ข้าม ${skippedRecords.length} record (เป็นคนละชิปเม้น) — รายงานกลับให้ผู้เรียกแล้ว`);
+        jsonOk(res, { ok, applied, total: data.length, rejected, skipped: skippedRecords });
       } catch(e) { jsonErr(res, 400, e.message); }
       return;
     }

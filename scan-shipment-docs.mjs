@@ -17,6 +17,7 @@ import OpenAI from 'openai';
 import XLSX from 'xlsx';
 import { openEtsSession, closeEtsSession, searchVesselActualDate } from './lib/ets-lookup.mjs';
 import { normalizeEtsResult } from './lib/shipment-rules.cjs';
+import { classifyUpsert, folderRetryDecision, etsSessionAction, MAX_FOLDER_ATTEMPTS } from './lib/scan-policy.cjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,6 +35,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const IMPORT_ROOT = 'D:\\Aof\\1. Shipment\\1. Import';
 const MIN_YEAR = 2025;
 const SEEN_FILE = path.join(ROOT, 'doc_scan_seen.json');
+const FOLDER_FAILS_KEY = '__folder_fails__';   // คีย์สงวนใน ledger (ไม่ใช่ path) — ดูคำอธิบายใน main()
 const LOG_FILE = path.join(ROOT, 'doc_scan.log');
 const LOCK_FILE = path.join(ROOT, 'scan.lock');
 const ALLOWED_EXT = new Set(['.pdf', '.xlsx', '.xls', '.png', '.jpg', '.jpeg']);
@@ -815,6 +817,14 @@ async function main() {
   }
   log('=== เริ่มสแกน ===');
   const seen = loadSeen();
+  // ── ตัวนับ "เขียนไม่สำเร็จติดกันกี่รอบ" ต่อโฟลเดอร์ ─────────────────────────────────
+  // เก็บใน ledger เดียวกันเพื่อให้อยู่ข้ามรอบ (ได้ atomic write ของ saveSeen ฟรี)
+  // ⚠ ใช้ key สงวนที่ไม่ใช่ path — ตัวกรอง `fp.startsWith(IMPORT_ROOT)` ในขั้นเก็บกวาด ledger
+  //   จึงข้ามให้เอง และตัวเทียบไฟล์ (`seen[fp]`) ก็ชนกันไม่ได้เพราะคีย์เป็น absolute path เสมอ
+  if (!seen[FOLDER_FAILS_KEY] || typeof seen[FOLDER_FAILS_KEY] !== 'object' || Array.isArray(seen[FOLDER_FAILS_KEY])) {
+    seen[FOLDER_FAILS_KEY] = {};
+  }
+  const folderFails = seen[FOLDER_FAILS_KEY];   // อ้างอิงเข้าไปใน seen → แก้แล้ว saveSeen เก็บให้เลย
   const yearFolders = discoverYearFolders();
   log(`ปีที่สแกน: ${yearFolders.join(', ')}`);
 
@@ -907,6 +917,8 @@ async function main() {
   }
 
   let etsSession = null;
+  let etsReopens = 0;      // นับจำนวนครั้งที่ session พังแล้วต้องเปิดใหม่ (มีเพดาน)
+  let etsGaveUp = false;   // ถึงเพดานแล้ว = เลิกค้น ETS ทั้งรอบ ไม่เปิด chromium ซ้ำอีก
   let processed = 0;
   let skippedBacklog = 0;
   const writtenThisRun = new Map(); // po → { folder, mode } กันสองโฟลเดอร์ของ PO เดียวกันทับกันในรอบเดียว
@@ -922,6 +934,8 @@ async function main() {
       const poNumbers = extractPoNumbers(folderName);
       const fullDir = path.join(IMPORT_ROOT, yearFolder, folderName);
       const allFiles = walkFiles(fullDir);
+      // นับความล้มเหลวของ "การเขียนจริง" ในโฟลเดอร์นี้ — ใช้ตัดสินว่าจะตีตรา seen หรือจะลองใหม่รอบหน้า
+      let folderWriteFails = 0;
       const newFiles = allFiles.filter(fp => {
         let stat;
         try { stat = fs.statSync(fp); } catch (e) { return false; }
@@ -1038,28 +1052,41 @@ async function main() {
         // ข้ามไปเลยดีกว่า: ประหยัดเวลา ~20 วิ/ครั้ง และไม่ทิ้ง not_found ปลอมไว้ใน log
         if (result.vessel && docMode === 'air') {
           log(`  ข้าม ETA lookup — ชิปเม้นทางอากาศ (ETS Vessel Arrival ค้นได้เฉพาะเรือ)`);
+        } else if (result.vessel && etsGaveUp) {
+          log(`  ข้าม ETA lookup — เลิกค้น ETS ทั้งรอบแล้ว (session พังครบเพดาน)`);
         } else if (result.vessel) {
+          let etaResult = null, etaErr = null;
           try {
-            if (!etsSession) { log('  เปิด ETS session ครั้งแรก...'); etsSession = await openEtsSession(); }
+            if (!etsSession) { log(`  เปิด ETS session${etsReopens ? ` ใหม่ (ครั้งที่ ${etsReopens + 1})` : ' ครั้งแรก'}...`); etsSession = await openEtsSession(); }
             // ส่ง etd ไปด้วยเพื่อให้ค้นในช่วงวันที่ของ shipment นี้จริงๆ ไม่ใช่ช่วงรอบ "วันนี้"
             // ⚠ ต้องมีเพดานเวลา — วัดจริง 2026-08-13: ETS ค้างไป 48 นาทีในการค้นครั้งเดียว
             // (XIN MING ZHOU 98 voy=2505S) เพราะ waitFor ภายในบางจุดไม่มี timeout กำกับ
             // ครั้งเดียวกินเวลามากกว่าทั้งรอบสแกน 45 โฟลเดอร์รวมกัน จึงตัดที่ 90 วิแล้วไปต่อ
-            const etaResult = await Promise.race([
+            etaResult = await Promise.race([
               searchVesselActualDate(etsSession.page, result.vessel, result.mode === 'air' ? 'air' : 'sea', result.voyage, result.etd),
               new Promise((_, rej) => setTimeout(() => rej(new Error('ETS ไม่ตอบใน 90 วินาที')), 90000)),
-            ]).catch(async (e) => {
-              // หมดเวลาแล้วหน้าเว็บค้างอยู่กลางทาง ใช้ session เดิมต่อไม่ได้ — ปิดทิ้งให้เปิดใหม่รอบหน้า
-              if (/90 วินาที/.test(e.message)) {
-                try { await closeEtsSession(etsSession); } catch (e2) {}
-                etsSession = null;
-              }
-              throw e;
-            });
+            ]);
             log(`  ETA lookup (${result.vessel} voy=${result.voyage} etd=${result.etd}): status=${etaResult.status} eta=${etaResult.eta} matchedVoyage=${etaResult.matchedVoyage} ของทั้งหมด ${etaResult.totalVoyagesFound} เที่ยว${etaResult.reason ? ' — ' + etaResult.reason : ''}`);
             Object.assign(fields, normalizeEtsResult(etaResult));
           } catch (e) {
+            etaErr = e;
             log(`  [WARN] ETA lookup ล้มเหลว: ${e.message}`);
+          }
+          // ── ⭐ ตัดสินชะตา session จาก "ผลที่คืนมา" ไม่ใช่แค่ exception ──────────────────
+          // searchVesselActualDate() ไม่ throw เลย — จับ exception ทุกตัวแล้วคืน {status:'error'}
+          // (lib/ets-lookup.mjs:274-279) การรอ catch อย่างเดียวจึงไม่มีวันเห็นหน้าเว็บที่พัง
+          // แล้ว session ที่ค้างกลางทางจะถูกใช้ต่อทุกโฟลเดอร์ที่เหลือ ทุกการ์ดได้ etsStatus:'error' เงียบๆ
+          const act = etsSessionAction(etaResult, etaErr, etsReopens);
+          if (act.close) {
+            etsReopens = act.reopens;
+            if (etsSession) { try { await closeEtsSession(etsSession); } catch (e2) {} }
+            etsSession = null;
+            if (act.giveUp) {
+              etsGaveUp = true;
+              log(`  [WARN] ETS พังครบ ${etsReopens} ครั้ง — เลิกค้น ETA ทั้งรอบนี้ (โฟลเดอร์ที่เหลือจะไม่มี ETA)`);
+            } else {
+              log(`  ปิด ETS session ที่พังทิ้ง — จะเปิดใหม่ที่โฟลเดอร์ถัดไป`);
+            }
           }
         }
 
@@ -1147,12 +1174,27 @@ async function main() {
               if (NO_WRITE) { log(`  [NO-WRITE] จะ upsert ${po}: ${JSON.stringify(payload)}`); continue; }
               // _fillEmptyOnly: การเขียนอัตโนมัติเติมได้เฉพาะช่องที่ยังว่าง ห้ามทับค่าที่มีอยู่แล้ว
               // (ปิดโหมดนี้ได้ด้วย --overwrite เมื่อมั่นใจแล้ว — ดู OVERWRITE)
-              await upsertTracking({ po_so: po, ...payload, _origin: `scan:${folderName}`,
+              const res = await upsertTracking({ po_so: po, ...payload, _origin: `scan:${folderName}`,
                 ...(OVERWRITE ? {} : { _fillEmptyOnly: true }),
                 ...(OVERWRITE_FIELDS.length ? { _overwriteFields: OVERWRITE_FIELDS } : {}) });
-              writtenThisRun.set(po, { folder: folderName, mode: docMode });
-              log(`  upsert ${po} สำเร็จ: ${JSON.stringify(payload)}`);
+              // ── ⭐ HTTP 200 ไม่ได้แปลว่าเขียนสำเร็จ ──────────────────────────────────────
+              // server ตอบ 200 ได้ทั้งตอนเขียนจริง ตอนปฏิเสธค่าที่ผิดปกติ และตอนข้าม record ทั้งใบ
+              // เดิมทิ้ง response ทั้งก้อนแล้ว log "สำเร็จ" ทุกครั้งที่ไม่ throw → ข้อมูลหายเงียบ
+              const verdict = classifyUpsert(res, po);
+              if (verdict.kind === 'fail') {
+                folderWriteFails++;
+                log(`  [ERROR] upsert ${po} ไม่สำเร็จ: ${verdict.reason}`);
+              } else if (verdict.kind === 'skip') {
+                // ข้ามอย่างถูกต้อง (คนละชิปเม้น) = ผลที่จบแล้ว **ไม่ใช่ความล้มเหลว** ห้ามนับเพื่อลองใหม่
+                // ไม่งั้นโฟลเดอร์ที่เป็นคนละชิปเม้นโดยธรรมชาติจะเรียก AI ซ้ำทุก 20 นาทีตลอดไป
+                // ข้อมูลใบนี้ยังอยู่ครบใน shipment_runs.jsonl ที่เขียนไปก่อนหน้าแล้ว
+                log(`  [SKIP] ${po} — ${verdict.reason}`);
+              } else {
+                writtenThisRun.set(po, { folder: folderName, mode: docMode });
+                log(`  upsert ${po} สำเร็จ: ${JSON.stringify(payload)}`);
+              }
             } catch (e) {
+              folderWriteFails++;
               log(`  [ERROR] upsert ${po} ล้มเหลว: ${e.message}`);
             }
           }
@@ -1161,8 +1203,23 @@ async function main() {
         }
         } // จบลูป shipment ต่อโฟลเดอร์
 
-        // mark seen เฉพาะตอนประมวลผลสำเร็จ (ไม่ throw) กันไฟล์ที่ error ค้างไม่ถูก retry รอบหน้า
+        // ── ตีตรา seen: เฉพาะเมื่อ "เขียนจริงสำเร็จ หรือข้ามอย่างถูกต้อง" เท่านั้น ──────────────
+        // ⚠ เดิมบล็อกนี้อยู่นอก try/catch ของ upsert จึงรัน **แม้ upsert พังทุกใบ** → โฟลเดอร์ถูก
+        //   ตีตราว่าประมวลผลแล้วและไม่เคยถูกลองใหม่เลย = ข้อมูลหายเงียบ (บั๊กจริง 2026-09-08)
+        // ⚠ แต่ "ไม่ตีตราเมื่อพัง" เฉยๆ ก็อันตรายอีกทาง — โฟลเดอร์ที่พังด้วยเหตุถาวรจะเรียก AI ซ้ำ
+        //   ทุก 20 นาทีตลอดไป จึงต้องมีเพดาน แล้วยอมแพ้ **อย่างมีเสียง** ไม่ใช่ยอมแพ้เงียบ
         if (NO_WRITE) continue; // โหมดทดสอบ: ห้ามแตะ ledger ไม่งั้นรอบจริงจะข้ามโฟลเดอร์นี้ไปเลย
+        if (folderWriteFails) {
+          const d = folderRetryDecision(folderFails[folderName]);
+          if (d.retry) {
+            folderFails[folderName] = d.attempts;
+            saveSeen(seen);   // เก็บตัวนับไว้ แต่ยังไม่ตีตราไฟล์ → รอบหน้าจะสแกนโฟลเดอร์นี้ใหม่
+            log(`  [RETRY] เขียนไม่สำเร็จ ${folderWriteFails} รายการ — ยังไม่ตีตราโฟลเดอร์นี้ จะลองใหม่รอบหน้า (ครั้งที่ ${d.attempts}/${MAX_FOLDER_ATTEMPTS})`);
+            continue;
+          }
+          log(`  [GIVE-UP] เขียนไม่สำเร็จติดกันครบ ${d.attempts} รอบ — ตีตราโฟลเดอร์นี้แล้วเลิกลอง ต้องมีคนมาดู`);
+        }
+        delete folderFails[folderName];   // สำเร็จแล้ว = ล้างประวัติความล้มเหลว
         for (const fp of allFiles) {
           try { const st = fs.statSync(fp); seen[fp] = { mtimeMs: st.mtimeMs, size: st.size }; } catch (e) {}
         }
@@ -1188,7 +1245,16 @@ async function main() {
       if (!fp.startsWith(IMPORT_ROOT)) continue; // ไม่ใช่ไฟล์ใต้ root นี้ ไม่ตัดสิน
       if (!fs.existsSync(fp)) { delete seen[fp]; pruned++; }
     }
-    if (pruned) { saveSeen(seen); log(`[Seen] ตัด entry ของไฟล์ที่ไม่มีอยู่แล้ว ${pruned} รายการออกจาก ledger`); }
+    // ตัวนับความล้มเหลวของโฟลเดอร์ที่ถูกลบ/เปลี่ยนชื่อไปแล้วก็ต้องตัดด้วย ไม่งั้นค้างถาวร
+    let prunedFails = 0;
+    for (const fname of Object.keys(folderFails)) {
+      const hit = Object.keys(seen).some(k => k.startsWith(IMPORT_ROOT) && k.includes(path.sep + fname + path.sep));
+      if (!hit) { delete folderFails[fname]; prunedFails++; }
+    }
+    if (pruned || prunedFails) {
+      saveSeen(seen);
+      log(`[Seen] เก็บกวาด ledger: ไฟล์ที่ไม่มีอยู่แล้ว ${pruned} รายการ · ตัวนับความล้มเหลวที่ตกค้าง ${prunedFails} โฟลเดอร์`);
+    }
   }
 
   log(`=== จบการสแกน — ประมวลผล ${processed} โฟลเดอร์ ===`);

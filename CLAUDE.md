@@ -1086,15 +1086,53 @@ git config core.hooksPath .githooks      # ทำครั้งเดียว�
 ```
 ⚠ **hook ของ Claude Code ใช้แทนไม่ได้** — ยิงตาม tool call ของ Claude เอง ไม่รู้เวลาตัวอื่นแก้ไฟล์
 
+## ⭐ ปิดช่องที่ "ระบบเดินต่อเหมือนไม่มีอะไรผิด" — finding 1 + 4 (2026-09-08 รอบต่อ)
+
+นโยบายทั้งหมดแยกเป็นฟังก์ชันบริสุทธิ์ที่ **`lib/scan-policy.cjs`** → เทสได้โดยไม่ต้องมี AI/เบราว์เซอร์/server
+
+### finding 1 — HTTP 200 ไม่ได้แปลว่าเขียนสำเร็จ
+`/api/tracking/upsert` ตอบ 200 ได้ทั้งตอนเขียนจริง ตอนปฏิเสธค่า และตอน**ข้าม record ทั้งใบ**
+(เส้น `idMismatch` เดิม `return` เงียบ ไม่เข้า `rejected` ไม่นับ `applied`) · scanner ทิ้ง response
+ทั้งก้อนแล้ว log "สำเร็จ" · แถม `saveSeen()` อยู่**นอก** try/catch จึงตีตราโฟลเดอร์แม้ upsert พังทุกใบ
+
+| แก้ | อะไร |
+|---|---|
+| server | เพิ่ม `skippedRecords` → ตอบ `skipped:[{po_so,reason}]` กลับมาด้วย |
+| `classifyUpsert(res,po)` | แยกผลเป็น `ok` / `skip` / `fail` |
+| `folderRetryDecision()` | พัง = ไม่ตีตรา ledger ลองใหม่รอบหน้า · **เพดาน 5 รอบ** แล้วยอมแพ้อย่างมีเสียง (`[GIVE-UP]`) |
+| ledger | เก็บตัวนับที่คีย์สงวน `__folder_fails__` ใน `doc_scan_seen.json` (ได้ atomic write ฟรี · ตัวกรอง `startsWith(IMPORT_ROOT)` ข้ามให้เอง) |
+
+> ⭐ **จุดตัดสินที่สำคัญที่สุด: "ข้ามอย่างถูกต้อง" ต้องไม่ถูกนับเป็นล้มเหลว**
+> โฟลเดอร์ที่เป็นคนละชิปเม้นเป็นเรื่องปกติมาก ถ้าเหมารวมเป็น fail จะไม่ตีตรา ledger แล้ว
+> **เรียก AI ซ้ำทุก 20 นาทีตลอดไป** = เสียเงินฟรี · การแก้แบบ "ไม่ mark เมื่อพัง" เฉยๆ อันตรายอีกทาง
+
+### finding 4 — ⚠️ ตัวรีวิวชี้ผิดจุด บั๊กจริงหนักกว่า
+รายงานว่า "error ที่ไม่ใช่ timeout ยังใช้ session เดิมต่อ" สื่อว่าปัญหาอยู่ในบล็อก `catch`
+**แต่ `searchVesselActualDate()` ไม่ throw เลย** — จับ exception ทุกตัวแล้วคืน `{status:'error'}`
+(`lib/ets-lookup.mjs:274-279`) · `catch` จึงไม่มีวันเห็นหน้าเว็บที่พัง
+
+ผลจริง: session ที่ค้างถูกใช้ต่อ**ทุกโฟลเดอร์ที่เหลือ** ทุกการ์ดได้ `etsStatus:'error'`
+**เงียบสนิท ไม่มี WARN ไม่มี exception** → `etsSessionAction(result, err, reopens)` ตัดสินจาก
+**ผลที่คืนมา** · `not_found` = ผลปกติ **ห้ามปิด** · `error` = ปิดทิ้งเปิดใหม่ · เพดาน 3 ครั้งแล้วเลิกค้นทั้งรอบ
+
+### 🔴 บั๊กที่เทสจริงจับได้ อ่านโค้ดไม่เจอ
+ตั้งชื่อตัวนอกว่า `skipped` แล้ว**ชนกับ `const skipped = [], forced = []`** ในบล็อก `_fillEmptyOnly`
+(ตัวนั้นคือรายชื่อ *ฟิลด์* ที่ไม่ถูกทับ คนละความหมาย) → TDZ `Cannot access 'skipped' before initialization`
+ทุกครั้งที่เข้าเส้น idMismatch · **unit test ผ่าน 25/25 ตอนนั้น เพราะตรวจซอร์ส ไม่ได้รัน endpoint จริง**
+
+### ทดสอบแล้ว
+`tests/scan-policy.cjs` **26/26** · ยิง endpoint จริง 3 เคส (คนละชิปเม้น→`skipped` พร้อมเหตุผล ·
+ค่าติดลบ→`rejected` · ปกติ→`applied:1`) **ข้อมูลไม่เปลี่ยนแม้ไบต์เดียวทั้ง 3 เคส** ·
+`classifyUpsert` อ่าน response จริงถูกทั้งสามทาง · **Scheduled Task รันโค้ดใหม่เองเมื่อ 15:44:42**
+บล็อกเก็บกวาด ledger ทำงานถูก (`ตัวนับความล้มเหลวที่ตกค้าง 0 โฟลเดอร์`) · `--dry-run` ผ่าน 0 บาท ·
+`shipment-stage` 25/25 · `pack-invariants` 42/0 · `freight-ui` 36/36 · `freight-review` 8/8 ·
+`freight-pdf` 17/17 · `freight-e2e` ยอดตรง Excel
+
+```bash
+node tests/scan-policy.cjs      # นโยบายรอบสแกน — บริสุทธิ์ ไม่ต้องมี server
+```
+
 ## ยังไม่แก้ (ตั้งใจ)
-- **scanner ไม่ตรวจ `ok`/`applied`/`rejected` ที่ server ตอบกลับ + `saveSeen()` รันแม้ upsert พัง**
-  (ยืนยันแล้วว่าเป็นบั๊กจริง 2026-09-08) — `upsertTracking()` reject เฉพาะ non-2xx แต่เส้น `idMismatch`
-  ในฝั่ง server `return` เงียบ (ไม่เข้า `rejected` ไม่นับ `applied`) ตอบ 200 · scanner log "สำเร็จ" ทันที
-  แล้ว `saveSeen()` ที่อยู่**นอก** try/catch mark โฟลเดอร์เป็น processed → **ไม่ retry อีกเลย**
-  · ยังไม่แก้เพราะต้องออกแบบ ledger ใหม่ (สถานะต่อโฟลเดอร์ + นโยบาย retry) = งานคนละก้อน
-- **ETS session ที่เสียถูกใช้ซ้ำทั้งรอบ** (ยืนยันแล้ว 2026-09-08) — `scan-shipment-docs.mjs` ปิด session
-  เฉพาะเมื่อ error ตรงกับ `/90 วินาที/` · selector/navigation/parse ล้มได้ error คนละข้อความ →
-  session ค้างถูกใช้ต่อทุกโฟลเดอร์ที่เหลือ · แก้ต้องแยกชนิด error + กำหนดเพดาน retry
 - ~~pinwheel / tail rotation สำหรับพาเลท~~ **ทำครบแล้ว** (2026-08-01) — ดูหัวข้อ "แผนผังพื้นพาเลท
   แบบสลับทิศ" ด้านบน · 20'GP + standard ได้ 10 ใบ = optimal ที่พิสูจน์แล้ว
 - **6 คู่ที่ยังไม่ถึงขอบบน** (20'GP euro 11/12 · 20'RF standard 9/10, euro 10/11, asia 8/9 ·
