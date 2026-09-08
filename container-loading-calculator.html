@@ -1767,7 +1767,41 @@ function palPlanCandidates(spanL,spanW,pL,pW,allowMix){
 // ถ้าตอนให้คะแนนแผนไม่ลองหมุน จะประเมินแผนที่ "ต้องหมุนกล่องจึงจะคุ้ม" ต่ำกว่าความจริง
 // (วัดจริง: พาเลท 800×600 กับกล่อง 300×250 — ไม่หมุน 4 กล่อง/ชั้น หมุนแล้ว 6 กล่อง/ชั้น
 //  ทำให้แผน 3 ใบเสมอกับแผน 2 ใบ แล้วแพ้ที่ tie-break → ของหายไป 54 กล่อง)
-function palSlotFit(bL,bW,slot,rot){
+// ── ⭐ แผนกล่อง 1 ชั้นบนพาเลท: เลนหลัก + เลนรองที่หมุน 90° ในแถบที่เหลือ ──────────────
+// เดิมทั้งระบบวางกล่องบนพาเลทเป็น "กริดทิศเดียวทั้งใบ" แล้วทิ้งแถบที่เหลือตามความกว้างไปเปล่าๆ
+// ทั้งที่แถบนั้นมักกว้างพอให้วางกล่องหมุน 90° ได้อีกแถว — เป็นท่าที่คลังใช้กันจริง
+// (เคสคลาสสิก: พาเลท 1200×1000 + กล่อง 600×400 → กริดได้ 4 ใบ/ชั้น แต่หน้างานวางได้ 5)
+//
+// วัดกับ 60 คู่ (4 พาเลท × 15 ขนาดกล่องส่งออกที่พบทั่วไป): 340 → 363 กล่อง/ชั้น = +6.8%
+// ได้เพิ่ม 19/60 คู่ · เก็บกำไรได้ 47% ของเพดาน optimal ที่พิสูจน์ด้วย DFS (389 กล่อง)
+//
+// ⚠ สองเลนอยู่คนละช่วง y กันสนิท (เลนรองเริ่มที่ y = nAcross×bW พอดี) จึงทับกันไม่ได้เชิงเรขาคณิต
+// ⚠ ต้องใช้ฟังก์ชันนี้ทั้งฝั่งความจุ (palSlotFit) และฝั่งวางจริง (makePal) — ถ้าใช้คนละสูตร
+//   ความจุที่รายงานกับที่วางได้จริงจะไม่ตรงกัน ซึ่งเป็นบั๊กที่โปรเจกต์นี้เจอซ้ำมาแล้วหลายรอบ
+// คืน {n, lanes:[{y0,across,bL,bW,nAcross}]} — lanes เรียงตาม y จากล่างขึ้นบน
+function palBoxPlan(along,across,bL,bW,allowRot){
+  var best=null;
+  var cands=allowRot?[[bL,bW],[bW,bL]]:[[bL,bW]];
+  cands.forEach(function(d){
+    var l=d[0], w=d[1];
+    if(w>across||l>along)return;
+    var nA=Math.floor(across/w), cols=Math.floor(along/l);
+    if(nA<1||cols<1)return;
+    var lanes=[{y0:0,across:nA*w,bL:l,bW:w,nAcross:nA}];
+    var n=nA*cols;
+    if(allowRot){
+      // แถบที่เหลือตามความกว้าง — กล่องหมุน 90° กินความกว้าง l ต่อแถว และยาว w ต่อคอลัมน์
+      var rest=across-nA*w, nB=Math.floor(rest/l), tcols=Math.floor(along/w);
+      if(nB>0&&tcols>0){ lanes.push({y0:nA*w,across:nB*l,bL:w,bW:l,nAcross:nB}); n+=nB*tcols; }
+    }
+    if(!best||n>best.n)best={n:n,lanes:lanes};
+  });
+  return best||{n:0,lanes:[]};
+}
+// allowLanes: เปิดเลนรองได้เฉพาะเมื่อ "พาเลทกลุ่มนี้มี SKU เดียว" — หลาย SKU แชร์พาเลทได้จริง
+// และแต่ละ SKU ต้องการความกว้างเลนไม่เท่ากัน จึงประกอบเป็นเลนชุดเดียวไม่ได้ → คงพฤติกรรมเดิมไว้
+function palSlotFit(bL,bW,slot,rot,allowLanes){
+  if(allowLanes)return palBoxPlan(slot.along,slot.across,bL,bW,rot).n;
   var n=Math.floor(slot.along/bL)*Math.floor(slot.across/bW);
   if(rot){ var m=Math.floor(slot.along/bW)*Math.floor(slot.across/bL); if(m>n)n=m; }
   return n;
@@ -1778,9 +1812,11 @@ function palSlotFit(bL,bW,slot,rot){
 function palPlanScore(slots,items){
   var tot=0; items.forEach(function(P){ tot+=(P.wt||0); });
   var hosts=0, cap=0;
+  // เลนรองใช้ได้เฉพาะพาเลทที่มี SKU เดียว (ดูเหตุผลที่ palSlotFit)
+  var _lanes=items.length===1;
   items.forEach(function(P){
     var sum=0, any=false;
-    slots.forEach(function(s){ var f=palSlotFit(P.bL,P.bW,s,P.rot); if(f>0)any=true; sum+=f; });
+    slots.forEach(function(s){ var f=palSlotFit(P.bL,P.bW,s,P.rot,_lanes); if(f>0)any=true; sum+=f; });
     if(any)hosts++;
     cap+=sum*(tot>0?(P.wt||0)/tot:1/Math.max(1,items.length));
   });
@@ -2558,7 +2594,23 @@ function packLayout(result){
       // เรียงลำดับการวางจากผนังในสุดไปทางประตู (x ก่อน แล้ว y) = ลำดับที่คนโหลดทำจริง
       slots.sort(function(m,n){ return m.x-n.x||m.y-n.y; });
 
-      function makePal(slot){ return {sky:[{x0:0,x1:slot.along,z:0}],places:[],counts:{},slot:slot,along:slot.along,across:slot.across,_bo:{}}; }
+      // เลน = แถบตามความกว้างพาเลทที่มี skyline ของตัวเอง · ปกติมีเลนเดียวเต็มความกว้าง
+      // เมื่อกลุ่มมี SKU เดียว จะได้เลนรองที่กล่องหมุน 90° ในแถบที่เหลือ (ดู palBoxPlan)
+      // ⚠ ทุกเลนอยู่คนละช่วง y กันสนิท → กล่องข้ามเลนทับกันไม่ได้เชิงเรขาคณิต
+      // ⚠ ต้องคำนวณเลนจาก slot **ใบนั้นเอง** ไม่ใช่ใบแรก — ใบที่หันขวาง (rot) มี along/across
+      //   สลับกัน แผนเลนจึงต่างกัน · เคยพลาดตรงนี้: ใช้ slots[0] กับทุกใบแล้วได้ 4 กล่อง/ชั้น
+      //   ทั้งที่ตัววางแผนบอก 5 = ความจุที่รายงานกับที่วางได้จริงไม่ตรงกัน
+      function makePal(slot,laneCfg){
+        var lanes=null;
+        if(laneCfg){
+          var pl=palBoxPlan(slot.along,slot.across,laneCfg.bL,laneCfg.bW,laneCfg.rot);
+          if(pl.lanes.length>1)lanes=pl.lanes;
+        }
+        var out=lanes
+          ? lanes.map(function(ln){ return {y0:ln.y0,across:ln.across,bL:ln.bL,bW:ln.bW,nAcross:ln.nAcross,fixed:true,sky:[{x0:0,x1:slot.along,z:0}]}; })
+          : [{y0:0,across:slot.across,fixed:false,sky:[{x0:0,x1:slot.along,z:0}]}];
+        return {lanes:out,places:[],counts:{},slot:slot,along:slot.along,across:slot.across,_bo:{}};
+      }
       // ── A) เลือกทิศกล่องให้เหมาะกับ "พาเลท" ไม่ใช่ "ตู้" ──
       // calcBox เลือกทิศกล่องโดยให้คะแนนจากการวางในตู้ แล้วเดิม packLayout เอาทิศนั้นมาวางบนพาเลทตรงๆ
       // ทั้งที่สัดส่วนพาเลทต่างจากตู้ · หมุนได้เฉพาะเมื่อผู้ใช้อนุญาต rotH (สลับ L↔W บนพื้น)
@@ -2580,7 +2632,9 @@ function packLayout(result){
         return nb>na?b:a;
       }
       // cache ต่อ (พาเลท, SKU) — ทิศต้องคงที่ภายในพาเลทใบเดียว ไม่งั้นกองจะสลับทิศมั่วในใบเดียว
-      function palBoxFor(pal,P){
+      // เลนที่ fixed มาจาก palBoxPlan แล้ว ทิศกล่องถูกกำหนดโดยเลน ไม่ใช่โดย SKU
+      function palBoxFor(pal,P,lane){
+        if(lane&&lane.fixed)return {bL:lane.bL,bW:lane.bW};
         if(!pal._bo[P.idx])pal._bo[P.idx]=palBox(P,pal.along,pal.across);
         return pal._bo[P.idx];
       }
@@ -2598,9 +2652,9 @@ function packLayout(result){
         Object.keys(a.zSeen).forEach(function(k){ if(k.slice(0,pref.length)===pref)n++; });
         return n;
       }
-      function skyRaisePal(pal,x0,x1,newZ){
+      function skyRaisePal(lane,x0,x1,newZ){
         var out=[];
-        pal.sky.forEach(function(s){
+        lane.sky.forEach(function(s){
           if(s.x1<=x0||s.x0>=x1){ out.push(s); return; }
           if(s.x0<x0)out.push({x0:s.x0,x1:x0,z:s.z});
           if(s.x1>x1)out.push({x0:x1,x1:s.x1,z:s.z});
@@ -2613,7 +2667,7 @@ function packLayout(result){
           if(last&&last.z===s.z&&last.x1===s.x0)last.x1=s.x1;
           else merged.push({x0:s.x0,x1:s.x1,z:s.z});
         });
-        pal.sky=merged;
+        lane.sky=merged;
       }
       // GLOBAL GREEDY fill across multiple SKUs sharing a rolling sequence of pallets —
       // same architecture as the container's skyline packer (see Lesson 18/19 in the
@@ -2625,8 +2679,8 @@ function packLayout(result){
       // CURRENT pallet and lets the first-fitting active SKU (priority = array order)
       // claim it immediately — a segment only gets skipped when NOTHING fits it right
       // now, and a new pallet only opens when NOTHING fits ANYWHERE in the current one.
-      function fillPalletsGreedy(pallets,actives,slotList,capOf){
-        if(!pallets.length)pallets.push(makePal(slotList[0]));
+      function fillPalletsGreedy(pallets,actives,slotList,capOf,laneSpec){
+        if(!pallets.length)pallets.push(makePal(slotList[0],laneSpec));
         var guard=0;
         while(actives.some(function(a){return a.remaining>0;})&&guard++<200000){
           var cur=pallets[pallets.length-1];
@@ -2637,27 +2691,31 @@ function packLayout(result){
           for(i=0;i<actives.length;i++){ if(actives[i].remaining>0&&actives[i].openCol){ openA=actives[i]; break; } }
           if(openA){
             // ทิศกล่องต้องอ่านจากพาเลทที่คอลัมน์นั้นอยู่ (oc.pal) ไม่ใช่พาเลทปัจจุบัน — อาจต่างใบกันได้
-            var oc=openA.openCol, ob=palBoxFor(oc.pal,openA.P), bW=ob.bW, nWp=Math.max(1,Math.floor(oc.pal.across/bW));
+            var oc=openA.openCol, ocLane=oc.pal.lanes[oc.lane||0];
+            var ob=palBoxFor(oc.pal,openA.P,ocLane), bW=ob.bW;
+            var nWp=ocLane.fixed?ocLane.nAcross:Math.max(1,Math.floor(ocLane.across/bW));
             var fill=Math.min(openA.remaining,nWp-oc.cy);
-            oc.pal.places.push({idx:openA.P.idx,color:openA.P.it.color,x0:oc.x,y0:oc.cy*bW,z0:oc.z,L:ob.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
+            oc.pal.places.push({idx:openA.P.idx,color:openA.P.it.color,x0:oc.x,y0:ocLane.y0+oc.cy*bW,z0:oc.z,L:ob.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
             oc.cy+=fill; openA.remaining-=fill; openA.placedHere+=fill; palAddCount(oc.pal,openA.P,fill);
             openA.zSeen[(pallets.indexOf(oc.pal))+':'+oc.z]=1;
             if(oc.cy>=nWp)openA.openCol=null;
             continue;
           }
           // 2) lowest surface in the CURRENT pallet
-          var seg=null;
-          cur.sky.forEach(function(s){ if(!seg||s.z<seg.z||(s.z===seg.z&&s.x0<seg.x0))seg=s; });
+          var seg=null, segLane=null;
+          cur.lanes.forEach(function(ln){
+            ln.sky.forEach(function(s){ if(!seg||s.z<seg.z||(s.z===seg.z&&s.x0<seg.x0)){seg=s;segLane=ln;} });
+          });
           var a=null;
           if(seg){
             for(i=0;i<actives.length;i++){
               var c2=actives[i];
               if(c2.remaining<=0)continue;
-              var c2b=palBoxFor(cur,c2.P);
+              var c2b=palBoxFor(cur,c2.P,segLane);
               if(seg.x1-seg.x0<c2b.bL)continue;
               // กล่องต้องวางตามความกว้างพาเลท (across) ได้อย่างน้อย 1 ใบ ไม่งั้นจะล้นออกนอกพาเลท
               // — nWp ด้านล่างใช้ Math.max(1,…) ซึ่งจะบังคับวาง 1 ใบแม้กล่องกว้างเกิน จึงต้องกันที่นี่
-              if(c2b.bW>cur.across)continue;
+              if(c2b.bW>segLane.across)continue;
               if(seg.z+c2.P.bH>capOf(pallets.length-1))continue;
               // เพดานจำนวนชั้นต่อ SKU (P.nH = min(ชั้นที่ความสูงรับได้, maxLayers ที่ผู้ใช้ตั้ง))
               // เดิม pallet packer ไม่เช็คข้อนี้เลย มีแต่เพดานความสูง (capOf) → ผู้ใช้ตั้ง "ซ้อนไม่เกิน 2 ชั้น"
@@ -2672,37 +2730,40 @@ function packLayout(result){
             // ANYWHERE ELSE in this pallet before giving up on the whole pallet.
             var fitsSomewhere=false;
             if(seg){
-              for(var si=0;si<cur.sky.length&&!fitsSomewhere;si++){
-                var s=cur.sky[si];
+              var _allSegs=[];
+              cur.lanes.forEach(function(ln){ ln.sky.forEach(function(sg){ _allSegs.push({s:sg,ln:ln}); }); });
+              for(var si=0;si<_allSegs.length&&!fitsSomewhere;si++){
+                var s=_allSegs[si].s, _sl=_allSegs[si].ln;
                 for(var j=0;j<actives.length;j++){
                   var cj=actives[j];
                   if(cj.remaining<=0)continue;
                   // ต้องเช็คเพดานชั้นด้วยเงื่อนไขเดียวกับตอนเลือกจริงด้านบน ไม่งั้นจะตอบว่า "ยังวางได้"
                   // ทั้งที่ติดเพดาน maxLayers แล้ว → วนซ้ำมาร์ค segment ตายไปเรื่อยๆ โดยไม่เปิดพาเลทใหม่
-                  var cjb=palBoxFor(cur,cj.P);
-                  if(s.x1-s.x0>=cjb.bL&&cjb.bW<=cur.across&&s.z+cj.P.bH<=capOf(pallets.length-1)
+                  var cjb=palBoxFor(cur,cj.P,_sl);
+                  if(s.x1-s.x0>=cjb.bL&&cjb.bW<=_sl.across&&s.z+cj.P.bH<=capOf(pallets.length-1)
                      &&palLayersUsed(cj,pallets.length-1,s.z)<cj.P.nH){ fitsSomewhere=true; break; }
                 }
               }
             }
             if(fitsSomewhere){ seg.z=1e15; continue; }   // dead segment only -- try the next lowest
             if(pallets.length>=slotList.length)break;      // no room anywhere, no slots left to open
-            pallets.push(makePal(slotList[pallets.length]));
+            pallets.push(makePal(slotList[pallets.length],laneSpec));
             continue;
           }
-          var ab=palBoxFor(cur,a.P);
-          var bL=ab.bL,bW=ab.bW,bH=a.P.bH,nWp=Math.max(1,Math.floor(cur.across/bW));
+          var ab=palBoxFor(cur,a.P,segLane);
+          var bL=ab.bL,bW=ab.bW,bH=a.P.bH;
+          var nWp=segLane.fixed?segLane.nAcross:Math.max(1,Math.floor(segLane.across/bW));
           var colsFit=Math.floor((seg.x1-seg.x0)/bL);
           var take=Math.min(a.remaining,colsFit*nWp);
           var fullCols=Math.floor(take/nWp), lastCol=take-fullCols*nWp;
-          if(fullCols>0)cur.places.push({idx:a.P.idx,color:a.P.it.color,x0:seg.x0,y0:0,z0:seg.z,L:fullCols*bL,W:nWp*bW,H:bH,nL:fullCols,nW:nWp});
+          if(fullCols>0)cur.places.push({idx:a.P.idx,color:a.P.it.color,x0:seg.x0,y0:segLane.y0,z0:seg.z,L:fullCols*bL,W:nWp*bW,H:bH,nL:fullCols,nW:nWp});
           var xEnd=seg.x0+fullCols*bL;
           if(lastCol>0){
-            cur.places.push({idx:a.P.idx,color:a.P.it.color,x0:xEnd,y0:0,z0:seg.z,L:bL,W:lastCol*bW,H:bH,nL:1,nW:lastCol});
-            a.openCol={pal:cur,x:xEnd,z:seg.z,cy:lastCol};
+            cur.places.push({idx:a.P.idx,color:a.P.it.color,x0:xEnd,y0:segLane.y0,z0:seg.z,L:bL,W:lastCol*bW,H:bH,nL:1,nW:lastCol});
+            a.openCol={pal:cur,lane:cur.lanes.indexOf(segLane),x:xEnd,z:seg.z,cy:lastCol};
             xEnd+=bL;
           }
-          if(xEnd>seg.x0)skyRaisePal(cur,seg.x0,xEnd,seg.z+bH);
+          if(xEnd>seg.x0)skyRaisePal(segLane,seg.x0,xEnd,seg.z+bH);
           a.remaining-=take; a.placedHere+=take; palAddCount(cur,a.P,take);
           a.zSeen[(pallets.length-1)+':'+seg.z]=1;
         }
@@ -2710,7 +2771,15 @@ function packLayout(result){
 
       var pallets=[];
       var actives=palItems.map(function(P){ return {P:P,remaining:P.placed,placedHere:0,openCol:null,zSeen:{}}; });
-      fillPalletsGreedy(pallets,actives,slots,function(){ return availH; });
+      // ⭐ เลนรอง (กล่องหมุน 90° ในแถบที่เหลือ) เปิดได้เฉพาะกลุ่มที่มี SKU เดียว —
+      // หลาย SKU แชร์พาเลทได้จริงและต้องการความกว้างเลนไม่เท่ากัน จึงประกอบเป็นเลนชุดเดียวไม่ได้
+      // ต้องใช้เงื่อนไขเดียวกับฝั่งความจุ (palPlanScore ใช้ items.length===1) ไม่งั้นรายงานเกินจริง
+      var _laneSpec=null;
+      if(palItems.length===1){
+        var _P0=palItems[0];
+        _laneSpec={bL:_P0.bL,bW:_P0.bW,rot:_P0.it.rotH!==false};
+      }
+      fillPalletsGreedy(pallets,actives,slots,function(){ return availH; },_laneSpec);
       actives.forEach(function(a){
         // รายงานกริดของพาเลทแบบ grid (ใบส่วนใหญ่) ด้วยทิศกล่องที่เลือกให้พาเลทจริง
         var gb=palBox(a.P,along,across);
@@ -2745,7 +2814,7 @@ function packLayout(result){
           var targetH=Math.min(availH,Math.ceil(totH/2));
           var two=[];
           var actives2=combo.map(function(e){ return {P:e.P,remaining:e.count,placedHere:0,openCol:null,zSeen:{}}; });
-          fillPalletsGreedy(two,actives2,[A.slot,B.slot],function(i){ return i===0?targetH:availH; });
+          fillPalletsGreedy(two,actives2,[A.slot,B.slot],function(i){ return i===0?targetH:availH; },_laneSpec);
           var ok=actives2.every(function(a,idx){ return a.placedHere>=combo[idx].count; });
           two=two.filter(function(pal){ return pal.places.length>0; });
           if(ok&&two.length<=2){ pallets=pallets.concat(two); }
