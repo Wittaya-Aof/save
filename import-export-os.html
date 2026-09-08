@@ -227,11 +227,10 @@ function shipModeLabel(s){
 // สีที่เลือกไว้อ่านออกทั้งธีมสว่างและมืด (จุดสีเล็กๆ ไม่ผูกกับ token neutral ที่สลับตามธีม)
 const IMP_STAGES = [
   {key:'po',label:'Purchase Order',color:'#94a3b8'},
-  {key:'booking',label:'จองเรือ',color:'#0ea5e9'},
-  {key:'transit',label:'กำลังขนส่ง',color:'#2563eb'},
+  {key:'etd',label:'ETD',color:'#2563eb'},
   {key:'arrived',label:'ถึงท่าเรือ',color:'#d97706'},
-  {key:'customs',label:'พิธีการศุลกากร',color:'#d97706'},
-  {key:'received',label:'รับเข้าคลัง',color:'#16a34a'}
+  {key:'customs',label:'กำลังเดินพิธีการ',color:'#d97706'},
+  {key:'received',label:'สินค้าถึงคลัง',color:'#16a34a'}
 ];
 const EXP_STAGES = [
   {key:'draft',label:'SO ตั้งต้น',color:'#94a3b8'},
@@ -313,7 +312,7 @@ function fetchTimeout(url,opts,ms){
 function stageMeta(tab,key){const list=tab==='export'?EXP_STAGES:IMP_STAGES;return list.find(s=>s.key===key)||list[0];}
 // stage ที่ของ "กำลังเคลื่อนไหวจริง" (ไม่ใช่แค่รอคิวหรือจบงานแล้ว) — ใช้ทำจุด pulse ให้เห็นว่า
 // shipment นี้ active อยู่ ณ ตอนนี้ ต่างจาก po/draft (ยังไม่เริ่ม) และ received/arrived (จบแล้ว)
-const ACTIVE_STAGES={import:['booking','transit'],export:['packing','booking','shipped']};
+const ACTIVE_STAGES={import:['etd','arrived','customs'],export:['packing','booking','shipped']};
 function isActiveStage(tab,key){return (ACTIVE_STAGES[tab==='export'?'export':'import']||[]).includes(key);}
 // ป้ายทั้งหมดใช้พื้นเทาอ่อนชุดเดียวกัน แล้วสื่อความต่างด้วย "จุดสี" — พื้นสีจัดหลายสีในหน้าเดียว
 // (ชมพู/ม่วง/ส้ม/ฟ้า) ทำให้ตาไม่รู้ว่าควรมองอะไรก่อน สีจึงถูกเก็บไว้ใช้เฉพาะสถานะและการเตือน
@@ -326,7 +325,7 @@ function coBadgeSty(co){return {...TAG_BASE,fontSize:'10px',letterSpacing:'.3px'
 function billCatLabel(c){return ({freight:'ค่าขนส่ง',clearance:'พิธีการ',insurance:'ประกันภัย',duty:'อากร',vat:'VAT'})[c]||'อื่นๆ';}
 // ป้ายชื่อฟิลด์ภาษาไทยสำหรับ audit log — เดิม auditLog เก็บแค่ชื่อฟิลด์ดิบ (เช่น "cur","freight")
 // ไม่ friendly สำหรับ manager มาดู แปลเฉพาะฟิลด์ที่มีความหมายทางธุรกิจ ที่เหลือ fallback เป็นชื่อดิบ
-const AUDIT_FIELD_LABELS={cur:'สกุลเงิน',amount:'มูลค่า',rate:'อัตราแลกเปลี่ยน',stage:'สถานะ',eta:'ETA',etd:'ETD',
+const AUDIT_FIELD_LABELS={cur:'สกุลเงิน',amount:'มูลค่า',rate:'อัตราแลกเปลี่ยน',stage:'สถานะ',eta:'ETA',etd:'ETD',etsActualArrivalDate:'Actual Arrival จาก ETS',etsStatus:'สถานะการตรวจ ETS',documentReceivedAt:'วันที่ได้รับเอกสาร',portOfLoading:'ท่าเรือต้นทาง',portOfDischarge:'ท่าเรือปลายทาง',voyage:'เลขเที่ยวเรือ',
   actualDate:'วันที่รับเข้าคลังจริง',freight:'ค่าขนส่ง',clearance:'ค่าพิธีการ',insurance:'ค่าประกันภัย',duty:'อากรขาเข้า',
   vat:'ภาษีมูลค่าเพิ่ม',bl:'เลข BL/AWB',bl_awb:'เลข BL/AWB',container:'ตู้คอนเทนเนอร์',vessel:'เรือ/เที่ยว',
   forwarder:'ตัวแทนขนส่ง',note:'หมายเหตุ',overReceipt:'รับเกิน',dest:'ปลายทาง',origin:'ต้นทาง',party:'คู่ค้า',
@@ -684,11 +683,12 @@ class App extends Component {
   // สร้าง shipment object เต็มจาก override ที่เป็นรายการสังเคราะห์ (แยก shipment/สร้างใหม่)
   // แยกจาก mapTracking() เพราะ field ที่ใช้ต่างกัน (cur/amount/rate ตรงตัว ไม่ใช่ convention rate กลับด้านแบบ Odoo)
   mapSynthetic(o){
-    return {_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,other:parseFloat(o.other)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_synthetic:true};
+    return {_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),etsActualArrivalDate:(o.etsActualArrivalDate||'').slice(0,10),etsStatus:o.etsStatus||'',etsCheckedAt:o.etsCheckedAt||'',etsMatchedVoyage:o.etsMatchedVoyage||'',documentReceivedAt:o.documentReceivedAt||'',actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',voyage:o.voyage||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,other:parseFloat(o.other)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_stageManual:!!o._stageManual,_synthetic:true};
   }
   applyOne(s,o){
     const m={...s};
-    ['origin','dest','bl','container','vessel','forwarder','etd','eta','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
+    ['origin','dest','portOfLoading','portOfDischarge','bl','container','vessel','voyage','forwarder','etd','eta','etsActualArrivalDate','etsStatus','etsCheckedAt','etsMatchedVoyage','documentReceivedAt','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
+    if(o._stageManual!=null)m._stageManual=!!o._stageManual;
     // ตัวสแกนเขียนเลข B/L ลงฟิลด์ bl_awb ฟิลด์เดียว (ไม่ได้เขียน bl) — วัดจริง 2026-08-13:
     // 218 record มี bl_awb แต่ไม่มี bl จึงไม่มีเลข B/L ขึ้นบนการ์ดเลย และการจับคู่ต้นทุนด้วย
     // เลข B/L ก็ใช้ไม่ได้ทั้งที่ข้อมูลมีอยู่ (mapTracking ทางสำรองอ่าน bl_awb ถูกอยู่แล้ว ตกหล่นเฉพาะทางนี้)
@@ -796,8 +796,9 @@ class App extends Component {
     // "ประเภทสินค้า" (oversea/pk/fg) ใช้เป็น fallback สำหรับ record เก่าเท่านั้น
     const board=(r._board||r.type)==='export'?'export':'import';
     const wf=(r.state&&r.state!=='draft')?r.state:r.odoo_state;
-    const stageMap=board==='export'?{draft:'draft',sent:'draft',order_confirmed:'packing',production:'packing',packing:'packing',booking_confirmed:'booking',etd:'shipped',sale:'shipped',eta_arrived:'arrived',closed:'arrived',done:'arrived'}:{draft:'po',purchase:'po',sent:'po',booking_confirmed:'booking',etd:'transit',atd:'transit',eta:'arrived',ata:'arrived',customs_clearance:'customs',duty_payment:'customs',goods_received:'received',done:'received'};
-    const stage=r.stage||stageMap[wf]||(board==='export'?'draft':'po');
+    const stageMap=board==='export'?{draft:'draft',sent:'draft',order_confirmed:'packing',production:'packing',packing:'packing',booking_confirmed:'booking',etd:'shipped',sale:'shipped',eta_arrived:'arrived',closed:'arrived',done:'arrived'}:{draft:'po',purchase:'po',sent:'po',booking_confirmed:'etd',etd:'etd',atd:'etd',transit:'etd',eta:'arrived',ata:'arrived',customs_clearance:'customs',duty_payment:'customs',goods_received:'received',done:'received'};
+    const legacyStage={booking:'etd',transit:'etd',customs:'customs',received:'received'}[r.stage]||r.stage;
+    const stage=legacyStage||stageMap[wf]||(board==='export'?'draft':'po');
     const rawRate=parseFloat(r.rate)||0;
     // records ที่ถูกสร้าง/แก้ผ่านแอป (setStageFor/saveEdit/splitShipment/submitCreate) เขียน rate เป็นหน่วย
     // "บาทต่อ 1 หน่วยเงินตรา" ตรงตัวอยู่แล้ว (ผ่าน mapPo แปลงมาแล้วรอบนึง) — ต่างจาก record ที่ seed มาจาก
@@ -808,7 +809,7 @@ class App extends Component {
     // id ต้องไม่มีวันเป็น undefined — record ที่บันทึกผ่านฟอร์มแก้ไข/สร้างในแอปไม่มี r.id/r.odoo_id
     // (มีแค่ po_so) ถ้าปล่อยเป็น undefined หลาย record จะชนกัน ทำให้คลิกแล้วเปิดผิด PO
     const id=r.id||r.odoo_id||('t_'+(r.po_so||Math.random()));
-    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total??r.amount)||0,rate,origin:r.origin||'',dest:r.dest||'LAEM CHABANG, THAILAND',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:[r.vessel,r.voyage].filter(Boolean).join(' / '),forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,other:parseFloat(r.other)||0,_fallback:true};
+    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total??r.amount)||0,rate,origin:r.origin||r.portOfLoading||'',dest:r.dest||r.portOfDischarge||'LAEM CHABANG, THAILAND',portOfLoading:r.portOfLoading||r.origin||'',portOfDischarge:r.portOfDischarge||r.dest||'',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),etsActualArrivalDate:(r.etsActualArrivalDate||'').slice(0,10),etsStatus:r.etsStatus||'',etsCheckedAt:r.etsCheckedAt||'',etsMatchedVoyage:r.etsMatchedVoyage||'',documentReceivedAt:r.documentReceivedAt||'',actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:r.vessel||'',voyage:r.voyage||'',forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,other:parseFloat(r.other)||0,_stageManual:!!r._stageManual,_fallback:true};
   }
 
   allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
@@ -861,7 +862,7 @@ class App extends Component {
 
   startEdit(){
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
-    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',other:s.other||'',expectedCost:s.expectedCost||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),etsActualArrivalDate:(s.etsActualArrivalDate||'').slice(0,10),etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:(s.documentReceivedAt||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',other:s.other||'',expectedCost:s.expectedCost||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_stageManual:!!s._stageManual,_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
     this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();this.loadLanded();
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
@@ -896,7 +897,7 @@ class App extends Component {
     // overReceipt = "รับของเกินสั่ง" คนละความหมายกับ "ลากมาลงคอลัมน์สุดท้ายแล้ว" — ห้ามตั้งเป็น true อัตโนมัติ
     // (บั๊กเดิม copy-paste มาจาก actualDate ด้านล่าง ทำให้ลากการ์ดปกติไปคอลัมน์สุดท้ายแล้วขึ้นป้าย "เกิน" ผิดๆ)
     // ต้องใส่ _synthetic/_splitBase ต่อให้ตรงกับของเดิมเสมอ ไม่งั้น shipment ที่แยกเอง/สร้างเองจะหลุดสถานะนั้นไปตอนลาก
-    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,other:s.other||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_stageManual:true,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',etsActualArrivalDate:s.etsActualArrivalDate||'',etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:s.documentReceivedAt||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,other:s.other||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
     const ov={...this._overrides};ov[s.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(x=>x.poNo===s.poNo?this.applyOne(x,o):x);
     this.setState({shipments:rows});
@@ -1114,7 +1115,9 @@ class App extends Component {
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
     // shipment ที่แยกเอง (_synthetic) ไม่มี PO จริงใน Odoo — มูลค่า/สกุลเงินต้องรับจากฟอร์มนี้โดยตรง
     // ของ PO จริง มูลค่ามาจาก Odoo เสมอ ไม่ให้ฟอร์มนี้ทับ (ไม่มีช่องแก้ในฟอร์มอยู่แล้ว ค่าจะเท่าเดิม)
-    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),other:num(f.other),expectedCost:num(f.expectedCost),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
+    const current=this.allShipments().find(s=>s.poNo===f.poNo);
+    const stageManual=!!f._stageManual||(!!current&&current.stage!==f.stage);
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_stageManual:stageManual,_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',voyage:f.voyage||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',etsActualArrivalDate:f.etsActualArrivalDate||'',etsStatus:f.etsStatus||'',etsCheckedAt:f.etsCheckedAt||'',etsMatchedVoyage:f.etsMatchedVoyage||'',documentReceivedAt:f.documentReceivedAt||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),other:num(f.other),expectedCost:num(f.expectedCost),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
     const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
     this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
@@ -1193,7 +1196,8 @@ class App extends Component {
     const today=this._today(),out=[];
     this.imports().forEach(s=>{
       if(s.stage==='received')return;
-      const eta=this._dt(s.eta);if(!eta)return;
+      // Import alerts use ETS Actual Arrival only; schedule ETA is never a status trigger.
+      const eta=this._dt(s.etsActualArrivalDate);if(!eta)return;
       const days=Math.round((eta-today)/86400000);
       if(days<0)out.push({s,days,kind:'late'});
       else if(days<=3)out.push({s,days,kind:'soon'});
@@ -1231,7 +1235,7 @@ class App extends Component {
     const curIdx=stages.findIndex(x=>x.key===s.stage);
     const lastIdx=stages.length-1;
     // ขั้นสุดท้าย (รับเข้าคลัง/ถึงปลายทาง) ใช้วันที่รับจริง (actualDate) ถ้ามี — แม่นกว่า eta ที่เป็นแค่ประมาณการ
-    const dateFor=k=>({po:'',booking:s.etd,transit:s.etd,arrived:s.actualDate||s.eta,customs:s.eta,received:s.actualDate||s.eta,draft:'',packing:s.etd,shipped:s.etd})[k];
+    const dateFor=k=>({po:'',etd:s.etd,arrived:s.etsActualArrivalDate||s.eta,customs:s.etsActualArrivalDate||s.eta,received:s.actualDate||s.eta,draft:'',packing:s.etd,shipped:s.etd})[k];
     return stages.map((st,i)=>{
       // ขั้นสุดท้ายที่เป็นสถานะปัจจุบันแล้ว = จบกระบวนการ ไม่มีขั้นต่อไปให้ "กำลังดำเนินการ"
       // ต้องติ๊กถูกเหมือนขั้นก่อนหน้า ไม่ใช่วงกลมค้างแบบ current (เดิมค้างเป็นวงกลมว่างตลอดไป)
@@ -2350,9 +2354,15 @@ class App extends Component {
             </div>
             <SectionTitle>ข้อมูลขนส่ง</SectionTitle>
             <div style={{display:'flex',flexDirection:'column',gap:'13px',marginBottom:'14px'}}>
-              {[['BL / AWB','bl','text','เช่น COSU1234567'],['ตู้คอนเทนเนอร์','container','text','เช่น TGHU5521430'],['เรือ / เที่ยว','vessel','text','เช่น COSCO HARMONY'],['ETD — วันออกเดินทาง','etd','date',''],['ETA — วันถึงปลายทาง (ประมาณ)','eta','date','']].map(([l,k,t,ph])=>(
+              {[['BL / AWB','bl','text','เช่น COSU1234567'],['ตู้คอนเทนเนอร์','container','text','เช่น TGHU5521430'],['เรือ','vessel','text','เช่น COSCO HARMONY'],['Voyage','voyage','text','เช่น 123S'],['ETD — วันออกเดินทาง','etd','date','']].map(([l,k,t,ph])=>(
                 <div key={k}><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>{l}</div><input value={ef[k]||''} onChange={e=>this.setEdit(k,e.target.value)} type={t} placeholder={ph} style={INP}/></div>
               ))}
+              <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ETA — Actual time of Arrive จาก ETS</div>
+                <input value={ef.etsActualArrivalDate||ef.eta||''} readOnly type="date" style={{...INP,background:'var(--color-surface-muted)',cursor:'not-allowed'}}/>
+                <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>{ef.etsStatus==='found'?'ยืนยันจากกรมศุลกากร'+(ef.etsMatchedVoyage?' · เที่ยว '+ef.etsMatchedVoyage:''):(ef.etsStatus==='not_found'?'ยังไม่มี Actual Arrival — ระบบไม่ใช้ Schedule เดา ETA':'ยังไม่ได้ตรวจ ETS')}</div>
+              </div>
+              <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>วันที่ได้รับเอกสาร</div>
+                <input value={ef.documentReceivedAt||''} onChange={e=>this.setEdit('documentReceivedAt',e.target.value)} type="date" style={INP}/></div>
               <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>{ef.board==='export'?'วันที่ถึงปลายทางจริง (Actual)':'วันที่รับเข้าคลังจริง (Actual)'}</div>
                 <input value={ef.actualDate||''} onChange={e=>this.setEdit('actualDate',e.target.value)} type="date" style={INP}/></div>
               {(()=>{const ti=transitInfo({...ef,_board:ef.board});if(!ti)return null;

@@ -16,6 +16,7 @@ import { execFileSync } from 'child_process';
 import OpenAI from 'openai';
 import XLSX from 'xlsx';
 import { openEtsSession, closeEtsSession, searchVesselActualDate } from './lib/ets-lookup.mjs';
+import { normalizeEtsResult } from './lib/shipment-rules.cjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1018,8 +1019,8 @@ async function main() {
         const blOrAwb = result.blNumber || result.awbNumber;
         if (blOrAwb) fields.bl_awb = blOrAwb;
         if (result.containerNumbers && result.containerNumbers.length) fields.container = result.containerNumbers.join(', ');
-        if (result.portOfLoading) fields.origin = result.portOfLoading;
-        if (result.portOfDischarge) fields.dest = result.portOfDischarge;
+        if (result.portOfLoading) { fields.origin = result.portOfLoading; fields.portOfLoading = result.portOfLoading; }
+        if (result.portOfDischarge) { fields.dest = result.portOfDischarge; fields.portOfDischarge = result.portOfDischarge; }
 
         // mode: ชื่อโฟลเดอร์ชี้ขาดก่อน แล้วค่อยดูชนิดเอกสาร ท้ายสุดจึงใช้ที่ AI เดา
         // (โฟลเดอร์ที่มีทั้งขาเรือและขาอากาศปนกัน ชื่อโฟลเดอร์จะระบุไม่ได้ → ต้องเชื่อ AI รายชิปเม้น)
@@ -1056,11 +1057,21 @@ async function main() {
               throw e;
             });
             log(`  ETA lookup (${result.vessel} voy=${result.voyage} etd=${result.etd}): status=${etaResult.status} eta=${etaResult.eta} matchedVoyage=${etaResult.matchedVoyage} ของทั้งหมด ${etaResult.totalVoyagesFound} เที่ยว${etaResult.reason ? ' — ' + etaResult.reason : ''}`);
-            if (etaResult.eta) fields.eta = etaResult.eta;
+            Object.assign(fields, normalizeEtsResult(etaResult));
           } catch (e) {
             log(`  [WARN] ETA lookup ล้มเหลว: ${e.message}`);
           }
         }
+
+        // ETA/Actual arrival provenance is explicit: no ETS result means no ETA is inferred.
+        // The API derives the automated stage from these fields and preserves manual stages.
+        if (fields.etsActualArrivalDate) fields.eta = fields.etsActualArrivalDate;
+
+        // ── วันที่ได้รับเอกสาร: ติดเฉพาะเมื่อสกัดข้อมูลได้จริงอย่างน้อย 1 ฟิลด์ ──────────────
+        // ⚠ ถ้าตั้งค่านี้ตอนสร้าง `fields` ว่างๆ จะทำให้ `Object.keys(fields).length` ไม่มีวันเป็น 0
+        //   → สาขา "ไม่พบข้อมูลใหม่ที่ดึงได้เลย" ตายสนิท และ **ทุกโฟลเดอร์จะ upsert เสมอ**
+        //   แม้ AI อ่านอะไรไม่ได้เลยสักฟิลด์ (เจอจริง 2026-09-08)
+        if (Object.keys(fields).length) fields.documentReceivedAt = new Date().toISOString().slice(0, 10);
 
         // ── เลือกว่า shipment นี้ต้องเขียนลงการ์ดใบไหน ──────────────────────────────────
         // shipment เดียว = เขียนลงทุก PO ในชื่อโฟลเดอร์ (ของทั้งชุดมาด้วย B/L ใบเดียวกัน)
@@ -1085,8 +1096,9 @@ async function main() {
               ts: new Date().toISOString(), po: t.key, base: t.base, folder: folderName,
               invoiceNo: result.invoiceNo || null, bl_awb: result.blNumber || result.awbNumber || null,
               vessel: result.vessel || null, voyage: result.voyage || null,
-              etd: result.etd || null, eta: fields.eta || null,
-              container: (result.containerNumbers || []).join(', ') || null,
+              etd: result.etd || null, eta: fields.eta || null, etsActualArrivalDate: fields.etsActualArrivalDate || null,
+              etsStatus: fields.etsStatus || null, etsCheckedAt: fields.etsCheckedAt || null,
+              etsMatchedVoyage: fields.etsMatchedVoyage || null, documentReceivedAt: new Date().toISOString().slice(0, 10),
               origin: result.portOfLoading || null, dest: result.portOfDischarge || null,
               mode: docMode || null, forwarder: result.forwarder || null,
               shipmentsInFolder: shipments.length,

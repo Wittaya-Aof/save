@@ -1034,7 +1034,67 @@ NODE_PATH=./node_modules node tests/freight-review.cjs   # finding จากร�
 เหลืออยู่ในหน้า · light+dark **0 pageerror** · `freight-ui` 36/36 · `freight-review` 8/8 ·
 `freight-pdf` 17/17 · `freight-e2e` ยอดตรง Excel · `pack-invariants` 42 scenario 0 violation · `pack-capacity` ผ่าน
 
+## ⭐ เลื่อนสถานะอัตโนมัติจาก ETS + เกราะกันถอยหลัง (2026-09-08)
+
+งานฐาน (`lib/shipment-rules.cjs`, การเรียกใน `api-server.js`/`scan-shipment-docs.mjs`) เขียนโดย **Codex**
+· Claude รีวิว พิสูจน์ด้วยเทส แล้วแก้ · รายละเอียด finding ทั้ง 8 ข้ออยู่ใน `REVIEW.md` หัวข้อ 2026-09-08
+
+### 🔴 บั๊กที่ร้ายแรงที่สุด: การ์ด 24 ใบถูก "ถอยสถานะ"
+
+```
+autoStage คืนได้: etd, arrived, customs   ·   STAGES มี: po, etd, arrived, customs, received
+1,073 record · มี _stageManual: 0
+>>> ถอยหลัง 24 ใบ: received→etd 12 · customs→etd 6 · received→po 5 · customs→po 1
+```
+
+สามเหตุซ้อนกัน — **แก้ข้อใดข้อเดียวไม่พอ**:
+1. `r.stage = autoStage(...)` ถูกตั้ง **หลัง** ตัวกรอง `_fillEmptyOnly` → เกราะ "เติมเฉพาะช่องว่าง"
+   ที่คุ้มทุกฟิลด์อื่น **ไม่คุ้ม `stage`**
+2. `_stageManual` มี **0 จาก 1,073 record** — เกราะที่โค้ดพึ่งพาไม่มีในข้อมูลเดิมสักใบ
+3. `autoStage` คืน `'received'` ไม่ได้ → ไม่มีทางรักษาสถานะปลายทาง
+
+**ยังไม่ทำลายข้อมูลจริง** — server ที่รันอยู่เริ่ม 10:03:38 ก่อนไฟล์ถูกแก้ (11:14) จึงใช้โค้ดเก่า
+· audit วันนั้นแตะ `stage` = 0 ครั้ง · เป็นระเบิดเวลาที่จะทำงานทันทีที่ restart
+
+### ทางแก้: `nextStage()` — สถานะอัตโนมัติเลื่อนได้เฉพาะไปข้างหน้า
+
+ตรงกับหลักเดิมของโปรเจกต์ว่าสถานะที่ระบบเดาให้เป็น **"พื้น" ไม่ใช่ "เพดาน"**
+เท่าเดิมหรือถอยหลัง = คืน `null` แล้วผู้เรียก **ไม่แตะฟิลด์เลย** (ไม่ใช่เขียนค่าเดิมทับ)
+เกราะเดียวนี้ปิดทั้ง 3 สาเหตุ และไม่ต้องพึ่ง `_stageManual` ในทิศถอยหลังอีก
+
+| ที่แก้เพิ่ม | เหตุผล |
+|---|---|
+| `canonStage()` แปลง `booking`/`transit` → `etd` ก่อนเทียบ | ไม่งั้นสถานะรุ่นเก่าที่ยังค้างในไฟล์ = "ไม่รู้จัก" แล้ว**หลุดเกราะ** · สถานะที่ไม่รู้จักจริง (บอร์ด export) = ไม่แตะ |
+| `CORE_FIELDS_AIR` — air/courier ไม่บังคับ `vessel`/`voyage` | เดิมบังคับทุกโหมด → ชิปเม้นทางอากาศที่เอกสารครบได้ `'po'` เสมอ ซึ่งเป็นคำตอบที่ผิด (แก้ที่ต้นเหตุ ไม่ใช่กันอาการ) |
+| เพิ่ม `'stage'` เข้า `changed` เมื่อเลื่อนจริง | `changed` คำนวณก่อนบล็อกนี้ → การเลื่อนสถานะเคย**ไม่ขึ้น audit log และไม่ stamp `_src`** = เปลี่ยนสถานะโดยไม่มีที่มา |
+| `isoDate()` ตรวจว่าเป็นวันที่มีอยู่จริง | `/^\d{4}-\d{2}-\d{2}$/` ล้วนรับ `2026-13-45` → `addDays()` ได้ Invalid Date → `toISOString()` โยน RangeError → **upsert ทั้งคำขอพัง 400** · บั๊กชนิดเดียวกับที่ `parseFlexibleDate` เคยพลาด **เทสที่เขียนใหม่จับได้เอง** |
+| `documentReceivedAt` ติดเฉพาะเมื่อสกัดได้จริง ≥1 ฟิลด์ | เดิมตั้งทันทีหลังสร้าง `fields` ว่าง → `Object.keys(fields).length` ไม่มีวันเป็น 0 → สาขา "ไม่พบข้อมูลใหม่" **ตายสนิท** ทุกโฟลเดอร์ upsert เสมอ |
+
+### ทดสอบแล้ว (ทั้ง unit และของจริงบน server)
+`tests/shipment-stage.cjs` **25/25** (บริสุทธิ์ ไม่ต้องมี server — มีเทสอ่าน `tracking_data.json` จริง
+ยืนยันว่าไม่มีการ์ดไหนถอยสถานะ) · ยิงจริงหลัง restart: การ์ด `received` + payload จาก scanner →
+**stage ไม่ขยับ ไฟล์ไม่ต่างแม้ไบต์เดียว** · การ์ด `po` + ETS ยืนยันวันเรือเข้า → **เลื่อนเป็น `customs`
+พร้อม `_src.stage=scan:…` และขึ้น audit log** · ข้อมูลทดสอบคืนสภาพครบ (1,073 record, stage เท่าเดิม) ·
+`pack-invariants` 42 scenario 0 violation · `freight-ui` 36/36 · `freight-review` 8/8 · `freight-pdf` 17/17 ·
+`freight-e2e` ยอดตรง Excel (33,314.54 / 33,007.88 / 53,876.52)
+
+### กติกาทำงานร่วมกับ Codex — เปลี่ยนแล้ว ดู `REVIEW.md`
+เดิม "Codex ห้ามแก้ไฟล์" แต่รอบนี้ Codex เขียนลง working tree เดียวกับ Claude จริง
+→ **บังคับแยก branch `codex/<งาน>`** แทน + ติดตั้ง `pre-commit` hook ที่ครอบทุกฝ่าย:
+```bash
+git config core.hooksPath .githooks      # ทำครั้งเดียวต่อ clone (ทั้งฝั่ง Codex และ Claude)
+```
+⚠ **hook ของ Claude Code ใช้แทนไม่ได้** — ยิงตาม tool call ของ Claude เอง ไม่รู้เวลาตัวอื่นแก้ไฟล์
+
 ## ยังไม่แก้ (ตั้งใจ)
+- **scanner ไม่ตรวจ `ok`/`applied`/`rejected` ที่ server ตอบกลับ + `saveSeen()` รันแม้ upsert พัง**
+  (ยืนยันแล้วว่าเป็นบั๊กจริง 2026-09-08) — `upsertTracking()` reject เฉพาะ non-2xx แต่เส้น `idMismatch`
+  ในฝั่ง server `return` เงียบ (ไม่เข้า `rejected` ไม่นับ `applied`) ตอบ 200 · scanner log "สำเร็จ" ทันที
+  แล้ว `saveSeen()` ที่อยู่**นอก** try/catch mark โฟลเดอร์เป็น processed → **ไม่ retry อีกเลย**
+  · ยังไม่แก้เพราะต้องออกแบบ ledger ใหม่ (สถานะต่อโฟลเดอร์ + นโยบาย retry) = งานคนละก้อน
+- **ETS session ที่เสียถูกใช้ซ้ำทั้งรอบ** (ยืนยันแล้ว 2026-09-08) — `scan-shipment-docs.mjs` ปิด session
+  เฉพาะเมื่อ error ตรงกับ `/90 วินาที/` · selector/navigation/parse ล้มได้ error คนละข้อความ →
+  session ค้างถูกใช้ต่อทุกโฟลเดอร์ที่เหลือ · แก้ต้องแยกชนิด error + กำหนดเพดาน retry
 - ~~pinwheel / tail rotation สำหรับพาเลท~~ **ทำครบแล้ว** (2026-08-01) — ดูหัวข้อ "แผนผังพื้นพาเลท
   แบบสลับทิศ" ด้านบน · 20'GP + standard ได้ 10 ใบ = optimal ที่พิสูจน์แล้ว
 - **6 คู่ที่ยังไม่ถึงขอบบน** (20'GP euro 11/12 · 20'RF standard 9/10, euro 10/11, asia 8/9 ·

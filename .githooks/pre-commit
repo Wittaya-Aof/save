@@ -1,0 +1,67 @@
+#!/bin/sh
+# ─── pre-commit: เกราะที่ครอบ "ทุกคนที่ commit" ไม่ว่าจะเป็น Claude, Codex หรือคนกดเอง ────────
+# ติดตั้ง (ทำครั้งเดียวต่อเครื่อง/ต่อ clone):   git config core.hooksPath .githooks
+#
+# ทำไมต้องเป็น git hook ไม่ใช่ hook ของ Claude Code:
+#   hook ของ Claude Code ยิงตาม tool call ของ Claude เอง → **ไม่รู้เลยเวลาตัวอื่นแก้ไฟล์**
+#   git hook ทำงานตอน commit จึงครอบทุกฝ่ายที่เขียนลง repo นี้
+#
+# ออกแบบให้เร็วและไม่ล้มเพราะเรื่องนอกประเด็น: เทสที่ต้องมีเบราว์เซอร์/เซิร์ฟเวอร์จะรัน
+# **เฉพาะเมื่อไฟล์ที่เกี่ยวข้องถูก stage** ไม่งั้นคนจะเลี่ยงด้วย --no-verify แล้วเกราะก็ไร้ค่า
+set -e
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$STAGED" ] && exit 0
+
+fail() { printf '\n\033[31m✗ pre-commit: %s\033[0m\n' "$1" >&2; exit 1; }
+step() { printf '  → %s\n' "$1"; }
+
+echo "pre-commit:"
+
+# ── 1. ห้ามให้ความลับ/ข้อมูลปฏิบัติการหลุดเข้า git ────────────────────────────────────
+# .gitignore กันไว้แล้ว แต่ `git add -f` ข้ามได้ — ด่านนี้กันความพลาดครั้งเดียวที่ถอนยาก
+BAD=$(printf '%s\n' "$STAGED" | grep -Ei '(^|/)(\.env$|.*\.key$|.*_rsa$|tracking_data\.json$|freight_quotes\.json$|.*\.jsonl$|doc_scan_seen\.json$|backups/)' || true)
+[ -n "$BAD" ] && fail "ไฟล์ที่ไม่ควรเข้า git ถูก stage:
+$BAD
+ถอนด้วย: git restore --staged <ไฟล์>"
+
+# คีย์ที่โผล่ในเนื้อ diff (ไม่ใช่แค่ชื่อไฟล์)
+if git diff --cached -U0 | grep -qE '^\+.*(sk-[A-Za-z0-9_-]{20,}|BEGIN [A-Z ]*PRIVATE KEY)'; then
+  fail "พบสิ่งที่ดูเหมือน API key / private key ในเนื้อ diff"
+fi
+step "ไม่มีความลับหลุด"
+
+# ── 2. syntax ของทุกไฟล์ JS ที่ stage ────────────────────────────────────────────────
+JS=$(printf '%s\n' "$STAGED" | grep -E '\.(js|cjs|mjs)$' || true)
+if [ -n "$JS" ]; then
+  for f in $JS; do
+    [ -f "$f" ] || continue
+    node --check "$f" >/dev/null 2>&1 || fail "syntax พังที่ $f  (ดูรายละเอียด: node --check $f)"
+  done
+  step "syntax ผ่าน ($(printf '%s\n' "$JS" | wc -l | tr -d ' ') ไฟล์)"
+fi
+
+# ── 3. กติกาสถานะชิปเม้น — เทสบริสุทธิ์ ไม่ต้องมี server/เบราว์เซอร์ รันเสมอ ────────────
+# มีเทสที่อ่าน tracking_data.json จริงเพื่อยืนยันว่า **ไม่มีการ์ดไหนถูกถอยสถานะ**
+# (บั๊กจริง 2026-09-08: 24 ใบจะถูกดึงถอยหลัง — ดู REVIEW.md)
+if [ -f tests/shipment-stage.cjs ]; then
+  node tests/shipment-stage.cjs >/dev/null 2>&1 || fail "tests/shipment-stage.cjs ไม่ผ่าน
+รันดูเต็มๆ: node tests/shipment-stage.cjs"
+  step "shipment-stage ผ่าน"
+fi
+
+# ── 4. invariant ของ packer — รันเฉพาะเมื่อแตะไฟล์ที่เกี่ยวข้อง (ใช้ ~7 วิ) ─────────────
+if printf '%s\n' "$STAGED" | grep -qE 'container-loading-calculator\.html|tests/pack-'; then
+  node tests/pack-invariants.mjs 2>&1 | grep -qE 'violations=0' \
+    || fail "pack-invariants พบ violation (หรือรันไม่ผ่าน)
+รันดูเต็มๆ: node tests/pack-invariants.mjs"
+  step "pack-invariants 0 violation"
+fi
+
+# ── 5. เตือนเรื่องเทสที่ hook ไม่ได้รันให้ (ต้องมี server + Playwright) ─────────────────
+if printf '%s\n' "$STAGED" | grep -qE 'freight-comparison\.html|api-server\.js|tests/freight-'; then
+  printf '\n\033[33m  ⚠ แตะไฟล์ที่มีชุดเทส Playwright — hook ไม่ได้รันให้ (ต้องมี server ที่ port 3000)\n'
+  printf '    ก่อน push ให้รัน:  NODE_PATH=./node_modules node tests/freight-ui.cjs  (+ freight-review / freight-pdf / freight-e2e)\033[0m\n'
+fi
+
+printf '\033[32m✓ pre-commit ผ่าน\033[0m\n'

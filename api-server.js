@@ -12,6 +12,7 @@ const crypto = require('crypto');
 
 const PORT = 3000;
 const ROOT = __dirname;
+const { autoStage, nextStage } = require('./lib/shipment-rules.cjs');
 const TRACKING_FILE = path.join(ROOT, 'tracking_data.json');
 const AUDIT_FILE    = path.join(ROOT, 'tracking_audit.jsonl');
 const SHIPMENT_RUNS_FILE = path.join(ROOT, 'shipment_runs.jsonl'); // เขียนโดย scan-shipment-docs.mjs
@@ -1897,6 +1898,36 @@ const server = http.createServer(async (req, res) => {
           // stamp provenance ก่อนเขียนลง data — ต้องใช้ changed ที่คำนวณจาก before เทียบ r
           // (ถ้า merge ก่อนแล้วเทียบทีหลังจะไม่เหลือความต่างให้เห็น)
           const recOrigin = sanitizeOrigin(r._origin || origin);
+          // ── เลื่อนสถานะอัตโนมัติจากการสแกนเอกสาร ────────────────────────────────────
+          // การเขียนจาก scanner เท่านั้นที่เลื่อนสถานะได้ · สถานะที่คนตั้งเองยังชี้ขาดเสมอ
+          // ⚠ บล็อกนี้อยู่ **หลัง** ตัวกรอง _fillEmptyOnly ข้างบน จึงไม่ได้เกราะ "เติมเฉพาะช่องว่าง"
+          //   เกราะที่กันการทับจึงต้องอยู่ในตัวมันเอง = `nextStage()` ที่ยอมเลื่อนไปข้างหน้าเท่านั้น
+          //   (เจอจริง 2026-09-08: ถ้าตั้ง r.stage ตรงๆ การ์ด 24 ใบถูกดึงถอยหลัง — received→etd 12,
+          //    customs→etd 6, received→po 5, customs→po 1 เพราะ autoStage คืน 'received' ไม่ได้เลย
+          //    และ _stageManual มีอยู่ 0 จาก 1,073 record จึงไม่ได้กันอะไรกับข้อมูลเดิม)
+          if (recOrigin.startsWith('scan:') && (r._board || before?._board || 'import') !== 'export'
+              && !r._stageManual && !(before && before._stageManual)) {
+            const effective = { ...(before || {}), ...r };
+            const proposed = autoStage({
+              mode: effective.mode,
+              blNumber: effective.bl_awb || effective.bl,
+              vessel: effective.vessel,
+              voyage: effective.voyage || (String(effective.vessel || '').match(/\/\s*([^/]+)$/) || [])[1],
+              portOfLoading: effective.origin,
+              portOfDischarge: effective.dest,
+              etd: effective.etd,
+              etsActualArrivalDate: effective.etsActualArrivalDate,
+            });
+            const advanced = nextStage(before && before.stage, proposed);
+            if (advanced) r.stage = advanced;
+            else if (before) delete r.stage;   // ไม่เลื่อน = ห้ามแตะฟิลด์นี้เลย (กันทับค่าเดิม)
+            // `changed` ถูกคำนวณไว้ก่อนบล็อกนี้ ต้องแก้ให้ตรงกับที่จะเขียนจริง ไม่งั้นการเลื่อน
+            // สถานะจะ **ไม่ขึ้น audit log และไม่ได้ stamp `_src`** = เปลี่ยนสถานะโดยไม่มีที่มา
+            const hasStage = changed.indexOf('stage');
+            if (r.stage !== undefined && r.stage !== (before && before.stage)) {
+              if (hasStage < 0) changed.push('stage');
+            } else if (hasStage >= 0) changed.splice(hasStage, 1);
+          }
           const srcTag = stampProvenance(before && before._src, changed, recOrigin, nowIso);
           const merged = { ...r };
           delete merged._origin;
