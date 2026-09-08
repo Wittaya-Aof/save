@@ -12,7 +12,7 @@ const crypto = require('crypto');
 
 const PORT = 3000;
 const ROOT = __dirname;
-const { autoStage, nextStage } = require('./lib/shipment-rules.cjs');
+const { autoStage, stageWriteNeeded } = require('./lib/shipment-rules.cjs');
 const TRACKING_FILE = path.join(ROOT, 'tracking_data.json');
 const AUDIT_FILE    = path.join(ROOT, 'tracking_audit.jsonl');
 const SHIPMENT_RUNS_FILE = path.join(ROOT, 'shipment_runs.jsonl'); // เขียนโดย scan-shipment-docs.mjs
@@ -1924,7 +1924,7 @@ const server = http.createServer(async (req, res) => {
               etd: effective.etd,
               etsActualArrivalDate: effective.etsActualArrivalDate,
             });
-            const advanced = nextStage(before && before.stage, proposed);
+            const advanced = stageWriteNeeded(before && before.stage, proposed);
             if (advanced) r.stage = advanced;
             else if (before) delete r.stage;   // ไม่เลื่อน = ห้ามแตะฟิลด์นี้เลย (กันทับค่าเดิม)
             // `changed` ถูกคำนวณไว้ก่อนบล็อกนี้ ต้องแก้ให้ตรงกับที่จะเขียนจริง ไม่งั้นการเลื่อน

@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const R = require('../lib/shipment-rules.cjs');
 const { STAGES, addDays, hasCoreShipmentData, autoStage, normalizeEtsResult,
-        canonStage, stageRank, nextStage, coreFieldsFor } = R;
+        canonStage, stageRank, nextStage, stageWriteNeeded, DEFAULT_STAGE, coreFieldsFor } = R;
 
 let pass = 0;
 const ok = (label, fn) => { fn(); pass++; console.log('  ✓ ' + label); };
@@ -84,6 +84,43 @@ ok('สถานะที่ไม่รู้จัก (เช่นบอร�
   assert.strictEqual(nextStage('customs', 'ค่ามั่ว'), null);
 });
 
+console.log('\n── 3b. ⭐ เกราะชั้นสอง: ไม่เขียนค่าที่ไม่ได้บอกอะไรใหม่ ──');
+
+ok("การ์ดไม่มี stage + ได้ค่า default = ไม่เขียน (UI แสดง 'po' อยู่แล้ว)", () => {
+  assert.strictEqual(stageWriteNeeded('', DEFAULT_STAGE), null);
+  assert.strictEqual(stageWriteNeeded(undefined, 'po'), null);
+  assert.strictEqual(stageWriteNeeded(null, 'po'), null);
+});
+ok('การ์ดไม่มี stage + ได้ค่าที่เป็นข้อมูลใหม่จริง = เขียน', () => {
+  assert.strictEqual(stageWriteNeeded('', 'etd'), 'etd');
+  assert.strictEqual(stageWriteNeeded('', 'arrived'), 'arrived');
+  assert.strictEqual(stageWriteNeeded('', 'customs'), 'customs');
+});
+ok('การ์ดที่มี stage=po อยู่แล้ว ยังเลื่อนไปข้างหน้าได้ปกติ', () => {
+  assert.strictEqual(stageWriteNeeded('po', 'etd'), 'etd');
+  assert.strictEqual(stageWriteNeeded('po', 'po'), null);
+});
+ok('เกราะกันถอยหลังยังทำงานทับซ้อนอยู่', () => {
+  assert.strictEqual(stageWriteNeeded('received', 'etd'), null);
+  assert.strictEqual(stageWriteNeeded('customs', 'po'), null);
+});
+ok('วัดกับข้อมูลจริง: ลดการเขียนที่ไม่ได้อะไรลงได้จริง', () => {
+  const raw0 = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'tracking_data.json'), 'utf8'));
+  const rs = Array.isArray(raw0) ? raw0 : (raw0.records || raw0.data || []);
+  let before = 0, after = 0;
+  for (const r of rs) {
+    if ((r._board || 'import') === 'export' || r._stageManual) continue;
+    const p = autoStage({ mode: r.mode, blNumber: r.bl_awb || r.bl, vessel: r.vessel,
+      voyage: r.voyage || (String(r.vessel || '').match(/\/\s*([^/]+)$/) || [])[1],
+      portOfLoading: r.origin, portOfDischarge: r.dest, etd: r.etd, etsActualArrivalDate: r.etsActualArrivalDate });
+    if (nextStage(r.stage, p)) before++;
+    if (stageWriteNeeded(r.stage, p)) after++;
+  }
+  console.log(`      เดิมจะเขียน ${before} ใบ → ตอนนี้ ${after} ใบ (ตัดที่ไม่ได้อะไรออก ${before - after} ใบ)`);
+  assert.ok(after < before, 'ไม่ได้ลดลงเลย');
+  assert.ok(after > 0, 'ตัดจนไม่เหลืออะไร — เกราะแน่นเกินไป');
+});
+
 console.log('\n── 4. โหมดขนส่ง: ทางอากาศ/พัสดุไม่มีเรือให้กรอก ──');
 
 const air = { mode:'air', blNumber:'AWB-160-12345675', portOfLoading:'PVG, CHINA',
@@ -149,7 +186,8 @@ console.log('\n── 7. โค้ดฝั่ง server/scanner ยังผู
 
 const srv = fs.readFileSync(path.join(__dirname, '..', 'api-server.js'), 'utf8');
 ok('api-server ใช้ nextStage เป็นเกราะ ไม่ตั้ง r.stage ตรงๆ', () => {
-  assert.ok(/nextStage\(before && before\.stage, proposed\)/.test(srv), 'ไม่พบการเรียก nextStage');
+  assert.ok(/stageWriteNeeded\(before && before\.stage, proposed\)/.test(srv),
+    'ไม่พบ stageWriteNeeded → จะเขียน stage ที่ไม่ได้บอกอะไรใหม่ 838 ใบ');
   assert.ok(!/r\.stage = autoStage\(/.test(srv), 'ยังตั้ง r.stage = autoStage(...) ตรงๆ = เกราะถูกถอด');
 });
 ok('การเลื่อนสถานะถูกบันทึกลง audit/_src (แก้ changed ด้วย)', () =>
