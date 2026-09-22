@@ -231,10 +231,33 @@ function saveFreight(rows) {
 }
 
 // ─── Audit log: บันทึกทุกการแก้ไข (append-only, ดูย้อนหลังได้) ────
-function auditLog(action, poSo, fields, ip) {
+// ─── ใครเป็นคนทำ ────────────────────────────────────────────────────────────────
+// วันนี้ระบบมีผู้ใช้คนเดียว แต่ตอนขึ้น production จะมีหลายคน — และ **ประวัติย้อนหลัง
+// เติมกลับไม่ได้** ถ้าไม่เริ่มบันทึกตั้งแต่วันนี้ ช่วงที่ผ่านมาจะไม่มีวันรู้ว่าใครแก้อะไร
+// (เดิม audit log เก็บแค่ `ip` ซึ่งพอมีหลายคนผ่าน proxy เดียวกันจะบอกอะไรไม่ได้เลย)
+//
+// ที่มาของชื่อ ตามลำดับ:
+//   1. ชื่อผู้ใช้จาก Basic Auth — เดิมโค้ดทิ้งส่วนนี้ ใช้แต่รหัสผ่าน (ดูตรง safeEqual)
+//      วันที่มีบัญชีรายคนจริง ช่องนี้จะกลายเป็น user id ทันทีโดยไม่ต้องแก้อะไรอีก
+//   2. `APP_USER` ใน .env — สำหรับเครื่องที่ยังไม่เปิด Basic Auth
+//   3. 'local' — เข้าจาก loopback โดยไม่มีอะไรระบุตัวตนเลย
+function actorOf(req) {
+  try {
+    const hdr = String(req.headers['authorization'] || '');
+    if (hdr.startsWith('Basic ')) {
+      const u = Buffer.from(hdr.slice(6), 'base64').toString('utf8').split(':')[0].trim();
+      if (u) return u.replace(/[^\w.@-]+/g, '_').slice(0, 40);
+    }
+  } catch (e) {}
+  const env = String(process.env.APP_USER || '').trim();
+  return env ? env.replace(/[^\w.@-]+/g, '_').slice(0, 40) : 'local';
+}
+
+function auditLog(action, poSo, fields, ip, user) {
   try {
     fs.appendFileSync(AUDIT_FILE, JSON.stringify({
-      ts: new Date().toISOString(), action, po_so: poSo, fields, ip: ip || '',
+      ts: new Date().toISOString(), action, po_so: poSo, fields,
+      user: user || '', ip: ip || '',
     }) + '\n', 'utf8');
   } catch(e) { console.error('[Audit]', e.message); }
 }
@@ -1771,7 +1794,7 @@ const server = http.createServer(async (req, res) => {
       if (data === null) return;
       try {
         if (!Array.isArray(data)) { jsonErr(res, 400, 'expected array'); return; }
-        auditLog('replace_all', '*', ['(' + data.length + ' records)'], req.socket.remoteAddress);
+        auditLog('replace_all', '*', ['(' + data.length + ' records)'], req.socket.remoteAddress, actorOf(req));
         const ok = saveTracking(data);
         jsonOk(res, { ok, count: data.length });
       } catch(e) { jsonErr(res, 400, e.message); }
@@ -1788,7 +1811,10 @@ const server = http.createServer(async (req, res) => {
         const recs  = Array.isArray(input) ? input : [input];
         // ที่มาของค่าในรอบนี้ — client ส่ง _origin มาได้ (ข้อมูลเก่ามี 'verify:<ไฟล์>' จากโมดูลตรวจเอกสารที่ถอดออกแล้ว)
         // ไม่ส่ง = คนกรอกผ่านหน้าเว็บ ซึ่งเป็นกรณีปกติ
-        const origin = sanitizeOrigin(!Array.isArray(input) && input._origin ? input._origin : 'manual');
+        // ค่าที่คนกรอกผ่านหน้าเว็บติดชื่อคนไปด้วย → `manual:<ผู้ใช้>` ซึ่งเข้ารูปแบบเดิม
+        // `<origin>[:<ref>]@<iso>` อยู่แล้ว จึงไม่ต้องแก้โครงข้อมูลหรือ migrate อะไรเลย
+        const actor = actorOf(req);
+        const origin = sanitizeOrigin(!Array.isArray(input) && input._origin ? input._origin : 'manual:' + actor);
         const nowIso = new Date().toISOString();
         const data  = loadTracking();
         const byKey = new Map();
@@ -1823,6 +1849,8 @@ const server = http.createServer(async (req, res) => {
         // ⚠ เดิมเส้นทางนี้ `return` เงียบ ตอบ 200 โดยไม่นับที่ไหนเลย → ตัวเรียก (scan-shipment-docs.mjs)
         //   แยกไม่ออกว่า "เขียนแล้ว" หรือ "ข้ามไป" จึง log ว่าสำเร็จทุกครั้ง (บั๊กจริง 2026-09-08)
         const skippedRecords = [];
+        // record ที่ "มีคนแก้ไปแล้วหลังจากที่ client โหลด" — ดูเหตุผลที่จุดตรวจด้านล่าง
+        const conflicts = [];
         recs.forEach(r => {
           const key = r && (r.po_so || r.id);
           if (key == null) return;
@@ -1839,6 +1867,29 @@ const server = http.createServer(async (req, res) => {
           }
           const idx    = byKey.has(key) ? byKey.get(key) : -1;
           const before = idx >= 0 ? data[idx] : null;
+          // ── ⭐ กันสองคนแก้ record เดียวกันทับกัน (optimistic concurrency) ──────────────
+          // ขอบเขตของปัญหาที่แก้จริง: การอ่าน→แก้→เขียนในตัว upsert **ไม่มี await คั่นเลย**
+          // Node จึงรันจบเป็นก้อนเดียว ไฟล์ไม่พัง และการแก้คนละ PO ไม่ชนกันอยู่แล้ว เพราะ
+          // upsert merge ทีละ record (`data[idx] = {...data[idx], ...merged}`) ไม่ได้เขียนทับ
+          // ทั้งไฟล์จาก snapshot ของ client — ที่เหลือคือเคสคลาสสิก **สองคนแก้ PO ใบเดียวกัน**
+          // คนหลังทับฟิลด์ของคนแรกเงียบๆ ซึ่งวันนี้ยังไม่เกิดเพราะมีผู้ใช้คนเดียว
+          //
+          // วิธีตรวจ: client ส่ง `_baseTs` = ค่า `_ts` ที่มันเห็นตอนโหลด record นี้มา
+          // ถ้าในไฟล์มี `_ts` ใหม่กว่า = มีคนบันทึกคั่นไประหว่างนั้น → **ไม่เขียน** แล้วรายงานกลับ
+          // ⚠ ไม่ส่ง `_baseTs` มา = พฤติกรรมเดิมทุกประการ (scan-shipment-docs.mjs จึงไม่กระทบ
+          //   และมันมีเกราะของตัวเองอยู่แล้ว: _fillEmptyOnly + ตัวตรวจตัวตนชิปเม้น)
+          const baseTs = r._baseTs;
+          delete r._baseTs;
+          if (baseTs != null && before && before._ts != null && Number(before._ts) > Number(baseTs)) {
+            const who = String(before._by || '').trim();
+            conflicts.push({
+              po_so: key,
+              reason: 'มีการบันทึกทับระหว่างที่คุณกำลังแก้' + (who ? ' (โดย ' + who + ')' : ''),
+              storedTs: before._ts, yourTs: baseTs,
+            });
+            console.log(`[Upsert] ${key} ไม่เขียน — ถูกแก้ไปแล้วหลังจากที่ client โหลด (stored=${before._ts} base=${baseTs})`);
+            return;
+          }
           // ── โหมด "เติมเฉพาะช่องว่าง" (_fillEmptyOnly) ────────────────────────────────
           // ใช้กับการเขียนอัตโนมัติจาก scan-shipment-docs.mjs — เติมได้เฉพาะฟิลด์ที่ยังว่างอยู่
           // ห้ามทับค่าที่มีอยู่แล้วเด็ดขาด เพราะ PO เดียวอาจแบ่งส่งหลายชิปเม้น (คนละ B/L/เรือ/ตู้)
@@ -1938,6 +1989,9 @@ const server = http.createServer(async (req, res) => {
           const merged = { ...r };
           delete merged._origin;
           delete merged._src;
+          delete merged._baseTs;
+          // ใครแก้ล่าสุด — ใช้บอกชื่อในข้อความ conflict ของคนถัดไป (ประวัติเต็มอยู่ใน audit log)
+          if (!r._origin) merged._by = actor;
           if (Object.keys(srcTag).length) merged._src = srcTag;
           if (idx >= 0) data[idx] = { ...data[idx], ...merged };
           else { byKey.set(key, data.length); data.push(merged); }
@@ -1947,14 +2001,15 @@ const server = http.createServer(async (req, res) => {
           // การแก้ไขจริงตกออกจากแผง "ประวัติการแก้ไขล่าสุด" ที่โชว์แค่ 40 รายการล่าสุดบน Dashboard
           const meaningful = changed.filter(k => k !== '_ts');
           if (!before || meaningful.length) {
-            auditLog(before ? 'update' : 'create', key, changed, req.socket.remoteAddress);
+            auditLog(before ? 'update' : 'create', key, changed, req.socket.remoteAddress, actorOf(req));
           }
           applied++;
         });
         const ok = saveTracking(data);
         if (rejected.length) console.error('[Upsert] ปฏิเสธค่าที่ผิดปกติ:', JSON.stringify(rejected));
         if (skippedRecords.length) console.log(`[Upsert] ข้าม ${skippedRecords.length} record (เป็นคนละชิปเม้น) — รายงานกลับให้ผู้เรียกแล้ว`);
-        jsonOk(res, { ok, applied, total: data.length, rejected, skipped: skippedRecords });
+        if (conflicts.length) console.log(`[Upsert] ไม่เขียน ${conflicts.length} record — มีคนบันทึกทับระหว่างทาง`);
+        jsonOk(res, { ok, applied, total: data.length, rejected, skipped: skippedRecords, conflicts });
       } catch(e) { jsonErr(res, 400, e.message); }
       return;
     }
@@ -1973,7 +2028,7 @@ const server = http.createServer(async (req, res) => {
         }
         const { po_so, password } = parsedBody;
         if (!safeEqual(password, process.env.DELETE_PASSWORD)) {
-          auditLog('delete_denied', po_so || '?', ['wrong_password'], req.socket.remoteAddress);
+          auditLog('delete_denied', po_so || '?', ['wrong_password'], req.socket.remoteAddress, actorOf(req));
           jsonErr(res, 401, 'รหัสผ่านไม่ถูกต้อง');
           return;
         }
@@ -1987,7 +2042,7 @@ const server = http.createServer(async (req, res) => {
         }
         data.splice(idx, 1);
         const ok = saveTracking(data);
-        auditLog('delete', po_so, ['deleted'], req.socket.remoteAddress);
+        auditLog('delete', po_so, ['deleted'], req.socket.remoteAddress, actorOf(req));
         jsonOk(res, { ok });
       } catch (e) { jsonErr(res, 400, e.message); }
       return;
@@ -2088,7 +2143,7 @@ const server = http.createServer(async (req, res) => {
       q.savedBy = req.socket.remoteAddress || '';
       if (idx >= 0) rows[idx] = q; else rows.push(q);
       if (!saveFreight(rows)) { jsonErr(res, 500, 'บันทึกไฟล์ไม่สำเร็จ'); return; }
-      auditLog(idx >= 0 ? 'freight_update' : 'freight_create', String(q.head.ref || q.id), [q.type], req.socket.remoteAddress);
+      auditLog(idx >= 0 ? 'freight_update' : 'freight_create', String(q.head.ref || q.id), [q.type], req.socket.remoteAddress, actorOf(req));
       jsonOk(res, { ok: true, row: { id: q.id, updatedAt: q.updatedAt }, count: rows.length });
       return;
     }
@@ -2101,7 +2156,7 @@ const server = http.createServer(async (req, res) => {
       const next = rows.filter(r => r.id !== id);
       if (next.length === rows.length) { jsonErr(res, 404, 'ไม่พบใบนี้'); return; }
       if (!saveFreight(next)) { jsonErr(res, 500, 'บันทึกไฟล์ไม่สำเร็จ'); return; }
-      auditLog('freight_delete', id, [], req.socket.remoteAddress);
+      auditLog('freight_delete', id, [], req.socket.remoteAddress, actorOf(req));
       jsonOk(res, { ok: true, count: next.length });
       return;
     }

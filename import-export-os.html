@@ -901,9 +901,29 @@ class App extends Component {
     const ov={...this._overrides};ov[s.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(x=>x.poNo===s.poNo?this.applyOne(x,o):x);
     this.setState({shipments:rows});
-    try{const res=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
+    try{const res=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.withBase(o))});
+      if(await this.hitConflict(res))return;
       this.showToast(res.ok?('ย้าย '+s.poNo+' → '+stageMeta(s._board,newStage).label):('บันทึกไม่สำเร็จ: HTTP '+res.status),res.ok?'success':'error');
     }catch(e){this.showToast('บันทึกไม่สำเร็จ: '+e.message,'error');}
+  }
+  // ── กันสองคนแก้ PO ใบเดียวกันทับกัน (ฝั่งหน้าเว็บ) ────────────────────────────
+  // แนบ `_baseTs` = ค่า `_ts` ที่หน้านี้เห็นล่าสุดของ record นั้น เพื่อบอก server ว่าเรากำลังแก้
+  // จากฐานไหน · ถ้ามีคนบันทึกคั่นไป server จะ **ไม่เขียน** แล้วคืน `conflicts[]` มาแทน
+  // (record ใหม่ที่ยังไม่มีในระบบไม่มี _ts จึงไม่แนบ = พฤติกรรมเดิมทุกประการ)
+  withBase(o){
+    const prev=this._overrides&&this._overrides[o.po_so];
+    return (prev&&prev._ts!=null)?{...o,_baseTs:prev._ts}:o;
+  }
+  // คืน true เมื่อ "ไม่ได้บันทึก เพราะมีคนแก้คั่น" — ผู้เรียกต้องหยุด อย่าบอกว่าสำเร็จ
+  // ⚠ ต้องบอก **ทางออก** ด้วย ไม่ใช่แค่บอกว่าพัง ไม่งั้นผู้ใช้ไม่รู้ว่าต้องทำอะไรต่อ
+  async hitConflict(res){
+    if(!res||!res.ok)return false;
+    const j=await res.clone().json().catch(()=>null);
+    const c=j&&Array.isArray(j.conflicts)&&j.conflicts[0];
+    if(!c)return false;
+    this.showToast('ยังไม่ได้บันทึก — '+c.reason+' · กำลังดึงข้อมูลล่าสุดให้ แล้วแก้อีกครั้ง','error');
+    this.load(true);
+    return true;
   }
   // ── แยก PO ที่ถูกส่งเป็นหลายรอบออกเป็น shipment ย่อยบน Kanban ──
   // ตั้งชื่อ PO ต่อท้ายด้วย " (n)" (convention เดียวกับที่ strip()/applyOverrides ใช้จับคู่ PO เดิมอยู่แล้ว)
@@ -1121,7 +1141,8 @@ class App extends Component {
     const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
     const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
     this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
-    try{const res=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});this.showToast(res.ok?'บันทึก PO '+f.poNo+' สำเร็จ':'บันทึกไม่สำเร็จ: HTTP '+res.status,res.ok?'success':'error');}
+    try{const res=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.withBase(o))});if(await this.hitConflict(res))return;
+      this.showToast(res.ok?'บันทึก PO '+f.poNo+' สำเร็จ':'บันทึกไม่สำเร็จ: HTTP '+res.status,res.ok?'success':'error');}
     catch(e){this.showToast('ออฟไลน์ — บันทึกชั่วคราว','info');}
     this.setState({savingEdit:false});
   }
@@ -1221,7 +1242,8 @@ class App extends Component {
     const rows=this.allShipments().map(x=>x.poNo===s.poNo?{...x,stage,actualDate,_stageManual:true,_edited:true}:x);
     this.setState({shipments:rows});
     try{
-      const r=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
+      const r=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.withBase(o))});
+      if(await this.hitConflict(r))return;
       this.showToast(r.ok?('ปิดงาน '+s.poNo+' — '+(s._board==='export'?'ถึงปลายทาง':'รับเข้าคลัง')+'แล้ว'):'บันทึกไม่สำเร็จ',r.ok?'success':'error');
     }catch(e){this.showToast('ออฟไลน์ — บันทึกชั่วคราว','info');}
   }
@@ -2766,6 +2788,10 @@ function srcLabel(tag){
   const date=(when&&!isNaN(when))?when.toLocaleDateString('th-TH',{day:'numeric',month:'short'}):'';
   if(origin.startsWith('verify:'))return {kind:'doc',text:'จากเอกสาร '+origin.slice(7),date};
   if(origin==='manual')return {kind:'manual',text:'กรอกเอง',date};
+  // ตั้งแต่ 2026-09-22 ค่าที่คนกรอกติดชื่อผู้ใช้มาด้วย → `manual:<ผู้ใช้>`
+  // ('manual' เปล่าๆ ของเดิมยังอ่านได้ด้วยบรรทัดบน จึงไม่ต้อง migrate ข้อมูลเก่า)
+  if(origin.startsWith('manual:'))return {kind:'manual',text:'กรอกเอง · '+origin.slice(7),date};
+  if(origin.startsWith('scan:'))return {kind:'doc',text:'จากการสแกน '+origin.slice(5),date};
   return {kind:'other',text:origin,date};
 }
 // Row ที่บอก "ที่มาของค่า" ได้ — src=null แล้วมีค่า = ไม่ทราบที่มา (ข้อมูลก่อนเริ่มเก็บ provenance)

@@ -270,3 +270,247 @@ Hermes เขียนว่า *"หาก ETS error ที่ไม่ใช�
 3. **ห้ามทับค่าที่ผู้ใช้กรอกเอง** — เติมได้เฉพาะช่องว่าง
 4. **ห้าม re-render DOM ระหว่างผู้ใช้พิมพ์** — อัปเดตเฉพาะเซลล์ยอดเงินแบบ in-place
 5. **คำเตือนต้องตามไปทุกทางที่ตัวเลขออกจากระบบ** — หน้าจอ ไฟล์ Excel และการพิมพ์
+
+---
+
+## Product / UX Review สำหรับ Claude — ยกระดับ Import-Export OS ให้เป็น Shipment Control Tower
+
+### วัตถุประสงค์
+
+โปรเจกต์นี้ไม่ควรเป็นเพียงระบบเก็บข้อมูล shipment แต่ควรเป็น **Shipment Control Tower** ที่ช่วยให้ผู้ใช้รู้ทันทีว่า:
+
+1. shipment ไหนมีปัญหา
+2. วันนี้ต้องทำอะไร
+3. ต้องติดต่อใคร
+4. ข้อมูลใดเชื่อถือได้และมาจากแหล่งใด
+5. ขั้นตอนถัดไปคืออะไร
+
+> เป้าหมายไม่ใช่ทำ automation ให้มากที่สุด แต่คือทำให้ผู้ใช้ตัดสินใจได้เร็วขึ้น โดยระบบไม่เดาข้อมูลที่ยังยืนยันไม่ได้
+
+### หลักการผลิตภัณฑ์ที่ต้องรักษา
+
+- **Trust over automation:** ไม่มีหลักฐานยืนยัน = ไม่เลื่อนสถานะและไม่แจ้งเตือนเกินจริง
+- **Exception-first:** แสดงปัญหาและงานค้างก่อนข้อมูลที่ไม่มีปัญหา
+- **Source-aware:** ทุกค่าหลักต้องรู้ว่าได้มาจากเอกสาร, ETS, Odoo หรือผู้ใช้กรอกเอง
+- **Human control:** ระบบ automate ถึง `กำลังเดินพิธีการ`; หลังจากนั้นผู้ใช้ยืนยันเองจนถึง `สินค้าถึงคลัง`
+- **No silent data loss:** ห้ามทับข้อมูลผู้ใช้ ห้ามตัดข้อมูลโดยไม่แจ้ง และทุกการแก้ต้องตรวจสอบย้อนหลังได้
+- **Action over decoration:** ทุกการ์ดสถานะควรมีปุ่มงานถัดไป ไม่ใช่มีแค่สีหรือ label
+
+### 1. Dashboard แบบ “ต้องทำอะไรวันนี้”
+
+หน้าแรกควรสรุปเป็นกลุ่มงานที่ลงมือทำได้ทันที:
+
+- ต้องดำเนินการวันนี้
+- เรือใกล้ถึงภายใน 3 วัน
+- รอเอกสารจาก supplier
+- รอ freight forwarder ตอบกลับ
+- รอตรวจ draft BL / Import Entry / Form D, E, AK
+- พบข้อมูลเอกสารไม่ตรงกัน
+- ETS ตรวจไม่สำเร็จหรือ match voyage ไม่ได้
+- shipment ที่ค้างสถานะนานผิดปกติ
+
+ผู้ใช้ควรเห็นคำตอบภายในประมาณ 5 วินาทีว่า shipment ใดต้องติดตามและต้องทำอะไรต่อ
+
+### 2. สถานะต้องสื่อถึงงานถัดไป
+
+การ์ดแต่ละสถานะควรแสดงเงื่อนไขและ action ที่เกี่ยวข้อง:
+
+| สถานะ | ข้อมูล/งานที่ควรแสดง |
+|---|---|
+| รอเอกสาร | เอกสารที่ขาด, ผู้รับผิดชอบ, ค้างกี่วัน |
+| ETD | ETD, ข้อมูลหลักครบหรือไม่, ตรวจ ETS ได้หรือยัง |
+| ถึงท่าเรือ | ETS Actual Arrival, เวลาตรวจล่าสุด, voyage ที่ match |
+| กำลังเดินพิธีการ | วันที่เริ่ม, เอกสารที่ขาด, ผู้รับผิดชอบ |
+| สินค้าถึงคลัง | วันที่รับจริง, หลักฐานการรับ, ความล่าช้าเทียบแผน |
+
+ปุ่ม action ที่ควรมี: `ตรวจ ETS`, `ตรวจเอกสาร`, `ขอเอกสาร`, `ส่ง Reminder`, `บันทึกการรับเข้า`, `ดูประวัติ`
+
+### 3. แยก Schedule กับ Actual ให้เห็นชัด
+
+ข้อมูลวันที่ต้องไม่ใช้ชื่อ ETA รวมกันจนทำให้ผู้ใช้เข้าใจผิด:
+
+- `ETD` = กำหนดการเรือออก
+- `eta` = Schedule ETA
+- `etsActualArrivalDate` = Actual Arrival จาก ETS
+- `actualDate` = วันที่รับเข้าคลังจริงโดยผู้ใช้
+
+เมื่อแสดง Actual Arrival ให้แสดง provenance ด้วย เช่น:
+
+```text
+ETA: 18 Sep 2026
+Source: ETS Actual Arrival
+Checked: 16 Sep 2026 09:30
+Voyage match: ตรงกัน
+```
+
+กรณี match ไม่มั่นใจ ต้องขึ้นคำเตือนและห้ามปรับสถานะอัตโนมัติ เช่น:
+
+```text
+พบเรือชื่อใกล้เคียง แต่ Voyage ไม่ตรง — ยังไม่ยืนยัน Actual Arrival
+```
+
+### 4. Document Review Workspace
+
+ควรมีหน้าตรวจร่างเอกสารก่อนยืนยันหรือส่งผ่าน Email, WeChat และ LINE โดยเทียบข้อมูลข้ามเอกสารในที่เดียว:
+
+- ชื่อ Buyer / Seller
+- BL Number
+- Invoice Number / Date
+- จำนวนสินค้า
+- น้ำหนัก
+- มูลค่าและสกุลเงิน
+- ประเทศต้นทาง
+- Incoterms
+- HS Code
+- Port of Loading / Discharge
+- Vessel / Voyage
+
+ผลตรวจควรแบ่งเป็น:
+
+- `ตรงกัน`
+- `พบความแตกต่าง`
+- `ข้อมูลหาย`
+- `ต้องตรวจด้วยคน`
+
+ตัวอย่างกฎที่ต้องหยุดการยืนยัน:
+
+```text
+Invoice ระบุ 1,200 KG แต่ Packing List ระบุ 1,250 KG
+ไม่ควรยืนยันเอกสารจนกว่าจะตรวจสอบความแตกต่าง
+```
+
+### 5. Message Templates และการติดตามการตอบกลับ
+
+เพิ่ม template ที่เติมข้อมูล shipment อัตโนมัติสำหรับข้อความที่ใช้ซ้ำบ่อย:
+
+- Confirm draft BL
+- Confirm draft Import / Export Entry
+- Confirm draft Form D / E / AK
+- ขอเอกสารที่ยังขาด
+- แจ้งเรือเลื่อน
+- แจ้งเรือใกล้ถึง
+- ติดตาม supplier / freight forwarder ที่ยังไม่ตอบ
+
+แต่ละข้อความควรมี `Copy`, `เปิด Email`, `แนบเอกสาร`, และ `บันทึกว่าใครส่งเมื่อไร` โดยเริ่มจาก copy-to-clipboard และ audit log ก่อนเชื่อม API ของแต่ละ platform
+
+### 6. Exception-first และ SLA
+
+ระบบควรคำนวณงานค้างและความเสี่ยง เช่น:
+
+- รอเอกสารเกิน SLA
+- supplier ยังไม่ตอบเกินกำหนด
+- ETS Actual Arrival ผ่านแล้วแต่ยังไม่ตรวจ
+- สถานะเดิมนานกว่าค่าปกติ
+- Vessel/Voyage ไม่ตรง
+- เอกสารขัดแย้งกัน
+- Actual Arrival ช้ากว่า Schedule ETA
+
+ทุก exception ต้องมีเหตุผล, owner, due date และปุ่มแก้ไข ไม่ควรเป็นเพียง badge สีแดง
+
+### 7. การกรอกข้อมูลต้องเร็วและไม่ซ้ำ
+
+ลำดับการใช้งานที่ควรได้:
+
+1. ลากไฟล์ BL เข้าโฟลเดอร์หรือหน้าเว็บ
+2. ระบบตรวจพบ shipment เดิมจาก BL/PO/Invoice
+3. สกัดข้อมูลหลักและแสดงผลพร้อม source
+4. ตรวจครบ 6/6 fields
+5. ให้ผู้ใช้กดยืนยันก่อนเปลี่ยนเป็น `ETD`
+6. ตรวจ ETS ตาม schedule
+
+ควรรองรับ drag & drop, scan folder, duplicate detection, Excel import, bulk edit, และการจำรูปแบบเอกสารของ supplier เดิม
+
+### 8. Manual override ต้องโปร่งใส
+
+ทุก shipment ที่ถูกแก้สถานะเองควรแสดง:
+
+- สถานะปัจจุบัน
+- ผู้แก้ไข
+- เวลาแก้ไข
+- เหตุผล
+- `automatic` หรือ `manual override`
+
+ต้องมีปุ่ม `กลับไปใช้สถานะอัตโนมัติ` เพื่อยกเลิก override โดยไม่ลบประวัติเดิม
+
+### 9. KPI ที่สร้างจาก audit log
+
+รายงานควรสร้างจากข้อมูลจริงโดยไม่ต้องกรอกซ้ำ:
+
+- จำนวน shipment
+- เวลาเฉลี่ย ETD → Actual Arrival
+- เวลา Actual Arrival → เริ่มพิธีการ
+- เวลาเริ่มพิธีการ → สินค้าถึงคลัง
+- Supplier ส่งเอกสารช้าเฉลี่ย
+- Forwarder ตอบกลับช้าเฉลี่ย
+- จำนวน document mismatch
+- จำนวนครั้งแก้ BL
+- จำนวน shipment ล่าช้าและสาเหตุ
+- เปรียบเทียบ KOB/BTV, supplier และ forwarder
+
+ต้องดูได้รายเดือน, ต้นปีถึงปัจจุบัน, กลางปี และ export เป็นรายงานเก็บภายในสำหรับวัด KPI
+
+### 10. Roadmap ที่แนะนำ
+
+#### Phase 1 — Trust & Accuracy
+
+- data model กลาง
+- field provenance
+- ตรวจข้อมูลหลักครบ 6/6
+- ETS matching แบบปลอดภัย
+- auto-stage ถึง `กำลังเดินพิธีการ`
+- manual override
+- audit log
+- duplicate detection
+
+#### Phase 2 — Daily Productivity
+
+- Dashboard “ต้องทำวันนี้”
+- reminder และ SLA
+- message templates
+- document review
+- bulk actions
+- drag & drop scan
+- internal notification
+
+#### Phase 3 — Automation
+
+- scheduled ETS polling
+- Email integration
+- LINE integration
+- WeChat ตามความพร้อมของ API
+- auto-create shipment จากเอกสาร
+- escalation เมื่อเกิน SLA
+
+#### Phase 4 — Management Intelligence
+
+- KPI dashboard
+- supplier scorecard
+- forwarder performance
+- delay analysis/prediction
+- lead-time และ cost analysis
+- monthly / half-year report
+
+### Acceptance Criteria สำหรับการพัฒนาต่อ
+
+Claude ควรถือว่างานหนึ่งเสร็จต่อเมื่อ:
+
+- มีเทสที่ทำให้บั๊กหรือ requirement นั้น fail ก่อนแก้
+- ข้อมูลจากเอกสาร, ETS และผู้ใช้แยก source ได้
+- ระบบไม่ปรับสถานะเมื่อข้อมูลหลักไม่ครบหรือ voyage ไม่ match
+- ระบบไม่ทับค่าที่ผู้ใช้กรอกเอง
+- สถานะไม่ถอยหลังโดยอัตโนมัติ
+- การเปลี่ยนสถานะมี audit trail
+- ข้อความเตือนบอกสาเหตุและ action ถัดไป
+- ทดสอบทั้ง unit, API integration และหน้าเว็บจริง
+- ไม่มีข้อมูลสำคัญหายเมื่อ upsert, scan หรือ refresh
+
+### ลำดับความสำคัญที่ควรเริ่มก่อน
+
+1. ตรวจสอบและทำให้ provenance ของข้อมูลหลักสมบูรณ์
+2. สร้าง Document Review Workspace
+3. สร้าง Dashboard งานค้างและ exception
+4. เพิ่ม template การสื่อสารพร้อม audit log
+5. เพิ่ม SLA และ reminder
+6. สร้าง KPI จากข้อมูลที่เก็บได้จริง
+
+**คำแนะนำสำหรับ Claude:** อย่าเริ่มจากการเพิ่มสี, animation หรือฟีเจอร์จำนวนมาก ให้เริ่มจากเส้นทางที่ถ้าผิดแล้วกระทบธุรกิจจริง: `เอกสาร → ข้อมูลหลัก → ETS → สถานะ → การสื่อสาร → audit/KPI` และทุกข้อเสนอใหม่ต้องพิสูจน์ด้วยเทสหรือข้อมูลจากการใช้งานจริงก่อน merge
