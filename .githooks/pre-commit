@@ -46,7 +46,7 @@ fi
 #                  (บั๊กจริง 2026-09-08: 24 ใบจะถูกดึงถอยหลัง)
 # scan-policy    : กติการอบสแกน — HTTP 200 ไม่ใช่ความสำเร็จ · แยก "ข้าม" จาก "พัง" · ETS session
 # ดู REVIEW.md หัวข้อ 2026-09-08
-for t in tests/shipment-stage.cjs tests/scan-policy.cjs; do
+for t in tests/shipment-stage.cjs tests/scan-policy.cjs tests/worklist.cjs; do
   [ -f "$t" ] || continue
   node "$t" >/dev/null 2>&1 || fail "$t ไม่ผ่าน
 รันดูเต็มๆ: node $t"

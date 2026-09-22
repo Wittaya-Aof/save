@@ -136,13 +136,16 @@ const check = (name, pass, detail) => results.push({ name, pass: !!pass, detail 
   // ── C. บันทึกแล้วโหลดกลับ ขั้นบันไดและที่มาต้องยังอยู่ ─────────────────────
   await fill('head.ref', 'TEST-PDF-' + Date.now());
   page.on('dialog', d => d.accept());
+  // จำรายการใบที่มีอยู่ "ก่อน" เทสจะบันทึก — ใช้ยืนยันตอนจบว่าไม่ได้ไปลบใบของผู้ใช้
+  const savedBefore = await page.$$eval('#savedSel option', os => os.filter(o => o.value).map(o => o.value));
   await page.click('#btnSave'); await page.waitForTimeout(700);
   const savedId = await page.evaluate(() => JSON.parse(localStorage.getItem('kobFreightDraft') || 'null')?.id || document.querySelector('#savedSel').value);
   await page.evaluate(() => { localStorage.removeItem('kobFreightDraft'); });
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForSelector('#tbl tbody tr');
   await page.waitForTimeout(400);
-  const opt = await page.$$eval('#savedSel option', os => os.map(o => o.value).filter(Boolean));
-  await page.selectOption('#savedSel', opt[0]); await page.waitForTimeout(300);
+  // ⚠ เดิมเลือก opt[0] โดยสมมติว่าใบของเทสอยู่ตัวแรก — พอมีใบของผู้ใช้บันทึกไว้ก่อน
+  //   จะเลือกผิดใบ แล้วเทสไปตรวจใบที่ไม่ใช่ของตัวเอง (ผ่าน/ตกแบบไม่มีความหมาย)
+  await page.selectOption('#savedSel', savedId); await page.waitForTimeout(300);
   // อ่านจาก DOM ไม่ใช่ localStorage — การเปิดใบที่บันทึกไว้ไม่เขียน draft (dirty=false) จึงอ่านจาก storage ไม่ได้
   const reloaded = await page.evaluate(({ cfs }) => ({
     tierLink: document.querySelector('#tbl tbody [data-tier="0"]')?.textContent.trim(),
@@ -152,8 +155,13 @@ const check = (name, pass, detail) => results.push({ name, pass: !!pass, detail 
   check('บันทึกแล้วเปิดใบกลับมา: ขั้นบันได 3 ขั้น + เครื่องหมายที่มายังอยู่',
     /3 ขั้น/.test(reloaded.tierLink || '') && reloaded.cfsMarked && reloaded.tierShown, JSON.stringify(reloaded));
   await page.click('#btnDel'); await page.waitForTimeout(500);   // เก็บกวาดไม่ให้ค้างในไฟล์ข้อมูลจริง
-  const left = await page.$$eval('#savedSel option', os => os.filter(o => o.value).length);
-  check('ลบใบทดสอบออกจาก server แล้ว', left === 0, 'เหลือ ' + left);
+  // ⚠ เดิมเช็คว่า "ไม่เหลือใบใดเลยบน server" ซึ่งจริงเฉพาะตอน freight_quotes.json ว่าง
+  // พอมีใบเปรียบเทียบจริงถูกบันทึกไว้ เทสก็ตกทันทีทั้งที่โค้ดไม่ได้พัง (เจอจริง 2026-09-22)
+  // → ตรวจเฉพาะ **ใบของเทสเอง** ว่าถูกลบจริง ส่วนใบของผู้ใช้ต้องไม่ถูกแตะ
+  const savedAfter = await page.$$eval('#savedSel option', os => os.filter(o => o.value).map(o => o.value));
+  check('ลบใบทดสอบออกจาก server แล้ว', !savedAfter.includes(savedId), 'ยังพบ ' + savedId);
+  check('ไม่ไปลบใบของผู้ใช้ที่บันทึกไว้ก่อนหน้า', savedAfter.length === savedBefore.length,
+        `ก่อนเทสมี ${savedBefore.length} ใบ หลังเทสเหลือ ${savedAfter.length}`);
 
   check('ไม่มี pageerror / console error ตลอดการทดสอบ', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();

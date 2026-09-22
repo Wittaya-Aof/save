@@ -2201,6 +2201,10 @@ const server = http.createServer(async (req, res) => {
     filePath = path.join(ROOT, 'container-loading-calculator.html');
   } else if (reqUrl === '/freight-comparison.html') {
     filePath = path.join(ROOT, 'freight-comparison.html');
+  } else if (reqUrl === '/lib/worklist.js') {
+    // กติกา "งานค้าง" อยู่ในไฟล์เดียวที่หน้าเว็บกับเทสใน node ใช้ร่วมกัน (ดู tests/worklist.cjs)
+    // — ถ้าแยกสองชุด หน้าแรกกับเทสจะเถียงกันเองแล้วเชื่อฝั่งไหนไม่ได้
+    filePath = path.join(ROOT, 'lib', 'worklist.js');
   } else if (/^\/vendor\/[\w.-]+\.(js|css|map)$/.test(reqUrl)) {
     filePath = path.join(ROOT, reqUrl);
   } else {

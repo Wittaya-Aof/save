@@ -20,6 +20,8 @@
 <script src="/vendor/react-dom.production.min.js"></script>
 <script src="/vendor/babel.min.js"></script>
 <script src="/vendor/xlsx.full.min.js"></script>
+<!-- กติกา "งานค้าง" — ไฟล์เดียวกับที่ tests/worklist.cjs ใช้ จึงเถียงกันเองไม่ได้ -->
+<script src="/lib/worklist.js"></script>
 <style>
 /* ── Design tokens: สีที่ใช้ซ้ำมากที่สุดทั่วทั้งแอป (>=10 จุด) รวมเป็นตัวแปรเดียว
    ให้แก้ธีม/สลับ dark mode ได้จากจุดเดียว ไม่ต้องไล่แก้ hex กระจายทั้งไฟล์ ──
@@ -1277,7 +1279,8 @@ class App extends Component {
       :{c:'var(--color-text-tertiary)',t:'โหมดตัวอย่าง'};
     // ชื่อหน้า/คำอธิบายอยู่ที่ topbar จุดเดียว (เดิมมีหัวข้อซ้ำอีกชั้นใน subnav กินความสูงฟรี ~56px)
     const {tab}=this.state;
-    const page=tab==='container'?{t:'Container Calculator',d:'คำนวณการจัดเรียงสินค้าลงตู้คอนเทนเนอร์'}
+    const page=tab==='work'?{t:'งานค้าง',d:'เรื่องที่ต้องตามวันนี้ แยกจากของค้างสะสม — คิดจากข้อมูลจริงในระบบ ไม่ได้เดา'}
+      :tab==='container'?{t:'Container Calculator',d:'คำนวณการจัดเรียงสินค้าลงตู้คอนเทนเนอร์'}
       :tab==='freight'?{t:'Freight Charges Comparison',d:'เปรียบเทียบค่าระวางและค่าใช้จ่ายนำเข้า-ส่งออกจากผู้ให้บริการหลายราย — บันทึกใบเปรียบเทียบไว้บน server'}
       :{t:'Logistics Tracking',d:'ติดตาม Import PO / Export SO จาก Odoo พร้อมบันทึก forwarder / BL-AWB / container และต้นทุนเอง'};
     const iconBtn={display:'flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'var(--radius)',border:'1px solid var(--color-chrome-border)',background:'var(--color-chrome)',cursor:'pointer',flexShrink:0};
@@ -1315,7 +1318,7 @@ class App extends Component {
         <div style={{minWidth:0}}><div className="kobDisplayTight" style={{fontSize:'16px',color:'var(--color-chrome-display)'}}>Import-Export OS</div><div style={{fontSize:'10.5px',color:'var(--color-chrome-muted)'}}>KOB &amp; BTV</div></div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'12px 10px',display:'flex',flexDirection:'column',gap:'1px'}}>
-        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'Freight Charges Comparison',icon:'scale',active:tab==='freight'}].map(t=>{
+        {[{key:'work',label:'งานค้าง',icon:'check',active:tab==='work'},{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'Freight Charges Comparison',icon:'scale',active:tab==='freight'}].map(t=>{
           const active=t.active;
           return <button key={t.key} onClick={()=>{
             if(t.key==='logistics'){if(!inLogisticsGroup)this.setState({tab:'import',detailId:null});}
@@ -2130,6 +2133,61 @@ class App extends Component {
     </div>;
   }
 
+  // ── งานค้าง: "วันนี้ต้องทำอะไร" ────────────────────────────────────────────────
+  // กติกาการคัดกรองทั้งหมดอยู่ใน /lib/worklist.js ซึ่ง tests/worklist.cjs ใช้ไฟล์เดียวกัน
+  // → หน้าจอกับเทสเถียงกันเองไม่ได้ · ที่นี่ทำแค่ "วาด" ไม่มีตรรกะคัดกรองซ่อนอยู่
+  renderWorklist(){
+    if(typeof Worklist==='undefined')
+      return <div style={{padding:'24px',color:'var(--color-danger)'}}>โหลด /lib/worklist.js ไม่สำเร็จ — กด Refresh หน้าอีกครั้ง</div>;
+    const recs=Object.values(this._overrides||{});
+    const w=Worklist.buildWorklist(recs,new Date().toISOString().slice(0,10));
+    const open=(po)=>{const s=this.allShipments().find(x=>x.poNo===po);if(s)this.setState({detailId:s.id,tab:'import'});};
+
+    const Card=(b,tone)=>(
+      <div key={b.key} style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',
+        borderRadius:'var(--radius-lg)',marginBottom:'12px',overflow:'hidden'}}>
+        <div style={{display:'flex',alignItems:'baseline',gap:'10px',padding:'12px 14px',
+          borderBottom:'1px solid var(--color-border)',flexWrap:'wrap'}}>
+          <span style={{fontWeight:500,fontSize:'14px'}}>{b.title}</span>
+          <span style={{fontSize:'12px',fontWeight:500,padding:'1px 8px',borderRadius:'99px',
+            background:tone==='now'?'var(--color-warn-soft)':'var(--color-page-bg)',
+            color:tone==='now'?'var(--color-warn-text)':'var(--color-text-secondary)',
+            border:'1px solid var(--color-border)'}}>{b.items.length}</span>
+          <span style={{fontSize:'12px',color:'var(--color-text-tertiary)'}}>{b.hint}</span>
+        </div>
+        <div>
+          {b.items.slice(0,25).map((i,n)=>(
+            <div key={i.po+n} onClick={()=>open(i.po)} title="เปิดการ์ดนี้"
+              style={{display:'flex',gap:'12px',alignItems:'baseline',padding:'9px 14px',cursor:'pointer',
+                borderTop:n?'1px solid var(--color-border)':'none'}}>
+              <span style={{fontSize:'12.5px',flexShrink:0,minWidth:'152px'}}>{i.po}</span>
+              <span style={{fontSize:'12.5px',flex:1,minWidth:0}}>{i.why}
+                {i.vessel?<span style={{color:'var(--color-text-tertiary)'}}> · {i.vessel}</span>:null}</span>
+              <span style={{fontSize:'12px',color:'var(--color-text-tertiary)',flexShrink:0}}>{i.next}</span>
+            </div>))}
+          {b.items.length>25?<div style={{padding:'8px 14px',fontSize:'12px',
+            color:'var(--color-text-tertiary)',borderTop:'1px solid var(--color-border)'}}>
+            …อีก {b.items.length-25} รายการ (แสดง 25 แรก เรียงจากวันล่าสุด)</div>:null}
+        </div>
+      </div>);
+
+    return <div style={{padding:'16px 18px',overflowY:'auto',flex:1}}>
+      <div style={{display:'flex',gap:'14px',alignItems:'baseline',marginBottom:'14px',flexWrap:'wrap'}}>
+        <span style={{fontSize:'26px',fontWeight:500}}>{w.counts.now}</span>
+        <span style={{fontSize:'13px',color:'var(--color-text-secondary)'}}>เรื่องที่ต้องตามตอนนี้</span>
+        <span style={{fontSize:'12.5px',color:'var(--color-text-tertiary)'}}>
+          ค้างสะสม {w.counts.backlog} · ยังไม่ปิดงาน {w.counts.open} จาก {w.counts.total} การ์ด · ณ {w.asOf}</span>
+      </div>
+      {w.now.length?w.now.map(b=>Card(b,'now')):
+        <div style={{padding:'22px',textAlign:'center',color:'var(--color-text-tertiary)',
+          background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)'}}>
+          ไม่มีเรื่องต้องตามตอนนี้</div>}
+      {w.backlog.length?<div style={{marginTop:'22px'}}>
+        <div style={{fontSize:'12.5px',color:'var(--color-text-tertiary)',marginBottom:'8px'}}>
+          ค้างสะสม — ของเก่าที่ควรสะสาง แยกออกมาเพื่อไม่ให้กลบงานของวันนี้</div>
+        {w.backlog.map(b=>Card(b,'old'))}</div>:null}
+    </div>;
+  }
   renderDetail(){
     const {detailId,editing,editForm,vendors,expenseBusy,costSrc,savingEdit,billPicker,billList,billLoading,billQuery,selBills,deleteDialog,poLines,poLinesLoading,poLinesError}=this.state;
     if(!detailId)return null;
@@ -2760,6 +2818,7 @@ class App extends Component {
               {view==='kanban'?this.renderKanban(tab):this.renderTable(tab)}
             </div>
           </>}
+          {tab==='work'&&this.renderWorklist()}
           {tab==='dashboard'&&this.renderDashboard()}
           {tab==='container'&&<iframe src="/container-loading-calculator.html" title="Container Calculator" style={{flex:1,width:'100%',border:0,background:'var(--color-page-bg)'}}/>}
           {tab==='freight'&&<iframe src="/freight-comparison.html" title="Freight Charges Comparison" style={{flex:1,width:'100%',border:0,background:'var(--color-page-bg)'}}/>}
