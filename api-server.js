@@ -13,6 +13,38 @@ const crypto = require('crypto');
 const PORT = 3000;
 const ROOT = __dirname;
 const { autoStage, stageWriteNeeded } = require('./lib/shipment-rules.cjs');
+// ─── บัญชีรายคน (users.json) ────────────────────────────────────────────────────────────────
+// ไม่มีไฟล์ = ไม่มีบัญชี → ระบบทำงานเหมือนเดิมทุกประการ (APP_PASSWORD ร่วม หรือไม่มี auth เลย)
+// มีบัญชีอย่างน้อย 1 คนที่ใช้งานได้ = เปิดโหมดตรวจรายคน
+const usersLib = require('./lib/users.cjs');
+const USERS_FILE = path.join(ROOT, 'users.json');
+const SHARED_OK = String(process.env.ALLOW_SHARED_PASSWORD || '') === '1';
+const USERS = { store: usersLib.emptyStore(), enabled: false, mtime: 0, checked: 0 };
+// โหลดใหม่เมื่อไฟล์เปลี่ยน — เพิ่ม/ปิดบัญชีแล้วมีผลทันที ไม่ต้องรีสตาร์ท server
+// เช็ค mtime อย่างมาก 1 ครั้งต่อ 5 วินาที (ไม่ stat ทุก request)
+function refreshUsers(force) {
+  const now = Date.now();
+  if (!force && now - USERS.checked < 5000) return USERS;
+  USERS.checked = now;
+  try {
+    const mt = fs.statSync(USERS_FILE).mtimeMs;
+    if (mt === USERS.mtime) return USERS;
+    USERS.store  = usersLib.loadUsers(USERS_FILE);
+    USERS.mtime  = mt;
+    USERS.enabled = usersLib.activeCount(USERS.store) > 0;
+    console.log(`[Auth] โหลด users.json แล้ว — ${usersLib.activeCount(USERS.store)} บัญชีที่ใช้งานได้`);
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      if (USERS.enabled) console.log('[Auth] users.json หายไป — กลับไปใช้ APP_PASSWORD ร่วม');
+      USERS.store = usersLib.emptyStore(); USERS.enabled = false; USERS.mtime = 0;
+    } else {
+      // ไฟล์พังแต่ **ยังมีของเดิมในหน่วยความจำ** → ใช้ของเดิมต่อ ห้ามถอยไปเปิดทางรหัสร่วมเงียบ ๆ
+      console.error(`[Auth] อ่าน users.json ไม่สำเร็จ (${e.message}) — ใช้รายชื่อที่โหลดไว้ก่อนหน้าต่อ`);
+    }
+  }
+  return USERS;
+}
+const clientIp = (req) => (req && req.socket && req.socket.remoteAddress) || '?';
 const TRACKING_FILE = path.join(ROOT, 'tracking_data.json');
 const AUDIT_FILE    = path.join(ROOT, 'tracking_audit.jsonl');
 const SHIPMENT_RUNS_FILE = path.join(ROOT, 'shipment_runs.jsonl'); // เขียนโดย scan-shipment-docs.mjs
@@ -246,11 +278,11 @@ function actorOf(req) {
     const hdr = String(req.headers['authorization'] || '');
     if (hdr.startsWith('Basic ')) {
       const u = Buffer.from(hdr.slice(6), 'base64').toString('utf8').split(':')[0].trim();
-      if (u) return u.replace(/[^\w.@-]+/g, '_').slice(0, 40);
+      if (u) return usersLib.normUser(u);
     }
   } catch (e) {}
   const env = String(process.env.APP_USER || '').trim();
-  return env ? env.replace(/[^\w.@-]+/g, '_').slice(0, 40) : 'local';
+  return env ? usersLib.normUser(env) : 'local';
 }
 
 function auditLog(action, poSo, fields, ip, user) {
@@ -1165,20 +1197,35 @@ const server = http.createServer(async (req, res) => {
   const reqUrl  = req.url.split('?')[0];
   const method  = req.method;
 
-  // ── Basic Auth (เปิดใช้เมื่อตั้ง APP_PASSWORD ใน .env) ──
-  // /api/alive ยกเว้น เพื่อให้ watchdog เช็คสถานะได้
-  if (process.env.APP_PASSWORD && reqUrl !== '/api/alive') {
-    let authed = false;
+  // ── Basic Auth ──
+  // สองโหมด เลือกเองตามว่ามีบัญชีรายคนหรือยัง (ดู usersMode ตอน start):
+  //   1. มีบัญชีใน users.json → **ตรวจรายคน** ชื่อใน audit log จึงเป็นชื่อที่พิสูจน์แล้ว
+  //   2. ยังไม่มีบัญชี       → APP_PASSWORD ร่วมกันแบบเดิม (ไม่ตั้ง = ไม่มี auth เลย)
+  // ⚠ พอมีบัญชีแล้ว รหัสร่วมจะ **ใช้ไม่ได้ทันที** เว้นแต่ตั้ง ALLOW_SHARED_PASSWORD=1 ไว้ชัด ๆ
+  //   ไม่งั้นการเพิ่มบัญชีจะกลายเป็นการ "เพิ่มทางเข้า" แทนที่จะเป็นการ "ปิดทางเข้าร่วม"
+  // /api/alive ยกเว้นเสมอ เพื่อให้ watchdog เช็คสถานะได้โดยไม่ต้องถือรหัส
+  refreshUsers();
+  if ((USERS.enabled || process.env.APP_PASSWORD) && reqUrl !== '/api/alive') {
+    let authed = false, who = '';
     const hdr = req.headers['authorization'] || '';
     if (hdr.startsWith('Basic ')) {
       try {
-        const dec = Buffer.from(hdr.slice(6), 'base64').toString('utf8');
-        authed = safeEqual(dec.split(':').slice(1).join(':'), process.env.APP_PASSWORD);
-      } catch(e) {}
+        const dec  = Buffer.from(hdr.slice(6), 'base64').toString('utf8');
+        const user = dec.split(':')[0].trim();
+        const pass = dec.split(':').slice(1).join(':');
+        if (USERS.enabled) {
+          const v = usersLib.verify(USERS.store, user, pass);
+          authed = v.ok; who = v.user || user;
+          if (!authed && SHARED_OK && process.env.APP_PASSWORD) authed = safeEqual(pass, process.env.APP_PASSWORD);
+        } else {
+          authed = safeEqual(pass, process.env.APP_PASSWORD);
+        }
+      } catch (e) {}
     }
     if (!authed) {
+      if (USERS.enabled && who) console.log(`[Auth] ปฏิเสธ "${who}" จาก ${clientIp(req)}`);
       res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Logistics Tracking"', 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('ต้องใส่รหัสผ่าน'); return;
+      res.end('ต้องใส่ชื่อผู้ใช้และรหัสผ่าน'); return;
     }
   }
 
@@ -1849,6 +1896,9 @@ const server = http.createServer(async (req, res) => {
         // ⚠ เดิมเส้นทางนี้ `return` เงียบ ตอบ 200 โดยไม่นับที่ไหนเลย → ตัวเรียก (scan-shipment-docs.mjs)
         //   แยกไม่ออกว่า "เขียนแล้ว" หรือ "ข้ามไป" จึง log ว่าสำเร็จทุกครั้ง (บั๊กจริง 2026-09-08)
         const skippedRecords = [];
+        // ค่าที่ server "ซ่อมให้" ก่อนเขียน (เช่น ตัดเลขซีลออกจากช่องเลขตู้) — ต้องรายงานกลับเสมอ
+        // ตามกฎ "ห้ามตัดข้อมูลโดยไม่บอก" · แยกจาก rejected เพราะ record ยังถูกเขียน ไม่ใช่ถูกปฏิเสธ
+        const cleaned = [];
         // record ที่ "มีคนแก้ไปแล้วหลังจากที่ client โหลด" — ดูเหตุผลที่จุดตรวจด้านล่าง
         const conflicts = [];
         recs.forEach(r => {
@@ -1864,6 +1914,25 @@ const server = http.createServer(async (req, res) => {
             console.log(`[Upsert] ${key} ทิ้งค่า bl_awb="${r.bl_awb}" — เป็นเลขตู้ตามมาตรฐาน ISO 6346 ไม่ใช่เลข B/L`);
             delete r.bl_awb;
             if (!isEmpty(r.bl) && isContainerNo(r.bl)) delete r.bl;
+          }
+          // ── ช่อง "เลขตู้" ต้องมีแต่เลขตู้ ─────────────────────────────────────────────────
+          // วัดจริง 2026-09-23: 38 การ์ดที่ AI เขียน มีค่าที่ไม่ผ่าน ISO 6346 ปนอยู่ในช่องนี้ —
+          // เลขซีล (U963528, HAL155889), ขนาดตู้ (40HC) และ **เลข booking** (TWSABKK2606004,
+          // NSBCBK260505E) ซึ่งเอาไปติดตามตู้ไม่ได้เลย · เอกสารวางสามอย่างนี้ติดกันจึงกวาดมาด้วยกัน
+          //
+          // แก้เฉพาะค่าที่เครื่องสกัดมา — **ค่าที่คนกรอกเองห้ามแตะ** (กฎข้อ 3) เพราะคนอาจจงใจ
+          // จดเลขอื่นไว้ในช่องนี้ · ถ้าไม่เหลือเลขตู้ที่ถูกต้องเลย = ไม่เขียนช่องนี้ ปล่อยว่างตามความจริง
+          // ดีกว่าใส่เลข booking ไว้แล้วมีคนเอาไปเช็คสถานะตู้
+          if (!isEmpty(r.container) && !/^manual/.test(sanitizeOrigin(r._origin || origin))) {
+            const parts = String(r.container).split(/[,/;|]+/).map(s => s.trim()).filter(Boolean);
+            const good  = parts.filter(isContainerNo);
+            const dropped = parts.filter(p => !isContainerNo(p));
+            if (dropped.length) {
+              console.log(`[Upsert] ${key} เลขตู้ "${r.container}" → ${good.length ? good.join(', ') : '(ไม่เขียน)'} · ตัดที่ไม่ใช่เลขตู้: ${dropped.join(', ')}`);
+              cleaned.push({ po_so: key, field: 'container', kept: good.join(', '), dropped });
+              if (good.length) r.container = good.join(', ');
+              else delete r.container;
+            }
           }
           const idx    = byKey.has(key) ? byKey.get(key) : -1;
           const before = idx >= 0 ? data[idx] : null;
@@ -2009,7 +2078,7 @@ const server = http.createServer(async (req, res) => {
         if (rejected.length) console.error('[Upsert] ปฏิเสธค่าที่ผิดปกติ:', JSON.stringify(rejected));
         if (skippedRecords.length) console.log(`[Upsert] ข้าม ${skippedRecords.length} record (เป็นคนละชิปเม้น) — รายงานกลับให้ผู้เรียกแล้ว`);
         if (conflicts.length) console.log(`[Upsert] ไม่เขียน ${conflicts.length} record — มีคนบันทึกทับระหว่างทาง`);
-        jsonOk(res, { ok, applied, total: data.length, rejected, skipped: skippedRecords, conflicts });
+        jsonOk(res, { ok, applied, total: data.length, rejected, skipped: skippedRecords, conflicts, cleaned });
       } catch(e) { jsonErr(res, 400, e.message); }
       return;
     }
@@ -2256,10 +2325,16 @@ const HOST = process.env.HOST || '127.0.0.1';
 // ถ้า bind สู่เครือข่าย (ไม่ใช่ loopback) แต่ไม่ตั้ง APP_PASSWORD = ใครก็ได้บนเครือข่ายเขียน/แก้/ลบ
 // ข้อมูล Odoo production ได้ ปฏิเสธการ start ทันทีเพื่อกันเปิดช่องโดยไม่ตั้งใจ
 const isLoopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
-if (!isLoopback && !process.env.APP_PASSWORD) {
-  console.error(`[Config] ❌ HOST=${HOST} เปิดสู่เครือข่าย แต่ไม่ได้ตั้ง APP_PASSWORD — อันตราย ปฏิเสธการเริ่มระบบ`);
-  console.error('         ตั้ง APP_PASSWORD ใน .env ก่อน หรือใช้ HOST=127.0.0.1 (เฉพาะเครื่องนี้)');
+refreshUsers(true);   // โหลดบัญชีก่อนตัดสินใจเรื่องความปลอดภัยตอน start
+if (!isLoopback && !USERS.enabled && !process.env.APP_PASSWORD) {
+  console.error(`[Config] ❌ HOST=${HOST} เปิดสู่เครือข่าย แต่ไม่มีทั้งบัญชีผู้ใช้และ APP_PASSWORD — อันตราย ปฏิเสธการเริ่มระบบ`);
+  console.error('         สร้างบัญชีด้วย `node manage-users.mjs add <ชื่อ>` (แนะนำ) หรือตั้ง APP_PASSWORD ใน .env');
+  console.error('         หรือใช้ HOST=127.0.0.1 (เฉพาะเครื่องนี้)');
   process.exit(1);
+}
+if (USERS.enabled && process.env.APP_PASSWORD && SHARED_OK) {
+  console.warn('[Config] ⚠ ALLOW_SHARED_PASSWORD=1 — รหัสผ่านร่วมยังใช้เข้าได้อยู่ ทั้งที่มีบัญชีรายคนแล้ว');
+  console.warn('         การแก้ที่เข้ามาทางรหัสร่วมจะบันทึกชื่อตามที่ client พิมพ์มา ซึ่งพิสูจน์ไม่ได้');
 }
 // ถ้า port 3000 ถูกใช้อยู่ (มี instance อื่น/supervisor ซ้อนกันรันทับ) แจ้งชัดเจนแล้ว exit แทนที่จะ
 // โยน uncaughtException ที่อ่านยาก — กัน crash loop เงียบตอนมี supervisor 2 ตัว (pm2 + start-server.vbs)
@@ -2272,7 +2347,9 @@ server.on('error', (err) => {
   process.exit(1);
 });
 server.listen(PORT, HOST, () => {
-  const authStatus = process.env.APP_PASSWORD ? '✓ Basic Auth เปิดอยู่' : '✗ ปิด (ตั้ง APP_PASSWORD เพื่อเปิด)';
+  const authStatus = USERS.enabled
+    ? `✓ บัญชีรายคน ${usersLib.activeCount(USERS.store)} คน` + (SHARED_OK && process.env.APP_PASSWORD ? ' + รหัสร่วม' : '')
+    : (process.env.APP_PASSWORD ? '✓ รหัสผ่านร่วม (APP_PASSWORD)' : '✗ ปิด — ดู manage-users.mjs');
   // แถว "Odoo RPC" ถูกถอดออกพร้อมกับ Odoo JSON-RPC layer — ตอนนี้อ่านข้อมูลจาก Odoo ทาง Postgres
   // (direct 5432 → MCP bridge 443) เท่านั้น ไม่มีการเขียนกลับเข้า Odoo อีก จึงรายงานสองทางนั้นแทน
   const bridgeStatus = (MCP_URL && MCP_TOKEN) ? '✓ ตั้งค่าแล้ว (fallback อัตโนมัติ)' : '✗ ไม่ได้ตั้งค่า (MCP_URL/MCP_TOKEN)';

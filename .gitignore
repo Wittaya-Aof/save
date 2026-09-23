@@ -26,3 +26,7 @@ ai_usage.jsonl
 tracking_data.json.before-revert
 
 freight_quotes.json
+
+# บัญชีผู้ใช้ (scrypt hash) — ห้ามเข้า git เด็ดขาด
+users.json
+users.json.tmp

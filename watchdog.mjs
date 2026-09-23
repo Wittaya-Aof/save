@@ -88,7 +88,24 @@ async function restartServer() {
   return false;
 }
 
+// ─── เตือนเมื่อ server.log ใหญ่เกิน ────────────────────────────────────────────────────────
+// ⚠ ตัว **หมุนไฟล์จริงอยู่ใน `start-server.vbs`** ไม่ใช่ที่นี่ — ลองทำที่นี่แล้ววัดได้ว่าทำไม่ได้:
+// `cmd /c node … >> server.log` ถือ handle ไว้ตลอดอายุ process โดยไม่เปิด FILE_SHARE_WRITE
+// → `copy` ผ่าน (อ่านได้) แต่ `truncate` ได้ **EBUSY: resource busy or locked** และ rename ก็ไม่ได้
+// ที่เดียวที่ handle ว่างจริงคือหลัง `sh.Run … wait=True` คืนค่าใน vbs จึงย้ายไปทำตรงนั้น
+// ที่นี่เหลือหน้าที่แค่ "บอกให้รู้" เผื่อเครื่องไม่ได้ restart นาน ๆ
+const SERVER_LOG = path.join(ROOT, 'server.log');
+const SERVER_LOG_WARN = Number(process.env.SERVER_LOG_MAX) || 5 * 1024 * 1024;
+function warnIfServerLogBig() {
+  try {
+    if (!fs.existsSync(SERVER_LOG)) return;
+    const size = fs.statSync(SERVER_LOG).size;
+    if (size > SERVER_LOG_WARN) log(`[Log] server.log ${(size / 1048576).toFixed(1)} MB — จะถูกหมุนอัตโนมัติตอน start-server.vbs เริ่มรอบถัดไป`);
+  } catch (e) {}
+}
+
 (async () => {
+  warnIfServerLogBig();
   for (let i = 0; i < CHECKS; i++) {
     if (await checkAlive()) {
       try { fs.writeFileSync(HEARTBEAT_FILE, new Date().toISOString(), 'utf8'); } catch (e) {}

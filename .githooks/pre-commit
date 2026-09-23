@@ -20,7 +20,7 @@ echo "pre-commit:"
 
 # ── 1. ห้ามให้ความลับ/ข้อมูลปฏิบัติการหลุดเข้า git ────────────────────────────────────
 # .gitignore กันไว้แล้ว แต่ `git add -f` ข้ามได้ — ด่านนี้กันความพลาดครั้งเดียวที่ถอนยาก
-BAD=$(printf '%s\n' "$STAGED" | grep -Ei '(^|/)(\.env$|.*\.key$|.*_rsa$|tracking_data\.json$|freight_quotes\.json$|.*\.jsonl$|doc_scan_seen\.json$|backups/)' || true)
+BAD=$(printf '%s\n' "$STAGED" | grep -Ei '(^|/)(\.env$|.*\.key$|.*_rsa$|users\.json$|tracking_data\.json$|freight_quotes\.json$|.*\.jsonl$|doc_scan_seen\.json$|backups/)' || true)
 [ -n "$BAD" ] && fail "ไฟล์ที่ไม่ควรเข้า git ถูก stage:
 $BAD
 ถอนด้วย: git restore --staged <ไฟล์>"
@@ -46,7 +46,7 @@ fi
 #                  (บั๊กจริง 2026-09-08: 24 ใบจะถูกดึงถอยหลัง)
 # scan-policy    : กติการอบสแกน — HTTP 200 ไม่ใช่ความสำเร็จ · แยก "ข้าม" จาก "พัง" · ETS session
 # ดู REVIEW.md หัวข้อ 2026-09-08
-for t in tests/shipment-stage.cjs tests/scan-policy.cjs tests/worklist.cjs; do
+for t in tests/shipment-stage.cjs tests/scan-policy.cjs tests/worklist.cjs tests/users.cjs; do
   [ -f "$t" ] || continue
   node "$t" >/dev/null 2>&1 || fail "$t ไม่ผ่าน
 รันดูเต็มๆ: node $t"

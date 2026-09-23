@@ -1193,6 +1193,11 @@ async function main() {
                 writtenThisRun.set(po, { folder: folderName, mode: docMode });
                 log(`  upsert ${po} สำเร็จ: ${JSON.stringify(payload)}`);
               }
+              // server ซ่อมค่าให้ก่อนเขียน (เช่น ตัดเลขซีล/เลข booking ออกจากช่องเลขตู้) — ต้องเห็นใน log
+              // ไม่งั้นจะไม่มีทางรู้ว่าเอกสารให้ค่าอะไรมาแล้วถูกตัดไปเพราะอะไร (กฎ "ห้ามตัดโดยไม่บอก")
+              for (const c of (Array.isArray(res?.cleaned) ? res.cleaned : [])) {
+                log(`  [CLEAN] ${c.po_so} ${c.field}: เก็บ "${c.kept || '(ไม่เขียน)'}" · ตัด ${c.dropped.join(', ')}`);
+              }
             } catch (e) {
               folderWriteFails++;
               log(`  [ERROR] upsert ${po} ล้มเหลว: ${e.message}`);
