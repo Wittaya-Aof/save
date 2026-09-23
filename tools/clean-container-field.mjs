@@ -1,13 +1,15 @@
 // ─── ล้างช่อง "เลขตู้" ของการ์ดเก่าที่มีเลขซีล/ขนาดตู้/เลข booking ปนอยู่ ────────────────────
 //   node tools/clean-container-field.mjs            # แสดงว่าจะทำอะไร ไม่เขียนอะไรเลย
 //   node tools/clean-container-field.mjs --apply    # เขียนจริง (สำรองไฟล์ให้ก่อนเสมอ)
+//   เพิ่ม --fix-transposed เพื่อแก้เลขตู้ที่พิมพ์สลับตัวที่ 3↔4 ด้วย (ดู nearMiss — ต้องให้คนยืนยันก่อน)
 //
 // ที่มา: เกราะฝั่ง server (2026-09-23) กันของแบบนี้ไม่ให้เข้ามาใหม่แล้ว แต่การ์ดที่บันทึกไว้ก่อนหน้า
 // ยังค้างอยู่ 38 ใบ · สคริปต์นี้แตะเฉพาะใบที่ **ล้างแล้วไม่เสียข้อมูล**:
 //   A. เหลือเลขตู้ที่ผ่าน ISO 6346 อยู่แล้ว → ตัดเฉพาะส่วนที่ไม่ใช่เลขตู้
 //   B. ไม่เหลือเลขตู้เลย **แต่ค่านั้นซ้ำกับช่อง B/L อยู่แล้ว** → ล้างช่องเลขตู้ ของจริงอยู่ช่องที่ถูก
 // ข้ามแล้วรายงานให้คนตัดสิน 2 กรณี: ค่าไม่ซ้ำที่ไหนเลย · มีโทเคนที่ "เกือบเป็นเลขตู้" ปนอยู่ (ดู nearMiss)
-// วัดจริงรอบแรก: แก้ 31 · ข้าม 7
+// วัดจริง 2026-09-23: รอบแรกแก้ 31 ข้าม 7 · รอบสอง --fix-transposed แก้อีก 2 (SKUH→SKHU) เหลือ 5
+// ที่เหลือ 5 ใบคือค่าที่ไม่ซ้ำกับที่ไหนและไม่ใกล้เคียงเลขตู้เลย — ต้องให้คนดูทีละใบ
 //
 // `_src` **ไม่ถูกแตะ** เพราะเลขตู้ที่เหลือยังมาจากเอกสารเดิมจริง ๆ เราแค่ตัดของที่ไม่ใช่เลขตู้ทิ้ง
 'use strict';
@@ -20,6 +22,9 @@ const TRACK = path.join(ROOT, 'tracking_data.json');
 const AUDIT = path.join(ROOT, 'tracking_audit.jsonl');
 const LOCK  = path.join(ROOT, 'scan.lock');
 const APPLY = process.argv.includes('--apply');
+// แก้เลขตู้ที่พิมพ์สลับตัวที่ 3↔4 ด้วย — **ต้องให้คนยืนยันก่อนเสมอ** เพราะเป็นการแก้ค่า
+// ไม่ใช่แค่ตัดของที่ไม่ใช่เลขตู้ทิ้ง · AOF อนุมัติ 2026-09-23 สำหรับ SKUH→SKHU สองใบ
+const FIX_SWAP = process.argv.includes('--fix-transposed');
 
 // ISO 6346 — ชุดเดียวกับที่ api-server.js ใช้ (ถ้าแก้ต้องแก้ให้ตรงกันทั้งสองที่)
 const VAL = (() => { const m = {}; '0123456789'.split('').forEach((c, i) => { m[c] = i; });
@@ -63,7 +68,17 @@ for (const r of data) {
 
   // ของที่จะตัดทิ้ง มีอะไรที่ "เกือบเป็นเลขตู้" ปนอยู่ไหม — ถ้ามี ห้ามล้างเอง
   const near = drop.flatMap(nearMiss);
-  if (near.length) { skip.push({ po: r.po_so, cur, bl: r.bl_awb || '(ว่าง)', near }); continue; }
+  if (near.length) {
+    // ⚠ แก้ได้เฉพาะเมื่อ **มีตัวเดียวไม่กำกวม** และคนสั่งมาแล้ว (--fix-transposed)
+    // มีหลายตัว = เดาไม่ได้ว่าอันไหนคือเลขตู้ ต้องให้คนดูเอง
+    if (FIX_SWAP && near.length === 1) {
+      plan.push({ r, group: 'SWAP', from: cur, to: near[0].likely,
+                  drop: parts.filter(p => !key(p).includes(key(near[0].found))), swap: near[0] });
+    } else {
+      skip.push({ po: r.po_so, cur, bl: r.bl_awb || '(ว่าง)', near });
+    }
+    continue;
+  }
 
   if (good.length) { plan.push({ r, group: 'A', from: cur, to: good.join(', '), drop }); continue; }
   // ไม่เหลือเลขตู้เลย — ล้างได้ก็ต่อเมื่อค่านั้นซ้ำกับช่อง B/L (ของจริงอยู่ช่องที่ถูกแล้ว)
@@ -78,6 +93,12 @@ const show = (t, list) => {
 };
 show('A · เหลือเลขตู้จริง', plan.filter(p => p.group === 'A'));
 show('B1 · ค่าซ้ำกับช่อง B/L อยู่แล้ว', plan.filter(p => p.group === 'B1'));
+const swaps = plan.filter(p => p.group === 'SWAP');
+if (swaps.length) {
+  console.log(`
+── ⚠ SWAP · แก้เลขตู้ที่พิมพ์สลับ (${swaps.length}) — ต้องมีคนยืนยันก่อนเท่านั้น ──`);
+  for (const p of swaps) console.log(`  ${String(p.r.po_so).padEnd(20)} "${p.swap.found}" → "${p.swap.likely}"   (ทั้งช่อง: "${p.from}"  →  "${p.to}")`);
+}
 console.log(`\n── ข้าม · ล้างแล้วหายจริง (${skip.length}) ──`);
 for (const s of skip) {
   console.log(`  ${String(s.po).padEnd(20)} เลขตู้="${s.cur}"   B/L="${s.bl}"`);
@@ -98,9 +119,10 @@ for (const p of plan) {
   if (p.to) p.r.container = p.to; else delete p.r.container;
   p.r._ts = now;
   fs.appendFileSync(AUDIT, JSON.stringify({
-    ts: new Date().toISOString(), action: 'container_cleanup', po_so: p.r.po_so,
+    ts: new Date().toISOString(), action: p.swap ? 'container_typo_fix' : 'container_cleanup', po_so: p.r.po_so,
     fields: ['container'], user: 'local', ip: '',
-    detail: { from: p.from, to: p.to, dropped: p.drop },
+    detail: Object.assign({ from: p.from, to: p.to, dropped: p.drop },
+      p.swap ? { typo: p.swap.found, corrected: p.swap.likely, approvedBy: 'AOF' } : {}),
   }) + '\n', 'utf8');
 }
 
