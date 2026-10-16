@@ -3,7 +3,7 @@ FROM node:22-bookworm-slim
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 # Explicit source inputs only; never copy environment or runtime files.
 COPY api-server.js odoo-queries.js manage-users.mjs ./
