@@ -106,10 +106,12 @@ ok('ทุกรายการต้องบอก "ทำอะไรต่�
   }));
 });
 
-console.log('\n── 6. ข้อมูลจริง: ถังต้องไม่บวมจนใช้ไม่ได้ ──');
+console.log('\n── 6. ชุด regression: ถังต้องไม่บวมจนใช้ไม่ได้ ──');
 
-const real = JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'tracking_data.json'), 'utf8'));
-ok('รันกับข้อมูลจริงได้ และงานตอนนี้ต้องอยู่ในขนาดที่คนดูไหว', () => {
+const real = process.env.DATA_DIR
+  ? JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR, 'tracking_data.json'), 'utf8'))
+  : require('./fixtures/tracking.cjs')();
+ok('งานตอนนี้อยู่ในขนาดที่คนดูไหว แยกจากงานสะสมและ PO ที่ยังไม่ส่ง', () => {
   const w = buildWorklist(real, new Date().toISOString().slice(0, 10));
   console.log(`      ${w.counts.total} การ์ด → ต้องทำตอนนี้ ${w.counts.now} · ค้างสะสม ${w.counts.backlog}`);
   w.now.forEach(b => console.log(`        ${String(b.items.length).padStart(4)}  ${b.title}`));
