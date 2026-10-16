@@ -1,15 +1,17 @@
 {
-  "name": "import-export-os",
+  "name": "import-export-control-cloud",
   "version": "1.0.0",
   "private": true,
   "description": "Logistics Tracking API server (KOB & BTV) — plain Node http, Odoo/Postgres, AI document verification",
   "main": "api-server.js",
   "scripts": {
-    "start": "node api-server.js"
+    "start": "node api-server.js",
+    "test": "node tools/run-tests.cjs",
+    "test:full": "node tools/run-tests.cjs --packing --browser"
   },
   "dependencies": {
     "busboy": "^1.6.0",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "10.1.1",
     "openai": "^7.4.0",
     "pdf-parse": "^2.4.5",
     "pg": "^8.11.0",

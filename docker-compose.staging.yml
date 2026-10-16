@@ -1,0 +1,31 @@
+# Provision separate fixture data and a private staging env file before deployment.
+# Intentionally no ports and no Traefik route. Use docker compose exec for checks.
+name: import-export-control-cloud-staging
+services:
+  app:
+    image: ${CONTROL_RELEASE_IMAGE:?Supply an immutable image digest/id}
+    pull_policy: never
+    restart: unless-stopped
+    env_file: ${CONTROL_STAGING_ENV_FILE:?Supply a separate private staging env file}
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /data
+      FULL_BACKUP_DIR: /backups
+      DB_SSL_CA: /app/rds-ca.pem
+      DISABLE_SCHEDULED_MUTATIONS: "1"
+      OPENAI_API_KEY: ""
+      MAIL_PASS: ""
+      GMAIL_APP_PASSWORD: ""
+      GRAPH_CLIENT_SECRET: ""
+      ALERT_EMAIL_TO: ""
+    volumes:
+      - /srv/import-export-control-cloud-staging-data:/data
+    labels:
+      traefik.enable: "false"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/alive').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s

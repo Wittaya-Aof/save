@@ -10,7 +10,7 @@
 // query timeout) ไม่ว่า subquery จะ trigger จริงกี่ครั้งก็ตาม ดู comment เต็มที่ SQL_IMPORT ใน api-server.js
 const IMPORT_INNER = `
   WITH base AS (
-    SELECT po.id, po.name AS po_number,
+    SELECT po.id, po.name AS po_number, po.company_id, po.currency_id,
       CASE po.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
       rp.id AS partner_id, rp.name AS supplier, po.state AS odoo_state,
       po.date_order AS raw_date_order, po.date_planned AS raw_date_planned,
@@ -33,12 +33,12 @@ const IMPORT_INNER = `
     -- วันรับของเข้าคลังครั้งล่าสุดที่ทำเสร็จแล้ว — ต้อง mirror กับ SQL_IMPORT ใน api-server.js
     -- รวมทีเดียวแล้ว join (ห้าม LATERAL อ้าง po.name: stock_picking.origin ไม่มี index → timeout)
     LEFT JOIN (
-      SELECT sp.origin AS po_name, MAX(sp.date_done)::date AS last_receipt
+      SELECT sp.origin AS po_name, sp.company_id, MAX(sp.date_done)::date AS last_receipt
       FROM stock_picking sp
       WHERE sp.state = 'done' AND sp.date_done IS NOT NULL
         AND sp.date_done >= NOW() - INTERVAL '2 years'
-      GROUP BY sp.origin
-    ) rcpt ON rcpt.po_name = po.name
+      GROUP BY sp.origin, sp.company_id
+    ) rcpt ON rcpt.po_name = po.name AND rcpt.company_id = po.company_id
     WHERE po.company_id IN (1,2) AND po.state NOT IN ('cancel')
       AND po.date_order >= NOW() - INTERVAL '2 years'
       AND (rco.code IS NOT NULL AND rco.code != 'TH' OR (rco.code IS NULL AND cu.name NOT IN ('THB')))
@@ -49,15 +49,19 @@ const IMPORT_INNER = `
   -- ต้องกัน currency<>'THB' ก่อนเสมอ — แถวที่ผู้ขายต่างประเทศแต่ตกลงจ่ายเป็น THB (rate=1 ถูกต้องอยู่แล้ว)
   -- ไม่ควรถูกนับเป็น "เพี้ยน" (เจอจริงฝั่ง export 17/105 แถว ก่อนแก้ 16 ก.ค. 2569)
   bad_names AS (
-    SELECT po_number FROM base
+    SELECT DISTINCT po_number, company_id, currency_id FROM base
     WHERE currency <> 'THB' AND (raw_rate IS NULL OR raw_rate <= 0 OR ABS(raw_rate - 1) < 1e-9)
   ),
   fixed_rates AS (
-    SELECT DISTINCT ON (am.invoice_origin) am.invoice_origin, am.invoice_currency_rate
+    SELECT DISTINCT ON (am.invoice_origin, am.company_id, am.currency_id)
+      am.invoice_origin, am.company_id, am.currency_id, am.invoice_currency_rate
     FROM account_move am
-    WHERE am.invoice_origin IN (SELECT po_number FROM bad_names)
-      AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
-    ORDER BY am.invoice_origin, am.invoice_date DESC
+    JOIN bad_names bad ON am.invoice_origin = bad.po_number
+      AND am.company_id = bad.company_id AND am.currency_id = bad.currency_id
+    WHERE am.state = 'posted' AND am.move_type = 'in_invoice'
+      AND am.invoice_currency_rate > 0
+      AND am.invoice_currency_rate::text NOT IN ('NaN', 'Infinity', '-Infinity')
+    ORDER BY am.invoice_origin, am.company_id, am.currency_id, am.invoice_date DESC, am.id DESC
   )
   SELECT base.id, base.po_number, base.company_code, base.partner_id, base.supplier, base.odoo_state,
     to_char(base.raw_date_order,'YYYY-MM-DD') AS date_order,
@@ -67,11 +71,12 @@ const IMPORT_INNER = `
     CASE WHEN fixed_rates.invoice_currency_rate IS NOT NULL THEN 1 ELSE 0 END AS rate_auto_corrected,
     base.receipt_status, base.origin, base.goods_category, base.last_receipt_date
   FROM base
-  LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.po_number`;
+  LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.po_number
+    AND fixed_rates.company_id = base.company_id AND fixed_rates.currency_id = base.currency_id`;
 
 const EXPORT_INNER = `
   WITH base AS (
-    SELECT so.id, so.name AS so_number,
+    SELECT so.id, so.name AS so_number, so.company_id, so.currency_id,
       CASE so.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
       rp.id AS partner_id, rp.name AS customer, so.state AS odoo_state,
       so.date_order AS raw_date_order,
@@ -89,15 +94,19 @@ const EXPORT_INNER = `
     LIMIT 500
   ),
   bad_names AS (
-    SELECT so_number FROM base
+    SELECT DISTINCT so_number, company_id, currency_id FROM base
     WHERE currency <> 'THB' AND (raw_rate IS NULL OR raw_rate <= 0 OR ABS(raw_rate - 1) < 1e-9)
   ),
   fixed_rates AS (
-    SELECT DISTINCT ON (am.invoice_origin) am.invoice_origin, am.invoice_currency_rate
+    SELECT DISTINCT ON (am.invoice_origin, am.company_id, am.currency_id)
+      am.invoice_origin, am.company_id, am.currency_id, am.invoice_currency_rate
     FROM account_move am
-    WHERE am.invoice_origin IN (SELECT so_number FROM bad_names)
-      AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
-    ORDER BY am.invoice_origin, am.invoice_date DESC
+    JOIN bad_names bad ON am.invoice_origin = bad.so_number
+      AND am.company_id = bad.company_id AND am.currency_id = bad.currency_id
+    WHERE am.state = 'posted' AND am.move_type = 'out_invoice'
+      AND am.invoice_currency_rate > 0
+      AND am.invoice_currency_rate::text NOT IN ('NaN', 'Infinity', '-Infinity')
+    ORDER BY am.invoice_origin, am.company_id, am.currency_id, am.invoice_date DESC, am.id DESC
   )
   SELECT base.id, base.so_number, base.company_code, base.partner_id, base.customer, base.odoo_state,
     to_char(base.raw_date_order,'YYYY-MM-DD') AS date_order,
@@ -106,7 +115,8 @@ const EXPORT_INNER = `
     CASE WHEN fixed_rates.invoice_currency_rate IS NOT NULL THEN 1 ELSE 0 END AS rate_auto_corrected,
     base.delivery_status, base.origin, base.country_code
   FROM base
-  LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.so_number`;
+  LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.so_number
+    AND fixed_rates.company_id = base.company_id AND fixed_rates.currency_id = base.currency_id`;
 
 // ORDER BY ที่ mcpWrap/wrap() ใช้ตอน paginate — ต้องคู่กับ IMPORT_INNER/EXPORT_INNER เสมอ (มี r.id กันเรียงชนกัน)
 const ORDER_COLS = 'r.date_order AS _ord, r.id AS _id';

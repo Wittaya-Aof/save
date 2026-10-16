@@ -1,10 +1,13 @@
 import { chromium } from 'playwright';
+// Read-only local fixture; never target the user's running port 3000.
+const packingFixtureURL = new URL('../container-loading-calculator.html', import.meta.url).href;
 const N = Number(process.argv[2] || 400);
 const b = await chromium.launch();
 const p = await b.newPage();
 const pageErrs = [];
 p.on('pageerror', e => pageErrs.push(e.message));
-await p.goto('http://localhost:3000/container-loading-calculator.html', { waitUntil: 'load' });
+await p.route('https://**/*', route => route.abort());
+await p.goto(packingFixtureURL, { waitUntil: 'load' });
 await p.waitForTimeout(1500);
 
 const res = await p.evaluate((N) => {

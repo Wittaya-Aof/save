@@ -105,7 +105,7 @@ ok('เกราะกันถอยหลังยังทำงานทั�
   assert.strictEqual(stageWriteNeeded('customs', 'po'), null);
 });
 ok('วัดกับข้อมูลจริง: ลดการเขียนที่ไม่ได้อะไรลงได้จริง', () => {
-  const raw0 = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'tracking_data.json'), 'utf8'));
+  const raw0 = JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'tracking_data.json'), 'utf8'));
   const rs = Array.isArray(raw0) ? raw0 : (raw0.records || raw0.data || []);
   let before = 0, after = 0;
   for (const r of rs) {
@@ -161,7 +161,7 @@ ok('found แต่วันที่ผิดรูปแบบ = ไม่ร�
 
 console.log('\n── 6. ข้อมูลจริง: ต้องไม่มีการ์ดไหนถูกถอยสถานะ ──');
 
-const raw = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'tracking_data.json'), 'utf8'));
+const raw = JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'tracking_data.json'), 'utf8'));
 const recs = Array.isArray(raw) ? raw : (raw.records || raw.data || []);
 ok(`สแกน ${recs.length} record — ถอยหลัง 0 ใบ`, () => {
   const back = [];

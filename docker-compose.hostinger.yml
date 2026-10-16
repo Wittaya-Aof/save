@@ -1,0 +1,33 @@
+# Hostinger VPS deployment. The existing Traefik instance owns ports 80/443.
+# Traefik on this VPS uses host networking and discovers Docker bridge IPs.
+# Do not attach an invented external network; no app port is published.
+# Before first start: install -d -o 1000 -g 1000 -m 0700 /srv/import-export-control-cloud-data
+# Provision copied operational files as UID/GID 1000:1000, mode 0600.
+# Persistent operational files are mounted from /srv/import-export-control-cloud-data.
+services:
+  app:
+    image: ${CONTROL_RELEASE_IMAGE:-import-export-control-cloud-app}
+    build: .
+    restart: unless-stopped
+    env_file: .env.hostinger
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /data
+      DB_SSL_CA: /app/rds-ca.pem
+      FULL_BACKUP_DIR: /backups
+    volumes:
+      - /srv/import-export-control-cloud-data:/data
+      - /srv/import-export-control-cloud-backups:/backups
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.import-export-os.entrypoints: websecure
+      traefik.http.routers.import-export-os.rule: Host(`control.import-export.cloud`)
+      traefik.http.routers.import-export-os.tls.certresolver: letsencrypt
+      traefik.http.services.import-export-os.loadbalancer.server.port: "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/alive').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

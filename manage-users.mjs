@@ -18,7 +18,10 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const U = require('./lib/users.cjs');
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const FILE = path.join(ROOT, 'users.json');
+const { loadProjectEnv } = require('./lib/config-env.cjs');
+loadProjectEnv(ROOT);
+const { resolveRuntimePaths } = require('./lib/runtime-paths.cjs');
+const FILE = resolveRuntimePaths(ROOT, process.env.DATA_DIR).usersFile;
 
 function ask(question, hidden) {
   return new Promise((resolve, reject) => {
@@ -78,7 +81,9 @@ function mustName() {
       mustName();
       if (store.users[name]) { console.error(`มี "${name}" อยู่แล้ว — ใช้ passwd เพื่อเปลี่ยนรหัส`); process.exit(1); }
       const pw = await askPasswordTwice(name);
-      store.users[name] = U.makeRecord(pw);
+      const flag = process.argv.indexOf('--role');
+      const role = flag >= 0 ? process.argv[flag + 1] : (U.activeCount(store) === 0 ? 'admin' : 'viewer');
+      store.users[name] = U.makeRecord(pw, { role });
       U.saveUsers(FILE, store);
       console.log(`✓ เพิ่ม "${name}" แล้ว (เก็บเฉพาะ scrypt hash ไม่ได้เก็บรหัสผ่าน)`);
       if (U.activeCount(store) === 1) {
@@ -92,7 +97,7 @@ function mustName() {
       if (!store.users[name]) { console.error(`ไม่มีบัญชี "${name}"`); process.exit(1); }
       const pw = await askPasswordTwice(name);
       const keep = store.users[name];
-      store.users[name] = Object.assign(U.makeRecord(pw), { disabled: !!keep.disabled, created: keep.created });
+      store.users[name] = Object.assign(U.makeRecord(pw, { role: keep.role || 'viewer' }), { disabled: !!keep.disabled, created: keep.created });
       U.saveUsers(FILE, store);
       console.log(`✓ เปลี่ยนรหัสผ่านของ "${name}" แล้ว`);
       break;
@@ -102,7 +107,7 @@ function mustName() {
       mustName();
       if (!store.users[name]) { console.error(`ไม่มีบัญชี "${name}"`); process.exit(1); }
       const off = cmd === 'disable';
-      if (off && U.activeCount(store) === 1 && !store.users[name].disabled) {
+      if (off && !U.canDeactivate(store, name)) {
         console.error('นี่เป็นบัญชีที่ใช้งานได้บัญชีสุดท้าย — ปิดแล้วจะไม่มีใครเข้าระบบได้เลย');
         process.exit(1);
       }
@@ -114,6 +119,7 @@ function mustName() {
     case 'remove': {
       mustName();
       if (!store.users[name]) { console.error(`ไม่มีบัญชี "${name}"`); process.exit(1); }
+      if (!U.canDeactivate(store, name)) { console.error('ไม่สามารถลบบัญชีใช้งานหรือผู้แก้ไขข้อมูลคนสุดท้ายได้'); process.exit(1); }
       // ลบบัญชีไม่ลบประวัติ — audit log ยังอ้างชื่อนี้อยู่ และต้องอ้างต่อไปได้
       delete store.users[name];
       U.saveUsers(FILE, store);
@@ -121,11 +127,22 @@ function mustName() {
       if (!U.activeCount(store)) console.log('⚠ ไม่เหลือบัญชีที่ใช้งานได้ — ระบบจะกลับไปใช้ APP_PASSWORD ร่วมกัน');
       break;
     }
+    case 'role': {
+      mustName();
+      const role = process.argv[4];
+      if (!store.users[name] || !['admin', 'developer', 'viewer'].includes(role)) throw new Error('ใช้ role <ชื่อ> admin|developer|viewer');
+      if (role === 'viewer' && !U.canDeactivate(store, name)) throw new Error('ไม่สามารถลดสิทธิ์ผู้แก้ไขข้อมูลคนสุดท้ายได้');
+      store.users[name].role = role;
+      U.saveUsers(FILE, store);
+      console.log(`✓ สิทธิ์ของ ${name}: ${role}`);
+      break;
+    }
     default:
       console.log(`จัดการบัญชีผู้ใช้ — เก็บที่ ${FILE}
 
   node manage-users.mjs list
-  node manage-users.mjs add <ชื่อผู้ใช้>
+  node manage-users.mjs add <ชื่อผู้ใช้> --role admin|developer|viewer
+  node manage-users.mjs role <ชื่อผู้ใช้> admin|developer|viewer
   node manage-users.mjs passwd <ชื่อผู้ใช้>
   node manage-users.mjs disable <ชื่อผู้ใช้>
   node manage-users.mjs enable <ชื่อผู้ใช้>

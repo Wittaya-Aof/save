@@ -17,6 +17,8 @@
 //
 //   node tests/pack-capacity.mjs
 import { chromium } from 'playwright';
+// Read-only local fixture; never target the user's running port 3000.
+const packingFixtureURL = new URL('../container-loading-calculator.html', import.meta.url).href;
 import { CONTAINERS, PRESETS, KNOWN_MAX, gridBest } from './lib/pallet-optimum.mjs';
 
 // กล่องที่เวอร์ชันก่อนมีตัววางแผนทำได้ (กล่องทดสอบ 40×30×25cm qty ไม่จำกัด) — พื้นล่างที่ห้ามต่ำกว่า
@@ -54,7 +56,8 @@ const b = await chromium.launch();
 const p = await b.newPage();
 const pageErrs = [];
 p.on('pageerror', e => pageErrs.push(e.message));
-await p.goto('http://localhost:3000/container-loading-calculator.html', { waitUntil: 'load' });
+await p.route('https://**/*', route => route.abort());
+await p.goto(packingFixtureURL, { waitUntil: 'load' });
 await p.waitForTimeout(1500);
 
 const res = await p.evaluate((PRESETS) => {

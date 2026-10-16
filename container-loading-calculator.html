@@ -1544,27 +1544,42 @@ function saveItem(){
 // ── CALCULATION ───────────────────────────────────────────────────────────────
 function buildResult(c,allItems){
   if(!c)return null;
-  var itemCalcs=allItems.map(function(it){return calcFit(it,c);});
-  var result={c:c, items:itemCalcs};
-  // packLayout is the SINGLE source of truth: it returns how many cartons of each SKU are
-  // actually placed in THIS container (capped by the real combined 3D layout, not the
-  // per-item estimate). All totals + the fit/partial status are derived from those counts.
-  var layout=packLayout(result);
-  var totVol=0, totWt=0, totPkg=0, units=1, allFit=true;
-  itemCalcs.forEach(function(ir,idx){
-    var st=layout.stats[idx];
-    var placed=st?st.placed:0;
-    ir.packed=placed;                       // actual cartons placed (was min(fits,needed))
-    ir.vol=placed*itemVol(ir.item);
-    ir.wt=placed*(ir.item.weight||0);
-    totVol+=ir.vol; totWt+=ir.wt; totPkg+=placed;
-    if(placed<ir.needed)allFit=false;                              // partial if not all fit
-    if(placed>0)units=Math.max(units,Math.ceil(ir.needed/placed)); // est. containers for this SKU
+  // Retain the geometric answer independently from operational weight limits.
+  var geometry={c:c,items:allItems.map(function(it){return calcFit(it,c);}),_ignoreWeight:true};
+  var geometricLayout=packLayout(geometry);
+  var geometryAllFit=geometry.items.every(function(ir,i){return (geometricLayout.stats[i]||{}).placed>=ir.needed;});
+  var quantities=allItems.map(function(it){return Math.max(0,Math.min(it.qty,it.maxWt>0&&it.weight>0?Math.floor(it.maxWt/it.weight):it.qty));});
+  var result,layout,totWt=0;
+  // Repack reduced quantities, including physical pallet tare, until every unit is safe.
+  // Reducing demand rather than deleting final blocks preserves support/overlap invariants.
+  for(var attempt=0;attempt<100;attempt++){
+    result={c:c,items:allItems.map(function(it,i){return calcFit({...it,qty:quantities[i]},c);})};
+    layout=packLayout(result);
+    totWt=result.items.reduce(function(sum,ir,i){return sum+((layout.stats[i]||{}).placed||0)*(ir.item.weight||0);},0)
+      +(result._palletManifest||[]).reduce(function(sum,p){return sum+p.tare;},0);
+    if(totWt<=c.maxW+1e-7)break;
+    var excess=totWt-c.maxW;
+    for(var i=allItems.length-1;i>=0&&excess>0;i--){
+      var placed=(layout.stats[i]||{}).placed||0, wt=allItems[i].weight||0;
+      if(!placed)continue;
+      var remove=wt>0?Math.min(placed,Math.ceil(excess/wt)):Math.max(1,Math.ceil(placed/2));
+      quantities[i]=Math.max(0,placed-remove);excess-=remove*wt;
+    }
+    if(attempt===98)quantities=quantities.map(function(){return 0;});
+  }
+  var totVol=0,totPkg=0,units=1,allFit=true;
+  result.items.forEach(function(ir,idx){
+    var placed=(layout.stats[idx]||{}).placed||0;
+    ir.item=allItems[idx];ir.needed=allItems[idx].qty;ir.packed=placed;
+    ir.vol=placed*itemVol(ir.item);ir.wt=placed*(ir.item.weight||0);
+    totVol+=ir.vol;totPkg+=placed;
+    if(placed<ir.needed)allFit=false;
+    if(placed>0)units=Math.max(units,Math.ceil(ir.needed/placed));
   });
-  var cVol=c.L*c.W*c.H/1e9;
-  result.totVol=totVol; result.totWt=totWt; result.totPkg=totPkg;
-  result.volPct=totVol/cVol*100; result.wtPct=totWt/c.maxW*100;
-  result.allFit=allFit; result.unitsNeeded=units;
+  result.totVol=totVol;result.totWt=totWt;result.totPkg=totPkg;
+  result.volPct=totVol/(c.L*c.W*c.H/1e9)*100;result.wtPct=totWt/c.maxW*100;
+  result.geometryAllFit=geometryAllFit;result.weightValid=totWt<=c.maxW+1e-7;
+  result.allFit=allFit&&result.weightValid;result.unitsNeeded=units;
   return result;
 }
 
@@ -1613,7 +1628,7 @@ function calculate(){
     });
     if(seaResults.length){
       results=chainResults([seaResults[0].c],allItems);
-      if(results.length)results[0].recommended=true;
+      if(results.length&&results.every(r=>r.weightValid)&&results.reduce((n,r)=>n+r.totPkg,0)===allItems.reduce((n,it)=>n+it.qty,0))results[0].recommended=true;
     }
   }else{
     if(!selUnits.length){alert(t('alert_no_cont'));switchTab('containers');return}
@@ -2026,7 +2041,7 @@ function renderResults(results){
         </div>
         <div class="rs-badge">
           ${r.recommended?'<span class="badge" style="background:var(--color-brand-soft);color:var(--color-brand)">'+t('recommended')+'</span> ':''}
-          <span class="badge ${r.allFit?'badge-ok':'badge-warn'}">${r.allFit?t('fit_all'):t('fit_partial')}</span>
+          <span class="badge ${r.allFit?'badge-ok':'badge-warn'}">${r.allFit?t('fit_all'):t('fit_partial')}</span>${r.geometryAllFit&&!r.allFit?'<span class="badge badge-warn">'+(LANG==='en'?'Geometric fit; split by weight/limits':'ขนาดวางครบได้ · แบ่งตามน้ำหนัก/ข้อจำกัด')+'</span>':''}
         </div>
       </div>
       <div class="res-detail">
@@ -2510,7 +2525,7 @@ function packLayout(result){
   var palSpecGroups={};
   palItems.forEach(function(P){
     var pl=P.it.pallet||{};
-    var k=[pl.L||1200,pl.W||1000,pl.H||2000,pl.D||150,pl.tare||5.2,pl.color||''].join('|');
+    var k=[pl.L||1200,pl.W||1000,pl.H||2000,pl.D||150,pl.tare||5.2,pl.maxW||0,pl.color||''].join('|');
     (palSpecGroups[k]=palSpecGroups[k]||[]).push(P);
   });
   var palFramesAll=[], palManifestAll=[], palNumBase=0;
@@ -2639,6 +2654,14 @@ function packLayout(result){
         return pal._bo[P.idx];
       }
       function palTop(pal){ var t=0; pal.places.forEach(function(q){ if(q.z0+q.H>t)t=q.z0+q.H; }); return t; }
+      function palWeightRoom(pal,P){
+        if(result._ignoreWeight||!(pal0.maxW>0))return Infinity;
+        var gross=palTare;
+        Object.keys(pal.counts).forEach(function(k){gross+=pal.counts[k].placed*pal.counts[k].P.perBoxWt;});
+        if(gross>pal0.maxW+1e-7)return 0;
+        if(!(P.perBoxWt>0))return Infinity;
+        return Math.max(0,Math.floor((pal0.maxW-gross+1e-7)/P.perBoxWt));
+      }
       function palAddCount(pal,P,n){
         if(!pal.counts[P.idx])pal.counts[P.idx]={P:P,placed:0};
         pal.counts[P.idx].placed+=n;
@@ -2694,7 +2717,8 @@ function packLayout(result){
             var oc=openA.openCol, ocLane=oc.pal.lanes[oc.lane||0];
             var ob=palBoxFor(oc.pal,openA.P,ocLane), bW=ob.bW;
             var nWp=ocLane.fixed?ocLane.nAcross:Math.max(1,Math.floor(ocLane.across/bW));
-            var fill=Math.min(openA.remaining,nWp-oc.cy);
+            var fill=Math.min(openA.remaining,nWp-oc.cy,palWeightRoom(oc.pal,openA.P));
+            if(fill<1){openA.openCol=null;continue;}
             oc.pal.places.push({idx:openA.P.idx,color:openA.P.it.color,x0:oc.x,y0:ocLane.y0+oc.cy*bW,z0:oc.z,L:ob.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
             oc.cy+=fill; openA.remaining-=fill; openA.placedHere+=fill; palAddCount(oc.pal,openA.P,fill);
             openA.zSeen[(pallets.indexOf(oc.pal))+':'+oc.z]=1;
@@ -2710,7 +2734,7 @@ function packLayout(result){
           if(seg){
             for(i=0;i<actives.length;i++){
               var c2=actives[i];
-              if(c2.remaining<=0)continue;
+              if(c2.remaining<=0||palWeightRoom(cur,c2.P)<1)continue;
               var c2b=palBoxFor(cur,c2.P,segLane);
               if(seg.x1-seg.x0<c2b.bL)continue;
               // กล่องต้องวางตามความกว้างพาเลท (across) ได้อย่างน้อย 1 ใบ ไม่งั้นจะล้นออกนอกพาเลท
@@ -2736,7 +2760,7 @@ function packLayout(result){
                 var s=_allSegs[si].s, _sl=_allSegs[si].ln;
                 for(var j=0;j<actives.length;j++){
                   var cj=actives[j];
-                  if(cj.remaining<=0)continue;
+                  if(cj.remaining<=0||palWeightRoom(cur,cj.P)<1)continue;
                   // ต้องเช็คเพดานชั้นด้วยเงื่อนไขเดียวกับตอนเลือกจริงด้านบน ไม่งั้นจะตอบว่า "ยังวางได้"
                   // ทั้งที่ติดเพดาน maxLayers แล้ว → วนซ้ำมาร์ค segment ตายไปเรื่อยๆ โดยไม่เปิดพาเลทใหม่
                   var cjb=palBoxFor(cur,cj.P,_sl);
@@ -2754,7 +2778,7 @@ function packLayout(result){
           var bL=ab.bL,bW=ab.bW,bH=a.P.bH;
           var nWp=segLane.fixed?segLane.nAcross:Math.max(1,Math.floor(segLane.across/bW));
           var colsFit=Math.floor((seg.x1-seg.x0)/bL);
-          var take=Math.min(a.remaining,colsFit*nWp);
+          var take=Math.min(a.remaining,colsFit*nWp,palWeightRoom(cur,a.P));
           var fullCols=Math.floor(take/nWp), lastCol=take-fullCols*nWp;
           if(fullCols>0)cur.places.push({idx:a.P.idx,color:a.P.it.color,x0:seg.x0,y0:segLane.y0,z0:seg.z,L:fullCols*bL,W:nWp*bW,H:bH,nL:fullCols,nW:nWp});
           var xEnd=seg.x0+fullCols*bL;

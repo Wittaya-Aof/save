@@ -72,8 +72,10 @@ for (const r of data) {
     // ⚠ แก้ได้เฉพาะเมื่อ **มีตัวเดียวไม่กำกวม** และคนสั่งมาแล้ว (--fix-transposed)
     // มีหลายตัว = เดาไม่ได้ว่าอันไหนคือเลขตู้ ต้องให้คนดูเอง
     if (FIX_SWAP && near.length === 1) {
-      plan.push({ r, group: 'SWAP', from: cur, to: near[0].likely,
-                  drop: parts.filter(p => !key(p).includes(key(near[0].found))), swap: near[0] });
+      const correctedParts = parts.filter(p => isContainerNo(p) || key(p).includes(near[0].found))
+        .map(p => isContainerNo(p) ? p : near[0].likely);
+      plan.push({ r, group: 'SWAP', from: cur, to: correctedParts.join(', '),
+                  drop: drop.filter(p => !key(p).includes(near[0].found)), swap: near[0] });
     } else {
       skip.push({ po: r.po_so, cur, bl: r.bl_awb || '(ว่าง)', near });
     }

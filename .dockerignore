@@ -1,0 +1,23 @@
+# Build-context allowlist: do not send secrets or operational data.
+*
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!api-server.js
+!odoo-queries.js
+!manage-users.mjs
+!import-export-os.html
+!freight-comparison.html
+!container-loading-calculator.html
+!docker-entrypoint.sh
+!lib/
+!lib/*.cjs
+!lib/*.js
+!lib/*.mjs
+!tools/
+!tools/*.cjs
+!vendor/
+!vendor/*.js
+!vendor/*.css
+!rds-ca.pem

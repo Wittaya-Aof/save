@@ -1,0 +1,20 @@
+{
+  "source_file_count": 67,
+  "runtime_files": [
+    "tracking_data.json",
+    "tracking_audit.jsonl",
+    "shipment_runs.jsonl",
+    "freight_quotes.json",
+    "odoo_snapshot.json",
+    "integrity_seen.json",
+    "integrity_digest.json",
+    "doc_scan_seen.json",
+    "ai_usage.jsonl"
+  ],
+  "source_copy_hashes_verified": true,
+  "independent_git_directory": true,
+  "new_project": "C:\\Users\\User\\Projects\\import-export-control-cloud",
+  "data_directory": "C:\\Users\\User\\Projects\\import-export-control-cloud\\data",
+  "local_port": 3002,
+  "no_node_modules_or_supervisor_state_copied": true
+}

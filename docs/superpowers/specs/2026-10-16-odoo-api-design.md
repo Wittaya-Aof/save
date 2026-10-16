@@ -1,0 +1,9 @@
+# Odoo API data path
+
+The owner authorized repairing staging and switching control.import-export.cloud to this application. Direct PostgreSQL from VPS times out and the existing MCP credential is rejected. The owner provided https://kissgroupdatacenter.com/odoo and an Odoo 18 API credential privately. Authentication and read permissions for purchase, sales, inventory, accounting and both companies have been verified locally.
+
+Add an opt-in ODOO_DATA_SOURCE=api path using Odoo 18 JSON-RPC over verified HTTPS. Keep the existing frontend and response shapes. Do not write to Odoo: the client only permits read methods. Use company IDs 1 and 2, English translations and active_test=false to match existing SQL. Preserve filters, ordering, caps, totals, currencies, invoice signs and category selection. Never substitute missing/inaccessible fields with guessed financial values or hide truncation.
+
+The API path must cover import/export boards, PO/SO lines, vendors, vendor scorecard, GL reconciliation, logistics bills and FX. Existing direct/MCP behavior remains the default. API errors may use the existing explicitly labelled snapshot fallback for boards, but snapshots cannot pass deployment readiness. Forced requests must bypass caches. Logs and diagnostics report only counts/statuses and never credentials or business payloads.
+
+Validate API results against the existing direct database on the development machine, then test authentication and fresh reads inside private VPS staging. Email remains explicitly disabled. Retain the current shared web username and privately rotated password. Keep runtime data outside the image. Before cutover, take a fresh recoverable incumbent backup, ensure only one writer owns the data mount and only one Traefik route claims the public domain, then verify authenticated public routes and persistence. Roll back on failed validation.

@@ -13,6 +13,8 @@
 //
 //   node tests/pack-lanes.mjs          (ต้องมี server ที่ port 3000)
 import { chromium } from 'playwright';
+// Read-only local fixture; never target the user's running port 3000.
+const packingFixtureURL = new URL('../container-loading-calculator.html', import.meta.url).href;
 
 // เคสที่เลนช่วยจริง — [พาเลท, กล่อง L×W×H cm, ก่อน(ทั้งตู้), หลัง(ทั้งตู้), ก่อน/ใบ, หลัง/ใบ]
 const GAINS = [
@@ -41,7 +43,8 @@ const b = await chromium.launch();
 const p = await b.newPage();
 const errs = [];
 p.on('pageerror', e => errs.push(String(e)));
-await p.goto('http://localhost:3000/container-loading-calculator.html', { waitUntil: 'load' });
+await p.route('https://**/*', route => route.abort());
+await p.goto(packingFixtureURL, { waitUntil: 'load' });
 await p.waitForFunction(() => typeof buildResult === 'function', { timeout: 20000 });
 
 const got = await p.evaluate(({ ALL, PAL }) => {

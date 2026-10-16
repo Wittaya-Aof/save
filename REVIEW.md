@@ -115,6 +115,26 @@ NODE_PATH=./node_modules node tests/freight-e2e.cjs      # ยอดเงิน
 
 ## รอบที่ผ่านมา
 
+### 2026-10-14 — แก้เลขตู้เดิมหายเมื่อใช้ `--fix-transposed` (Codex)
+
+อ้างจาก `222a2ea` · branch `codex/preserve-containers-on-typo-fix` · AOF สั่งให้แก้หลังรีวิว
+
+| finding | ผล | เทสที่พิสูจน์ |
+|---|---|---|
+| `tools/clean-container-field.mjs:74` เขียนทั้งช่องเหลือเพียงเลขตู้ที่แก้สลับ และรายงานเลขตู้ถูกต้องเดิมเป็น dropped | จริง — เทสแดงก่อนแก้: `MSKU1465327, CMAU3487514, SKUH6510577` เหลือ `SKHU6510577` | `tests/container-cleanup.cjs` รันสคริปต์จริงในโฟลเดอร์ชั่วคราว: หลังแก้เก็บครบทุกเลขตามลำดับเดิม และ dropped มีเฉพาะค่าที่ตัดจริง |
+
+แก้เฉพาะแผน SWAP ให้เก็บเลขตู้ที่ผ่าน ISO เดิมไว้ด้วย · ไม่เปลี่ยนเงื่อนไข manual/กำกวม/flag
+· ไม่รัน `--apply` กับข้อมูลจริง · backup และ audit ตรวจด้วย fixture
+
+ผลทดสอบ: `container-cleanup` **12/12** · `shipment-stage` **30/30** · `scan-policy` **26/26**
+· `worklist` **17/17** · `users` **20/20** · `freight-review` **8/8** · syntax ผ่านทั้งสองไฟล์ JS
+· `freight-e2e` จบด้วย exit 0 และยอดตรง Excel (33,314.54 / 33,007.88 / 53,876.52), pageerror 0
+
+ข้อจำกัดจาก server ที่ใช้อยู่: `/api/fx-rates` และ `/api/vendors` ตอบ 500
+→ `freight-ui` **35/36**, `freight-pdf` **17/18** ตกข้อ console error
+· `freight-e2e` มี console error จากสอง endpoint เช่นกัน · ไม่แก้ API ในงานนี้
+· dry run กับข้อมูลจริงถูกเกราะ `scan.lock` ปฏิเสธ จึงไม่ฝืนรัน
+
 ### 2026-09-08 — รีวิวงาน "เลื่อนสถานะอัตโนมัติจาก ETS" (ตัวรีวิว: Hermes · 6 finding)
 
 ตรวจงานที่ยังไม่ commit ใน working tree ของ `main` (`lib/shipment-rules.cjs` + แก้ `api-server.js`,

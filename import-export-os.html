@@ -449,7 +449,7 @@ function sampleExports(){return [
 ];}
 
 function defaultForm(board){
-  return {board:board||'import',company:'KOB',poNo:'',party:'',type:'oversea',mode:'sea',seaType:'FCL20',containerQty:'',courierCo:'',
+  return {owner:board==='export'?'':'Wittaya Sawangphol',dueDate:'',documentChecklist:{},board:board||'import',company:'KOB',poNo:'',party:'',type:'oversea',mode:'sea',seaType:'FCL20',containerQty:'',courierCo:'',
     cur:'CNY',amount:'',origin:'',dest:'LAEM CHABANG, THAILAND',
     bl:'',container:'',vessel:'',voyage:'',forwarder:'',etd:'',eta:'',actualDate:'',freight:'',clearance:'',insurance:'',duty:'',vat:'',other:'',expectedCost:''};
 }
@@ -465,6 +465,7 @@ class App extends Component {
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
     this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},landed:null,costDetail:null,billTarget:null,alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,auditLog:null,auditLoading:false,shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state.canWrite=false; this.state.role='viewer';this.state.ambiguousPoNames=[];
     this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
   // สลับ light/dark — ค่าที่ผู้ใช้กดเองเก็บใน localStorage แล้วชนะ prefers-color-scheme ของเครื่องเสมอ (ดู :root[data-theme] ใน <style>)
@@ -475,6 +476,7 @@ class App extends Component {
     this.setState({theme:next});
   }
   componentDidMount(){
+    this.loadPermissions();
     document.documentElement.dataset.theme=this.state.theme;
     window.addEventListener('resize',this._onResize=()=>{const n=window.innerWidth<880;if(n!==this.state.isNarrow)this.setState({isNarrow:n});});
     // ปิดแผงที่เปิดอยู่ด้วย Escape — เดิมต้องเอาเมาส์ไปคลิกปุ่มปิด/ฉากหลังเท่านั้น (แผงรายละเอียดกินเกือบเต็ม
@@ -556,6 +558,7 @@ class App extends Component {
   }
   // ผลตรวจสอบข้อมูลอัตโนมัติจาก server (รอบ 24 ชม. + เช็คตอน server เพิ่งเปิด) — force=true = สั่งตรวจใหม่ทันที
   async loadIntegrityReport(force){
+    if(force&&!this.state.canWrite)return;
     this.setState({integrityLoading:true});
     try{
       const r=await fetchTimeout('/api/integrity-check'+(force?'?force=1':''),{headers:{Accept:'application/json'}},force?20000:12000);
@@ -575,7 +578,10 @@ class App extends Component {
   // PO ที่แยกเป็น shipment ย่อย (_synthetic) ไม่มี PO จริงคู่กัน — โชว์รายการสินค้าของ PO ต้นฉบับแทน
   async loadPoLines(sel){
     const board=sel._board,poForLines=sel._splitBase||sel.poNo;
-    const cacheKey=board+':'+poForLines;
+    const ref=(sel.poRefs||[]).find(p=>p.poNumber===poForLines)||{};
+    const companyId=sel.companyId||ref.companyId||(sel.company==='BTV'?2:1), orderId=sel.odooOrderId||ref.odooOrderId;
+    const scope='&company_id='+companyId+(orderId?'&order_id='+encodeURIComponent(orderId):'');
+    const cacheKey=board+':'+poForLines+scope;
     // TTL 5 นาที ให้ตรงกับ PO_LINE_CACHE_TTL ฝั่ง server — เดิม cache ฝั่ง client ไม่มีวันหมดอายุเลยในทาบเดียว
     // เปิด PO เดิมซ้ำตอนหลังราคาสินค้าอาจเปลี่ยนใน Odoo แล้ว แต่ยังเห็นของเก่าไม่มีอะไรบอกว่าเก่า
     const cached=this._poLinesCache[cacheKey];
@@ -584,7 +590,7 @@ class App extends Component {
     try{
       // เผื่อเวลาให้พอกับ path ตรง→MCP bridge เดียวกับ loadData() (ตรงหลุด ~13 วิ + MCP ต่ออีกหลายวิ)
       // เดิม 12 วิ พอกันกับตอน loadData ก่อนแก้ ทำให้ตอน RDS หลุดจะขึ้น "โหลดไม่สำเร็จ" หลอกๆ ทั้งที่ server หาเจอ
-      const r=await fetchTimeout('/api/po-lines?po='+encodeURIComponent(poForLines)+'&board='+board,{headers:{Accept:'application/json'}},20000);
+      const r=await fetchTimeout('/api/po-lines?po='+encodeURIComponent(poForLines)+'&board='+board+scope,{headers:{Accept:'application/json'}},20000);
       const j=await r.json();
       if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
       // จำกัดขนาด cache กันโตไม่มีเพดานถ้าเปิดดู PO ไปเรื่อยๆ ในทาบเดียวนานๆ — ตัดตัวเก่าสุดออกเมื่อเกิน
@@ -600,6 +606,7 @@ class App extends Component {
   nowTime(){const d=new Date();return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+' น.';}
 
   async loadData(){
+    const mutationVersion=this._mutationVersion||0;
     // โชว์ "กำลังโหลด…" เฉพาะรอบแรก (ยังไม่มีข้อมูลบนจอ) กับตอนผู้ใช้กด Sync เอง — รอบ auto-refresh ทุก 3
     // นาทีไม่ควรทำให้ป้ายสถานะกระพริบจาก "เชื่อมต่อ Odoo" ไป "กำลังโหลด…" แล้วกลับมาเองโดยผู้ใช้ไม่ได้สั่งอะไร
     // (ยิ่งตอน direct หลุดต้องรอ MCP bridge หลายวินาที ป้ายจะค้างเหลืองนานจนดูเหมือนระบบมีปัญหา)
@@ -610,39 +617,60 @@ class App extends Component {
     const grab=async u=>{const r=await fetchTimeout(u,{headers:{Accept:'application/json'}},this._forceSync?35000:15000);if(!r.ok)throw 0;return r.json();};
     // อัตราแลกเปลี่ยนล่าสุดจาก Odoo (ใช้ตอนสร้างรายการใหม่ — fallback เป็นค่า default ถ้าโหลดไม่ได้)
     if(!this._fx){try{const fx=await grab('/api/fx-rates');if(fx&&fx.ok){const m={};(fx.rows||[]).forEach(r=>{m[r.currency]=r.thb_per_unit;});this._fx=m;}}catch(e){}}
-    let overrides={},trackingRows=null;
-    try{const j=await grab('/api/tracking');if(j&&j.ok&&Array.isArray(j.rows)){trackingRows=j.rows;j.rows.forEach(r=>{const k=r.po_so||r.poNo;if(k)overrides[k]=r;});}}catch(e){}
-    this._overrides=overrides;
+    const boardRows={...(this._boardRows||{})};
+    let overrides={...(this._overrides||{})},trackingRows=null,ambiguousPoNames=this.state.ambiguousPoNames||[];
+    try{const j=await grab('/api/tracking');if(j&&j.ok&&Array.isArray(j.rows)){
+      trackingRows=j.rows;overrides={};const scopes=new Map();
+      j.rows.forEach(r=>{const k=r.po_so||r.poNo;if(!k)return;const company=r.companyId||r.company_id||(r.company==='KOB'?1:r.company==='BTV'?2:r.company||'unknown');const board=r._board||r.board||(r.type==='export'?'export':'import');if(!scopes.has(k))scopes.set(k,new Set());scopes.get(k).add(String(company)+'|'+board);overrides[k]=r;});
+      ambiguousPoNames=[...scopes].filter(([,scope])=>scope.size>1).map(([po])=>po);ambiguousPoNames.forEach(po=>delete overrides[po]);
+    }}catch(e){}
     // ดึง import-pos/export-sos — server เสิร์ฟ snapshot ล่าสุดให้ทันทีถ้า Odoo หลุด
     // (มี flag stale + as_of บอกว่าเป็นข้อมูลสดหรือชุดที่เก็บไว้ และเก็บไว้เมื่อไหร่)
     const force=this._forceSync?'?force=1':'';
     async function fetchLive(){
       const [imp,exp]=await Promise.all([grab('/api/import-pos'+force).catch(()=>null),grab('/api/export-sos'+force).catch(()=>null)]);
       const rows=[];let stale=false,asOf=null;
+      const impOK=!!(imp&&imp.ok!==false&&Array.isArray(imp.rows)),expOK=!!(exp&&exp.ok!==false&&Array.isArray(exp.rows));
+      const incomplete=!impOK||!expOK;
+      const previous=Array.isArray(this.state.shipments)?this.state.shipments:[];
+      if(!impOK)rows.push(...(boardRows.import||previous.filter(s=>s._board==='import')));
+      if(!expOK)rows.push(...(boardRows.export||previous.filter(s=>s._board==='export')));
       // as_of = เวลาที่ "เก่ากว่า" ของสองบอร์ดเสมอ — ป้ายบนหัวจอบอกความสดของข้อมูลทั้งหน้า ถ้าหยิบเวลาที่ใหม่
       // กว่ามาโชว์จะโกหกว่าข้อมูลสดกว่าความจริงในกรณีที่บอร์ดหนึ่งดึงใหม่ได้แต่อีกบอร์ดยังเป็นชุดเก่า
-      if(imp&&imp.rows){imp.rows.forEach(r=>rows.push(this.mapPo(r,'import')));if(imp.stale)stale=true;if(imp.as_of)asOf=imp.as_of;}
-      if(exp&&exp.rows){exp.rows.forEach(r=>rows.push(this.mapPo(r,'export')));if(exp.stale)stale=true;if(exp.as_of&&(!asOf||exp.as_of<asOf))asOf=exp.as_of;}
-      return rows.length?{rows,stale,asOf}:null;
+      if(impOK){boardRows.import=imp.rows.map(r=>this.mapPo(r,'import'));rows.push(...boardRows.import);if(imp.stale)stale=true;if(imp.as_of)asOf=imp.as_of;}
+      if(expOK){boardRows.export=exp.rows.map(r=>this.mapPo(r,'export'));rows.push(...boardRows.export);if(exp.stale)stale=true;if(exp.as_of&&(!asOf||exp.as_of<asOf))asOf=exp.as_of;}
+      return (impOK||expOK)?{rows,stale,asOf,incomplete}:null;
     }
     let res=null;
     try{ res=await fetchLive.call(this); }catch(e){}
     // ถ้าไม่ได้อะไรเลย ลองซ้ำ 1 ครั้ง (network blip)
     if(!res){ await new Promise(r=>setTimeout(r,1500)); try{ res=await fetchLive.call(this); }catch(e){} }
+    // A save/delete acknowledged during this refresh is newer than its tracking read.
+    if((this._mutationVersion||0)!==mutationVersion){this.setState({dataSource:'incomplete'});return;}
     let base=res?res.rows:null, isLive=res?!res.stale:false;
     this._asOf=res?res.asOf:null;
+    // Tracking contains edited records, not the complete Odoo boards. During a
+    // total board outage keep every previously loaded PO, then merge tracking below.
+    const hasPriorBoards=Object.keys(boardRows).length>0||(!this._boardRows&&Array.isArray(this.state.shipments));
+    if(!base&&hasPriorBoards&&Array.isArray(this.state.shipments)&&this.state.shipments.length){
+      base=(boardRows.import||boardRows.export)?[...(boardRows.import||this.state.shipments.filter(s=>s._board==='import')),...(boardRows.export||this.state.shipments.filter(s=>s._board==='export'))]:this.state.shipments;res={incomplete:true};
+    }
     // สำรองสุดท้าย: ข้อมูลที่ผู้ใช้เคยแก้เอง (tracking) — ใช้เมื่อไม่มีทั้ง live และ snapshot
-    if(!base&&trackingRows&&trackingRows.length)base=trackingRows.map(r=>this.mapTracking(r));
+    if(!base&&trackingRows)base=trackingRows.filter(r=>!ambiguousPoNames.includes(r.po_so||r.poNo)).map(r=>this.mapTracking(r));
     if(!base){
       if(Array.isArray(this.state.shipments)&&this.state.shipments.length){
+        this.setState({dataSource:'incomplete'});
         this.showToast('ซิงค์ไม่สำเร็จ — แสดงข้อมูลชุดล่าสุดที่มีอยู่','error');
       } else {
         this.setState({shipments:null,dataSource:'sample'});
       }
       return;
     }
+    this._ambiguousPoNames=ambiguousPoNames;
+    this._overrides=overrides;
+    this._boardRows=boardRows;
     base=this.applyOverrides(base);
-    this.setState({shipments:base,dataSource:isLive?'live':'fallback',lastSync:this.nowTime()});
+    this.setState({shipments:base,ambiguousPoNames,dataSource:ambiguousPoNames.length||(res&&res.incomplete)||trackingRows===null?'incomplete':isLive?'live':'fallback',lastSync:this.nowTime()});
   }
 
   strip(k){return(k||'').replace(/\s*\(\d+\)\s*$/,'').trim();}
@@ -684,12 +712,18 @@ class App extends Component {
   }
   // สร้าง shipment object เต็มจาก override ที่เป็นรายการสังเคราะห์ (แยก shipment/สร้างใหม่)
   // แยกจาก mapTracking() เพราะ field ที่ใช้ต่างกัน (cur/amount/rate ตรงตัว ไม่ใช่ convention rate กลับด้านแบบ Odoo)
+  workflowFields(o){
+    const bills=Array.isArray(o.bills)?o.bills:[];
+    const by={...(o._billsBy||{})};bills.forEach(b=>{if(b.category&&!by[b.category])by[b.category]=bills.filter(x=>x.category===b.category);});
+    return {_ts:o._ts!=null?o._ts:0,_shipmentId:o._shipmentId||'',poRefs:Array.isArray(o.poRefs)?o.poRefs:[],owner:o.owner||((o._board||'import')==='import'?'Wittaya Sawangphol':''),dueDate:o.dueDate||'',documentChecklist:{...(o.documentChecklist||{})},_billsBy:by};
+  }
   mapSynthetic(o){
-    return {_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),etsActualArrivalDate:(o.etsActualArrivalDate||'').slice(0,10),etsStatus:o.etsStatus||'',etsCheckedAt:o.etsCheckedAt||'',etsMatchedVoyage:o.etsMatchedVoyage||'',documentReceivedAt:o.documentReceivedAt||'',actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',voyage:o.voyage||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,other:parseFloat(o.other)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_stageManual:!!o._stageManual,_synthetic:true};
+    return {...this.workflowFields(o),companyId:o.companyId||(o.company==='BTV'?2:1),odooOrderId:o.odooOrderId||null,_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),etsActualArrivalDate:(o.etsActualArrivalDate||'').slice(0,10),etsStatus:o.etsStatus||'',etsCheckedAt:o.etsCheckedAt||'',etsMatchedVoyage:o.etsMatchedVoyage||'',documentReceivedAt:o.documentReceivedAt||'',actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',voyage:o.voyage||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,other:parseFloat(o.other)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_stageManual:!!o._stageManual,_synthetic:true};
   }
   applyOne(s,o){
-    const m={...s};
-    ['origin','dest','portOfLoading','portOfDischarge','bl','container','vessel','voyage','forwarder','etd','eta','etsActualArrivalDate','etsStatus','etsCheckedAt','etsMatchedVoyage','documentReceivedAt','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null&&o[k]!=='')m[k]=o[k];});
+    if(this.isAmbiguousPo(s.poNo))return {...s};
+    const m={...s,...this.workflowFields({...s,...o})};
+    ['origin','dest','portOfLoading','portOfDischarge','bl','container','vessel','voyage','forwarder','etd','eta','etsActualArrivalDate','etsStatus','etsCheckedAt','etsMatchedVoyage','documentReceivedAt','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null)m[k]=o[k];});
     if(o._stageManual!=null)m._stageManual=!!o._stageManual;
     // ตัวสแกนเขียนเลข B/L ลงฟิลด์ bl_awb ฟิลด์เดียว (ไม่ได้เขียน bl) — วัดจริง 2026-08-13:
     // 218 record มี bl_awb แต่ไม่มี bl จึงไม่มีเลข B/L ขึ้นบนการ์ดเลย และการจับคู่ต้นทุนด้วย
@@ -789,7 +823,7 @@ class App extends Component {
     // ดึง goods_category มาอยู่แล้ว (r.goods_category) แค่ไม่เคยถูกอ่านใช้ ทำให้ทุก import PO ถูกจัดเป็น
     // 'oversea' หมดโดยไม่สนใจหมวดจริง — ปุ่มกรอง Packaging/Finished ในหน้า Import Board เลยกรองไม่ได้ผลจริง
     const catType=r.goods_category==='Packaging'?'pk':r.goods_category==='Finished Goods'?'fg':'oversea';
-    return {_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',partyId:r.partner_id||null,type:normType(catType),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
+    return {...this.workflowFields({...r,_board:board}),companyId:r.company_id||r.companyId||((r.company_code||r.company)==='BTV'?2:1),odooOrderId:r.id||null,_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',partyId:r.partner_id||null,type:normType(catType),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
       _odooState:r.odoo_state||'',_receiptStatus:r.receipt_status||r.delivery_status||'',
       _lastReceipt:(r.last_receipt_date||'').slice(0,10)};
   }
@@ -811,7 +845,7 @@ class App extends Component {
     // id ต้องไม่มีวันเป็น undefined — record ที่บันทึกผ่านฟอร์มแก้ไข/สร้างในแอปไม่มี r.id/r.odoo_id
     // (มีแค่ po_so) ถ้าปล่อยเป็น undefined หลาย record จะชนกัน ทำให้คลิกแล้วเปิดผิด PO
     const id=r.id||r.odoo_id||('t_'+(r.po_so||Math.random()));
-    return {_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total??r.amount)||0,rate,origin:r.origin||r.portOfLoading||'',dest:r.dest||r.portOfDischarge||'LAEM CHABANG, THAILAND',portOfLoading:r.portOfLoading||r.origin||'',portOfDischarge:r.portOfDischarge||r.dest||'',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),etsActualArrivalDate:(r.etsActualArrivalDate||'').slice(0,10),etsStatus:r.etsStatus||'',etsCheckedAt:r.etsCheckedAt||'',etsMatchedVoyage:r.etsMatchedVoyage||'',documentReceivedAt:r.documentReceivedAt||'',actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:r.vessel||'',voyage:r.voyage||'',forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,other:parseFloat(r.other)||0,_stageManual:!!r._stageManual,_fallback:true};
+    return {...this.workflowFields({...r,_board:board}),companyId:r.companyId||(r.company==='BTV'?2:1),odooOrderId:r.odooOrderId||null,_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total??r.amount)||0,rate,origin:r.origin||r.portOfLoading||'',dest:r.dest||r.portOfDischarge||'LAEM CHABANG, THAILAND',portOfLoading:r.portOfLoading||r.origin||'',portOfDischarge:r.portOfDischarge||r.dest||'',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),etsActualArrivalDate:(r.etsActualArrivalDate||'').slice(0,10),etsStatus:r.etsStatus||'',etsCheckedAt:r.etsCheckedAt||'',etsMatchedVoyage:r.etsMatchedVoyage||'',documentReceivedAt:r.documentReceivedAt||'',actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:r.vessel||'',voyage:r.voyage||'',forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,other:parseFloat(r.other)||0,_stageManual:!!r._stageManual,_fallback:true};
   }
 
   allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
@@ -832,39 +866,28 @@ class App extends Component {
   showToast(msg,kind){this.setState({toast:{msg,kind:kind||'info'}});clearTimeout(this._tt);this._tt=setTimeout(()=>this.setState({toast:null}),3600);}
 
   async submitCreate(){
-    if(this.state.saving)return;
-    const f=this.state.form;this.setState({saving:true});
+    if(!this.state.canWrite||this.state.saving)return;
+    const f=this.state.form;if(!this.canEditPo(f.poNo))return;this.setState({saving:true});
     const rate=this.fxRate(f.cur);
     const id='t_'+(f.poNo||('new_'+Date.now()));
     const ns={_board:f.board,id,poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,other:parseFloat(f.other)||0,expectedCost:parseFloat(f.expectedCost)||0,_synthetic:true};
-    this.setState({shipments:[ns].concat(this.allShipments()),creating:false,tab:f.board,view:'kanban'});
     const ov={...this._overrides};
     // _synthetic:true — PO นี้ไม่มีอยู่จริงใน Odoo ต้องให้ applyOverrides() เก็บไว้เป็นรายการเดี่ยวๆ
     // ไม่งั้นตอนโหลดข้อมูลรอบถัดไป (auto-refresh ทุก 3 นาที) รายการนี้จะหายไปเงียบๆ เพราะไม่มี PO ให้ merge ทับ
-    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,other:parseFloat(f.other)||0,expectedCost:parseFloat(f.expectedCost)||0};
-    this._overrides=ov;
-    // ต้องเช็ค res.ok ด้วย — fetch จะ reject เฉพาะตอนเครือข่ายพัง ไม่ reject เมื่อ server ตอบ 4xx/5xx
-    // เดิมจึงขึ้น toast "เพิ่มรายการสำเร็จ" ทุกครั้งที่ server ตอบกลับมา ไม่ว่าจะบันทึกผ่านหรือถูกปฏิเสธ
-    // (เช่น 400 จาก validation ตัวเลขติดลบฝั่ง server) ผู้ใช้เลยเชื่อว่าบันทึกแล้วทั้งที่ข้อมูลไม่ได้ลงไฟล์
-    // — จุดอื่นที่บันทึกข้อมูล (setStageFor/saveEdit/splitShipment) เช็ค res.ok อยู่แล้ว ตรงนี้หลุดไปจุดเดียว
+    ov[ns.poNo]={po_so:ns.poNo,id,_board:f.board,_edited:true,_synthetic:true,_rateIsThb:true,type:f.type,company:f.company,party:f.party,cur:f.cur,amount:parseFloat(f.amount)||0,rate,stage:ns.stage,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,other:parseFloat(f.other)||0,expectedCost:parseFloat(f.expectedCost)||0};
+
     try{
-      const res=await fetchTimeout('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ov[ns.poNo])},15000);
-      if(res.ok){
-        const j=await res.json().catch(()=>({}));
-        if(j&&Array.isArray(j.rejected)&&j.rejected.length)this.showToast('server ปฏิเสธค่าที่ผิดปกติ: '+j.rejected.map(r=>r.field).join(', '),'error');
-        else this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');
-      }else{
-        const j=await res.json().catch(()=>({}));
-        this.showToast('บันทึกไม่สำเร็จ: '+(j.error||('HTTP '+res.status)),'error');
-      }
-    }
-    catch(e){this.showToast('บันทึกออฟไลน์ชั่วคราว','info');}
-    this.setState({saving:false});
+      const saved=await this.persistTracking({...ov[ns.poNo],_baseTs:0,owner:f.owner||(f.board==='import'?'Wittaya Sawangphol':''),dueDate:f.dueDate||'',documentChecklist:f.documentChecklist||{}});
+      this.setState({shipments:[this.mapSynthetic(saved||ov[ns.poNo])].concat(this.allShipments().filter(x=>x.poNo!==ns.poNo)),creating:false,tab:f.board,view:'kanban'});
+      this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');
+    }catch(e){this.showToast('ยังไม่ได้บันทึก: '+e.message,'error');}
+    finally{this.setState({saving:false});}
   }
 
   startEdit(){
-    const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
-    const ef={board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),etsActualArrivalDate:(s.etsActualArrivalDate||'').slice(0,10),etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:(s.documentReceivedAt||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',other:s.other||'',expectedCost:s.expectedCost||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_stageManual:!!s._stageManual,_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    if(!this.state.canWrite)return;
+    const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s||!this.canEditPo(s.poNo))return;
+    const ef={_baseTs:s._ts!=null?s._ts:0,owner:s.owner||(s._board==='import'?'Wittaya Sawangphol':''),dueDate:s.dueDate||'',documentChecklist:{...(s.documentChecklist||{})},_billsBy:{...(s._billsBy||{})},board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),etsActualArrivalDate:(s.etsActualArrivalDate||'').slice(0,10),etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:(s.documentReceivedAt||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',other:s.other||'',expectedCost:s.expectedCost||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_stageManual:!!s._stageManual,_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
     this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();this.loadLanded();
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
@@ -894,73 +917,80 @@ class App extends Component {
     this.setStageFor(s,newStage);
   }
   async setStageFor(s,newStage){
+    if(!this.canEditPo(s.poNo))return;
     const stages=s._board==='export'?EXP_STAGES:IMP_STAGES;
     const terminal=stages[stages.length-1].key===newStage;
     // overReceipt = "รับของเกินสั่ง" คนละความหมายกับ "ลากมาลงคอลัมน์สุดท้ายแล้ว" — ห้ามตั้งเป็น true อัตโนมัติ
     // (บั๊กเดิม copy-paste มาจาก actualDate ด้านล่าง ทำให้ลากการ์ดปกติไปคอลัมน์สุดท้ายแล้วขึ้นป้าย "เกิน" ผิดๆ)
     // ต้องใส่ _synthetic/_splitBase ต่อให้ตรงกับของเดิมเสมอ ไม่งั้น shipment ที่แยกเอง/สร้างเองจะหลุดสถานะนั้นไปตอนลาก
-    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_stageManual:true,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',etsActualArrivalDate:s.etsActualArrivalDate||'',etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:s.documentReceivedAt||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,other:s.other||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
-    const ov={...this._overrides};ov[s.poNo]=o;this._overrides=ov;
-    const rows=this.allShipments().map(x=>x.poNo===s.poNo?this.applyOne(x,o):x);
-    this.setState({shipments:rows});
-    try{const res=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.withBase(o))});
-      if(await this.hitConflict(res))return;
-      this.showToast(res.ok?('ย้าย '+s.poNo+' → '+stageMeta(s._board,newStage).label):('บันทึกไม่สำเร็จ: HTTP '+res.status),res.ok?'success':'error');
-    }catch(e){this.showToast('บันทึกไม่สำเร็จ: '+e.message,'error');}
+    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_stageManual:true,type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',etsActualArrivalDate:s.etsActualArrivalDate||'',etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:s.documentReceivedAt||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,other:s.other||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    const payload={...this.withBase(o),_baseTs:s._ts!=null?s._ts:0};
+    try{const saved=await this.persistTracking(payload);this.setState({shipments:this.allShipments().map(x=>x.poNo===s.poNo?this.applyOne(x,saved||o):x)});this.showToast('ย้าย '+s.poNo+' → '+stageMeta(s._board,newStage).label,'success');}
+    catch(e){this.showToast('ยังไม่ได้บันทึก: '+e.message,'error');}
   }
-  // ── กันสองคนแก้ PO ใบเดียวกันทับกัน (ฝั่งหน้าเว็บ) ────────────────────────────
-  // แนบ `_baseTs` = ค่า `_ts` ที่หน้านี้เห็นล่าสุดของ record นั้น เพื่อบอก server ว่าเรากำลังแก้
-  // จากฐานไหน · ถ้ามีคนบันทึกคั่นไป server จะ **ไม่เขียน** แล้วคืน `conflicts[]` มาแทน
-  // (record ใหม่ที่ยังไม่มีในระบบไม่มี _ts จึงไม่แนบ = พฤติกรรมเดิมทุกประการ)
+
+  isAmbiguousPo(poNo){return (this._ambiguousPoNames||this.state.ambiguousPoNames||[]).includes(poNo);}
+  canEditPo(poNo){return this.state.canWrite===true&&!this.isAmbiguousPo(poNo);}
   withBase(o){
     const prev=this._overrides&&this._overrides[o.po_so];
-    return (prev&&prev._ts!=null)?{...o,_baseTs:prev._ts}:o;
+    const copy={...o,_baseTs:prev&&prev._ts!=null?prev._ts:0};delete copy._ts;return copy;
   }
-  // คืน true เมื่อ "ไม่ได้บันทึก เพราะมีคนแก้คั่น" — ผู้เรียกต้องหยุด อย่าบอกว่าสำเร็จ
-  // ⚠ ต้องบอก **ทางออก** ด้วย ไม่ใช่แค่บอกว่าพัง ไม่งั้นผู้ใช้ไม่รู้ว่าต้องทำอะไรต่อ
+  async loadPermissions(){
+    try{const r=await fetchTimeout('/api/me',{headers:{Accept:'application/json'}},15000);const j=await r.json();this.setState({canWrite:!!(r.ok&&j.ok&&j.canWrite===true),role:j.role||'viewer'});}catch(e){this.setState({canWrite:false,role:'viewer'});}
+  }
+  async persistTracking(payload){
+    if(!this.canEditPo(payload.po_so))throw new Error('เลข PO ซ้ำข้ามบริษัท/บอร์ด — รอตรวจขอบเขตก่อนบันทึก');
+    const res=await fetchTimeout('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},15000);
+    if(await this.hitConflict(res))throw new Error('ข้อมูลเปลี่ยนแล้ว — ยังไม่ได้บันทึก กรุณาตรวจร่างกับข้อมูลล่าสุด');
+    const j=await res.json();
+    if(!res.ok||!j.ok||(j.rejected&&j.rejected.length))throw new Error(j.error||'ยังไม่ได้บันทึก — server ไม่ยืนยันผล');
+    this._mutationVersion=(this._mutationVersion||0)+1;
+    const saved=(j.rows||[]).find(r=>r.po_so===payload.po_so);
+    if(saved){this._overrides={...this._overrides,[payload.po_so]:saved};}
+    else await this.loadData();
+    return saved;
+  }
+
   async hitConflict(res){
-    if(!res||!res.ok)return false;
+    if(!res)return false;
     const j=await res.clone().json().catch(()=>null);
     const c=j&&Array.isArray(j.conflicts)&&j.conflicts[0];
     if(!c)return false;
-    this.showToast('ยังไม่ได้บันทึก — '+c.reason+' · กำลังดึงข้อมูลล่าสุดให้ แล้วแก้อีกครั้ง','error');
-    this.load(true);
+    this.showToast('ยังไม่ได้บันทึก — '+c.reason+' · โหลดข้อมูลล่าสุดแล้ว โปรดตรวจร่างก่อนแก้ไขอีกครั้ง','error');
+    await this.loadData();
     return true;
   }
-  // ── แยก PO ที่ถูกส่งเป็นหลายรอบออกเป็น shipment ย่อยบน Kanban ──
-  // ตั้งชื่อ PO ต่อท้ายด้วย " (n)" (convention เดียวกับที่ strip()/applyOverrides ใช้จับคู่ PO เดิมอยู่แล้ว)
-  // ค่ามูลค่า/ต้นทุนเริ่มที่ 0 เสมอ — ต้อง กรอกเองว่าล็อตนี้เป็นสัดส่วนเท่าไหร่ ไม่งั้นยอดจะนับซ้ำกับ PO ต้นฉบับ
-  // pre = ข้อมูลชิปเม้นที่การสแกนเอกสารเจอ (จาก /api/shipment-runs) — กรอกให้อัตโนมัติเพื่อไม่ต้องพิมพ์
-  // เอง เหลือแค่กรอกค่าใช้จ่ายของล็อตนั้น · เรียกโดยไม่ส่ง pre = การ์ดเปล่าเหมือนเดิม
-  splitShipment(pre){
-    const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s)return;
+
+  async splitShipment(pre){
+    if(!this.state.canWrite)return;
+    const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s||!this.canEditPo(s.poNo))return;
     const base=this.strip(s._splitBase||s.poNo);
     const siblings=this.allShipments().filter(x=>this.strip(x._splitBase||x.poNo)===base);
     const n=siblings.length+1;
     const poNo=base+' ('+n+')';
     const id='t_'+poNo;
     const p=pre||{};
-    const o={po_so:poNo,id,_board:s._board,_edited:true,_synthetic:true,_rateIsThb:true,_splitBase:base,_ts:Date.now(),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:0,rate:s.rate,stage:s._board==='export'?'draft':'po',mode:p.mode||s.mode||'sea',seaType:s.seaType||'',containerQty:0,courierCo:s.courierCo||'',origin:p.origin||s.origin||'',dest:p.dest||s.dest||'',bl:p.bl_awb||'',bl_awb:p.bl_awb||'',container:p.container||'',vessel:[p.vessel,p.voyage].filter(Boolean).join(' / '),forwarder:p.forwarder||'',etd:p.etd||'',eta:p.eta||s.eta||'',actualDate:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,bills:[],overReceipt:false,note:'แยกจาก PO '+base+' — ชุดที่ '+n+(p.bl_awb?(' · จากเอกสารในโฟลเดอร์ "'+(p.folder||'')+'"'):'')};
-    const ov={...this._overrides};ov[poNo]=o;this._overrides=ov;
-    const ns=this.mapSynthetic(o);
-    this.setState({shipments:[ns].concat(this.allShipments()),detailId:ns.id,tab:s._board,view:'kanban'},()=>this.startEdit());
-    // เดิม fire-and-forget (.catch(()=>{})) — บันทึกไม่ผ่านก็ไม่มีใครรู้ เพราะ toast "สร้างสำเร็จ" ขึ้นไปแล้ว
-    // ทั้งที่ยังไม่รู้ผลจริง ตอนนี้รอผลจาก server ก่อนค่อยบอกผู้ใช้ ให้สอดคล้องกับจุดอื่นที่บันทึกข้อมูล (saveEdit ฯลฯ)
-    fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)})
-      .then(res=>{this.showToast(res.ok?('สร้าง shipment ย่อย '+poNo+' แล้ว — กรอกมูลค่า/ค่าใช้จ่ายของล็อตนี้เอง'):('บันทึกไม่สำเร็จ: HTTP '+res.status),res.ok?'success':'error');})
-      .catch(e=>this.showToast('บันทึกไม่สำเร็จ: '+e.message,'error'));
+    const o={po_so:poNo,id,_board:s._board,_edited:true,_synthetic:true,_rateIsThb:true,_splitBase:base,poRefs:s.poRefs&&s.poRefs.length?s.poRefs:[{poNumber:base,companyId:s.companyId||(s.company==='BTV'?2:1),odooOrderId:s.odooOrderId||null}],owner:s.owner||(s._board==='import'?'Wittaya Sawangphol':''),type:s.type,company:s.company,party:s.party,cur:s.cur,amount:0,rate:s.rate,stage:s._board==='export'?'draft':'po',mode:p.mode||s.mode||'sea',seaType:s.seaType||'',containerQty:0,courierCo:s.courierCo||'',origin:p.origin||s.origin||'',dest:p.dest||s.dest||'',bl:p.bl_awb||'',bl_awb:p.bl_awb||'',container:p.container||'',vessel:[p.vessel,p.voyage].filter(Boolean).join(' / '),forwarder:p.forwarder||'',etd:p.etd||'',eta:p.eta||s.eta||'',actualDate:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,bills:[],overReceipt:false,note:'แยกจาก PO '+base+' — ชุดที่ '+n+(p.bl_awb?(' · จากเอกสารในโฟลเดอร์ "'+(p.folder||'')+'"'):'')};
+    try{
+      const saved=await this.persistTracking({...o,_baseTs:0});
+      const ns=this.mapSynthetic(saved||o);
+      this.setState({shipments:[ns].concat(this.allShipments().filter(x=>x.poNo!==poNo)),detailId:ns.id,tab:s._board,view:'kanban'},()=>this.startEdit());
+      this.showToast('สร้าง shipment ย่อย '+poNo+' แล้ว — กรอกมูลค่า/ค่าใช้จ่ายของล็อตนี้เอง','success');
+    }catch(e){this.showToast('ยังไม่ได้สร้าง shipment: '+e.message,'error');}
   }
-  // ── ลบ shipment ที่แยกเอง — เฉพาะรายการ _synthetic เท่านั้น (PO จริงจาก Odoo ลบไม่ได้) ──
-  // server จะปฏิเสธเสมอถ้ายังไม่ได้ตั้ง DELETE_PASSWORD ใน .env — ต้องให้เจ้าของระบบเปิดใช้งานก่อน
-  openDeleteDialog(poNo){this.setState({deleteDialog:{poNo,password:'',busy:false,error:''}});}
+
+  openDeleteDialog(poNo){if(!this.canEditPo(poNo))return;const row=this.allShipments().find(s=>s.poNo===poNo);this.setState({deleteDialog:{poNo,_baseTs:row&&row._ts!=null?row._ts:0,password:'',busy:false,error:''}});}
   closeDeleteDialog(){this.setState({deleteDialog:null});}
   async confirmDelete(){
-    const d=this.state.deleteDialog;if(!d||d.busy)return;
+    if(!this.state.canWrite)return;
+    const d=this.state.deleteDialog;if(!d||d.busy||!this.canEditPo(d.poNo))return;
     this.setState({deleteDialog:{...d,busy:true,error:''}});
     try{
-      const res=await fetch('/api/tracking/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_so:d.poNo,password:(d.password||'').trim()})});
+      const res=await fetch('/api/tracking/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_so:d.poNo,_baseTs:d._baseTs,password:(d.password||'').trim()})});
+      if(await this.hitConflict(res)){this.setState({deleteDialog:{...d,busy:false,error:'ข้อมูลเปลี่ยนแล้ว — ตรวจรายการล่าสุด แล้วปิดและเปิดคำขอลบใหม่'}});return;}
       const j=await res.json().catch(()=>({}));
-      if(!res.ok){this.setState({deleteDialog:{...d,busy:false,error:j.error||('HTTP '+res.status)}});return;}
+      if(!res.ok||!j.ok){this.setState({deleteDialog:{...d,busy:false,error:j.error||('HTTP '+res.status)}});return;}
+      this._mutationVersion=(this._mutationVersion||0)+1;
       const ov={...this._overrides};delete ov[d.poNo];this._overrides=ov;
       const rows=this.allShipments().filter(s=>s.poNo!==d.poNo);
       const closeDetail=this.state.detailId&&rows.every(r=>r.id!==this.state.detailId);
@@ -1091,7 +1121,11 @@ class App extends Component {
   // ซึ่งใช้ไม่ได้กับกรณีที่ Landed Cost ไม่มีข้อมูล (เช่นอากร/VAT ที่บิลกรมศุลฯ ผูกโฟลเดอร์ไม่ติด)
   // ผู้ใช้ต้องเลือกเองได้ว่าบิลใบไหนเป็นค่าใช้จ่ายช่องไหน
   async openBillPicker(bucket,label){
+    if(!this.state.canWrite)return;
     const f=this.state.editForm;if(!f)return;
+    const target=bucket?{bucket,label}:this.state.billTarget;
+    if(!target||!['freight','clearance','insurance','duty','vat','other'].includes(target.bucket))return;
+    bucket=target.bucket;label=target.label;
     // preselect บิลที่เคยจับคู่ไว้กับช่องนี้
     const sel={};((f._billsBy&&f._billsBy[bucket])||[]).forEach(b=>{sel[b.id]=b;});
     this.setState({billPicker:true,billTarget:{bucket,label},billQuery:'',selBills:sel,billError:false});
@@ -1115,43 +1149,46 @@ class App extends Component {
     }
   }
   closeBillPicker(){this.setState({billPicker:false,billTarget:null});}
-  toggleBill(b){this.setState(s=>{const sel={...s.selBills};if(sel[b.id])delete sel[b.id];else sel[b.id]=b;return {selBills:sel};});}
+  toggleBill(b){if(!this.state.canWrite)return;if(b.fxStatus==='missing'||b.amount==null||!Number.isFinite(Number(b.amount))){this.showToast('ขาดอัตราแลกเปลี่ยน — ยังเลือกบิลนี้ไม่ได้','error');return;}this.setState(s=>{const sel={...s.selBills};if(sel[b.id])delete sel[b.id];else sel[b.id]=b;return {selBills:sel};});}
   // ใช้บิลที่เลือก: รวม freight/duty/vat เติมลงช่อง + จำการจับคู่ไว้
   applySelectedBills(){
-    const t=this.state.billTarget;if(!t)return;
+    if(!this.state.canWrite)return;
+    const t=this.state.billTarget;if(!t||!['freight','clearance','insurance','duty','vat','other'].includes(t.bucket))return;
     const sel=Object.values(this.state.selBills||{});
+    if(sel.some(b=>b.fxStatus==='missing'||b.amount==null||!Number.isFinite(Number(b.amount)))){this.showToast('ขาดอัตราแลกเปลี่ยน — ยังนำยอดมาใช้ไม่ได้','error');return;}
     // ยอดที่ลงช่อง = ยอดรวมของบิลที่ผู้ใช้เลือก (ผู้ใช้เป็นคนตัดสินว่าบิลใบไหนเป็นค่าใช้จ่ายช่องไหน
     // ไม่ใช่ให้ระบบเดาจาก keyword ซึ่งเดิมกระจายยอดใบเดียวไปหลายช่องโดยที่ผู้ใช้ไม่เห็น)
     const total=sel.reduce((a,b)=>a+(b.amount||0),0);
-    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,category:b.category}));
+    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,category:t.bucket,sourceCategory:b.category}));
     this.setState(s=>({
-      editForm:{...s.editForm,[t.bucket]:Math.round(total),_billsBy:{...(s.editForm._billsBy||{}),[t.bucket]:meta}},
+      editForm:{...s.editForm,bills:[...(s.editForm.bills||[]).filter(b=>b.category!==t.bucket),...meta],[t.bucket]:Math.round(total),_billsBy:{...(s.editForm._billsBy||{}),[t.bucket]:meta}},
       billPicker:false,billTarget:null,
       costSrc:sel.length?('✓ '+t.label+': จับคู่ '+sel.length+' บิลจาก Odoo'):''
     }));
     this.showToast(sel.length?('ใส่ '+t.label+' ฿'+Math.round(total).toLocaleString()+' จาก '+sel.length+' บิล'):'ไม่ได้เลือกบิล',sel.length?'success':'info');
   }
   async saveEdit(){
-    const f=this.state.editForm;if(!f||this.state.savingEdit)return;
+    if(!this.state.canWrite)return;
+    const f=this.state.editForm;if(!f||this.state.savingEdit||!this.canEditPo(f.poNo))return;
     this.setState({savingEdit:true});
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
     // shipment ที่แยกเอง (_synthetic) ไม่มี PO จริงใน Odoo — มูลค่า/สกุลเงินต้องรับจากฟอร์มนี้โดยตรง
     // ของ PO จริง มูลค่ามาจาก Odoo เสมอ ไม่ให้ฟอร์มนี้ทับ (ไม่มีช่องแก้ในฟอร์มอยู่แล้ว ค่าจะเท่าเดิม)
     const current=this.allShipments().find(s=>s.poNo===f.poNo);
     const stageManual=!!f._stageManual||(!!current&&current.stage!==f.stage);
-    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_stageManual:stageManual,_ts:Date.now(),type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',voyage:f.voyage||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',etsActualArrivalDate:f.etsActualArrivalDate||'',etsStatus:f.etsStatus||'',etsCheckedAt:f.etsCheckedAt||'',etsMatchedVoyage:f.etsMatchedVoyage||'',documentReceivedAt:f.documentReceivedAt||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),other:num(f.other),expectedCost:num(f.expectedCost),bills:Array.isArray(f.bills)?f.bills:[],overReceipt:!!f.overReceipt,note:f.note||''};
-    const ov={...this._overrides};ov[f.poNo]=o;this._overrides=ov;
-    const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,o):s);
-    this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
-    try{const res=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.withBase(o))});if(await this.hitConflict(res))return;
-      this.showToast(res.ok?'บันทึก PO '+f.poNo+' สำเร็จ':'บันทึกไม่สำเร็จ: HTTP '+res.status,res.ok?'success':'error');}
-    catch(e){this.showToast('ออฟไลน์ — บันทึกชั่วคราว','info');}
-    this.setState({savingEdit:false});
+    const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_stageManual:stageManual,type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',voyage:f.voyage||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',etsActualArrivalDate:f.etsActualArrivalDate||'',etsStatus:f.etsStatus||'',etsCheckedAt:f.etsCheckedAt||'',etsMatchedVoyage:f.etsMatchedVoyage||'',documentReceivedAt:f.documentReceivedAt||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),other:num(f.other),expectedCost:num(f.expectedCost),owner:f.owner||'',dueDate:f.dueDate||'',documentChecklist:f.documentChecklist||{},bills:Array.isArray(f.bills)?f.bills:[],_billsBy:f._billsBy||{},overReceipt:!!f.overReceipt,note:f.note||''};
+    const payload={...this.withBase(o),_baseTs:f._baseTs!=null?f._baseTs:this.withBase(o)._baseTs};
+    try{
+      const saved=await this.persistTracking(payload);
+      const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,saved||o):s);
+      this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
+      this.showToast('บันทึก PO '+f.poNo+' สำเร็จ','success');
+    }catch(e){this.showToast('ยังไม่ได้บันทึก: '+e.message,'error');}
+    finally{this.setState({savingEdit:false});}
   }
-  // กด Sync = ล้าง cache ฝั่ง server ก่อน เพื่อให้ได้ข้อมูลสดจริง (ไม่ติด cache 5 นาที)
-  // กด Sync = บังคับ probe Odoo จริง (ข้าม circuit breaker + ล้าง cache ทั้งฝั่ง server)
-  sync(){if(this.state.syncing)return;this.setState({syncing:true});this._forceSync=true;fetch('/api/cache/clear',{method:'POST'}).catch(()=>{}).then(()=>this.loadData()).then(()=>{this._forceSync=false;this.setState({syncing:false});}).catch(()=>{this._forceSync=false;this.setState({syncing:false});});}
-  // อัตราแลกเปลี่ยน: ใช้ค่าจริงจาก Odoo ก่อน ถ้าไม่มีจึงใช้ค่า default
+
+  sync(){if(this.state.syncing)return;this.setState({syncing:true});this._forceSync=true;const prep=this.state.canWrite?fetch('/api/cache/clear',{method:'POST'}).catch(()=>{}):Promise.resolve();return prep.then(()=>this.loadData()).finally(()=>{this._forceSync=false;this.setState({syncing:false});});}
+
   fxRate(cur){const v=this._fx&&this._fx[cur];return (v&&v>0)?v:rateGuess(cur);}
 
   // แปลง shipment list → แถว Excel — ใช้ร่วมกันทั้งปุ่ม export ต่อบอร์ด (exportExcel) และ
@@ -1237,19 +1274,10 @@ class App extends Component {
   // ── จัดการด่วนจาก panel แจ้งเตือน ──
   // "รับแล้ว": ปิดงานทันที (import→รับเข้าคลัง / export→ถึงปลายทาง) — บันทึกลง server เลย
   async quickCloseAlert(s){
-    const stage=s._board==='export'?'arrived':'received';
-    const actualDate=s.actualDate||new Date().toISOString().slice(0,10);
-    const o={...(this._overrides[s.poNo]||{}),po_so:s.poNo,_board:s._board,_edited:true,_ts:Date.now(),stage,actualDate};
-    this._overrides={...this._overrides,[s.poNo]:o};
-    const rows=this.allShipments().map(x=>x.poNo===s.poNo?{...x,stage,actualDate,_stageManual:true,_edited:true}:x);
-    this.setState({shipments:rows});
-    try{
-      const r=await fetch('/api/tracking/upsert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.withBase(o))});
-      if(await this.hitConflict(r))return;
-      this.showToast(r.ok?('ปิดงาน '+s.poNo+' — '+(s._board==='export'?'ถึงปลายทาง':'รับเข้าคลัง')+'แล้ว'):'บันทึกไม่สำเร็จ',r.ok?'success':'error');
-    }catch(e){this.showToast('ออฟไลน์ — บันทึกชั่วคราว','info');}
+    if(!this.state.canWrite)return;
+    await this.setStageFor(s,s._board==='export'?'arrived':'received');
   }
-  // "แก้ ETA": เปิด detail เข้าโหมดแก้ไขทันที (อัปเดตวันจริงจาก forwarder)
+
   openAlertEdit(s){
     this.setState({alertsOpen:false,tab:s._board,detailId:s.id,editing:false,editForm:null},()=>this.startEdit());
   }
@@ -1273,7 +1301,7 @@ class App extends Component {
   renderTopbar(){
     const {dataSource,lastSync,syncing,isNarrow}=this.state;
     const asOfTxt=this._asOf?(()=>{const d=new Date(this._asOf);return d.toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});})():'';
-    const dbConf=dataSource==='live'?{c:'var(--color-brand)',t:'เชื่อมต่อ Odoo'}
+    const dbConf=dataSource==='incomplete'?{c:'#f59e0b',t:'ข้อมูลไม่ครบ — เก็บบอร์ดล่าสุดที่โหลดได้'}:dataSource==='live'?{c:'var(--color-brand)',t:'เชื่อมต่อ Odoo'}
       :dataSource==='fallback'?{c:'#f59e0b',t:(asOfTxt?('ข้อมูล ณ '+asOfTxt):'ใช้ข้อมูลที่บันทึกไว้')}
       :dataSource==='loading'?{c:'#fbbf24',t:'กำลังโหลด…'}
       :{c:'var(--color-text-tertiary)',t:'โหมดตัวอย่าง'};
@@ -1375,9 +1403,9 @@ class App extends Component {
           <button onClick={()=>this.exportExcel(tab)} title="ดาวน์โหลด Excel" style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:'0 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer',flexShrink:0}}>
             <Ico name="dl" size={15} sw={1.9}/>{!isNarrow&&<span>Excel</span>}
           </button>
-          <button onClick={()=>this.setState({creating:true,form:defaultForm(tab==='export'?'export':'import')})} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:'0 14px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer',flexShrink:0}}>
+          {this.state.canWrite&&<button onClick={()=>this.setState({creating:true,form:defaultForm(tab==='export'?'export':'import')})} style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:'0 14px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer',flexShrink:0}}>
             <Ico name="plus" size={16} sw={2}/>{!isNarrow&&<span>เพิ่มรายการ</span>}
-          </button>
+          </button>}
         </div>
       </div>
       <div style={{padding:'0 22px 10px',fontSize:'11.5px',color:'var(--color-text-muted)'}}>แสดง {list.length} รายการ{co?' · '+co:''}{tab==='import'&&type!=='all'?' · '+typeMeta(type).label:''}</div>
@@ -1417,7 +1445,7 @@ class App extends Component {
                 const grp=groups[this.strip(s._splitBase||s.poNo)]||[s];
                 const isSplit=grp.length>1;
                 const splitIdx=isSplit?grp.findIndex(x=>x.id===s.id)+1:0;
-                return <div key={s.id} draggable
+                return <div key={s.id} draggable={this.canEditPo(s.poNo)}
                   onDragStart={e=>{this._dragId=s.id;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',s.id);}catch(er){}}}
                   onDragEnd={()=>{this._dragId=null;this.setState({dragOverKey:null});}}
                   onClick={()=>this.setState({detailId:s.id})}
@@ -1706,7 +1734,7 @@ class App extends Component {
                 <span style={{fontSize:'18px',fontFamily:'var(--font-display)',fontWeight:500,letterSpacing:'-.02em',color:'var(--color-text)'}}>ผลตรวจสอบข้อมูลอัตโนมัติ</span>
                 {ir&&ir.ranAt&&<span style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ตรวจล่าสุด {new Date(ir.ranAt).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น. · เช็ค {ir.importChecked+ir.exportChecked} รายการ</span>}
               </div>
-              <button onClick={()=>this.loadIntegrityReport(true)} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:500,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังตรวจ…':'ตรวจสอบตอนนี้'}</button>
+              {this.state.canWrite&&<button onClick={()=>this.loadIntegrityReport(true)} disabled={loading} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:500,cursor:loading?'default':'pointer',opacity:loading?0.6:1,flexShrink:0}}><Ico name="sync" size={13} sw={2}/>{loading?'กำลังตรวจ…':'ตรวจสอบตอนนี้'}</button>}
             </div>
             {!ir&&!loading&&<div style={{fontSize:'12px',color:'var(--color-text-muted)'}}>ยังไม่มีผลตรวจสอบ</div>}
             {clean&&<div style={{fontSize:'12.5px',color:'var(--color-success-text)',display:'flex',alignItems:'center',gap:'6px'}}><Ico name="check" size={14} sw={2.2}/>ไม่พบความผิดปกติ — ข้อมูลสกุลเงินสอดคล้องกันทุกรายการ</div>}
@@ -2162,7 +2190,7 @@ class App extends Component {
                 borderTop:n?'1px solid var(--color-border)':'none'}}>
               <span style={{fontSize:'12.5px',flexShrink:0,minWidth:'152px'}}>{i.po}</span>
               <span style={{fontSize:'12.5px',flex:1,minWidth:0}}>{i.why}
-                {i.vessel?<span style={{color:'var(--color-text-tertiary)'}}> · {i.vessel}</span>:null}</span>
+                <span style={{display:'block',fontSize:'11px'}}>ผู้รับผิดชอบ: {i.owner||((this._overrides[i.po]||{}).owner)||'Wittaya Sawangphol'} · กำหนด: {i.dueDate||((this._overrides[i.po]||{}).dueDate)||'ยังไม่กำหนด'}</span>{i.vessel?<span style={{color:'var(--color-text-tertiary)'}}> · {i.vessel}</span>:null}</span>
               <span style={{fontSize:'12px',color:'var(--color-text-tertiary)',flexShrink:0}}>{i.next}</span>
             </div>))}
           {b.items.length>25?<div style={{padding:'8px 14px',fontSize:'12px',
@@ -2187,6 +2215,22 @@ class App extends Component {
           ค้างสะสม — ของเก่าที่ควรสะสาง แยกออกมาเพื่อไม่ให้กลบงานของวันนี้</div>
         {w.backlog.map(b=>Card(b,'old'))}</div>:null}
     </div>;
+  }
+  renderWorkflow(sel,form,setField){
+    const f=form||sel;
+    const labels={"commercial_invoice":"Commercial Invoice","packing_list":"Packing List","form_e":"Form E","bl":"B/L","insurance":"ประกันภัย","import_declaration":"ใบขนขาเข้า","tisi_permit":"TISI (ยืนยันโดยผู้ดูแล)","warehouse_notice":"แจ้งคลังสินค้า","tax_payment_notice":"แจ้งชำระภาษี","forwarder_booking":"ประสาน Forwarder"};
+    return <section style={{padding:'12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',marginBottom:'16px'}}>
+      <div style={{fontSize:'11px',marginBottom:'8px'}}>Shipment ID: {sel._shipmentId||'จะกำหนดเมื่อบันทึก'}<br/>PO: {(sel.poRefs||[]).map(p=>p.poNumber+' (บริษัท '+(p.companyId||'—')+')').join(', ')||sel._splitBase||sel.poNo||'—'}</div>
+      {form&&this.state.canWrite?<>
+        <label>ผู้รับผิดชอบ<input style={INP} value={f.owner||''} onChange={e=>setField('owner',e.target.value)}/></label>
+        <label>กำหนดติดตาม<input style={INP} type="date" value={f.dueDate||''} onChange={e=>setField('dueDate',e.target.value)}/></label>
+      </>:<div style={{fontSize:'12px'}}>ผู้รับผิดชอบ: {f.owner||(sel._board==='import'?'Wittaya Sawangphol':'—')} · กำหนด: {f.dueDate||'ยังไม่กำหนด'}</div>}
+      {Object.entries(labels).map(([key,label])=><div key={key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',fontSize:'11px',marginTop:'6px'}}>
+        <span>{label}</span>{form&&this.state.canWrite?<select value={(f.documentChecklist||{})[key]||'pending'} onChange={e=>setField('documentChecklist',{...(f.documentChecklist||{}),[key]:e.target.value})}>
+          <option value="pending">รอติดตาม</option><option value="done">เสร็จแล้ว</option><option value="not_required">ยืนยันว่าไม่ต้องใช้</option>
+        </select>:<span>{{pending:'รอติดตาม',done:'เสร็จแล้ว',not_required:'ยืนยันว่าไม่ต้องใช้'}[(f.documentChecklist||{})[key]||'pending']}</span>}
+      </div>)}
+    </section>;
   }
   renderDetail(){
     const {detailId,editing,editForm,vendors,expenseBusy,costSrc,savingEdit,billPicker,billList,billLoading,billQuery,selBills,deleteDialog,poLines,poLinesLoading,poLinesError}=this.state;
@@ -2219,6 +2263,7 @@ class App extends Component {
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'20px 22px'}}>
           <div style={{fontSize:'13px',color:'var(--color-text-secondary)',marginBottom:'6px'}}>{sel.party}</div>
+          {this.renderWorkflow(sel,editing?ef:null,(k,v)=>this.setEdit(k,v))}
           {(()=>{const ov=(this._overrides||{})[sel.poNo];return (ov&&ov._ts)?<div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginBottom:'14px'}}>แก้ไขล่าสุด {new Date(ov._ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</div>:<div style={{marginBottom:'14px'}}/>;})()}
           {(()=>{
             const base=this.strip(sel._splitBase||sel.poNo);
@@ -2377,7 +2422,7 @@ class App extends Component {
                         <div style={{marginTop:'2px'}}>{[r.vessel&&(r.vessel+(r.voyage?' / '+r.voyage:'')),r.etd&&('ETD '+fmtDate(r.etd)),r.eta&&('ETA '+fmtDate(r.eta)),r.container].filter(Boolean).join(' · ')||'—'}</div>
                         {r.invoiceNo&&<div style={{marginTop:'2px',color:'var(--color-text-muted)'}}>Invoice {r.invoiceNo}</div>}
                       </div>
-                      <button onClick={()=>this.splitShipment(r)} title="สร้างการ์ดใหม่พร้อมกรอกข้อมูลจัดส่งจากเอกสารให้อัตโนมัติ — เหลือแค่กรอกค่าใช้จ่าย" style={{padding:'6px 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand-text)',fontSize:'12px',fontWeight:500,cursor:'pointer',whiteSpace:'nowrap'}}>สร้างการ์ดจากชิปเม้นนี้</button>
+                      {this.canEditPo(sel.poNo)&&<button onClick={()=>this.splitShipment(r)} title="สร้างการ์ดใหม่พร้อมกรอกข้อมูลจัดส่งจากเอกสารให้อัตโนมัติ — เหลือแค่กรอกค่าใช้จ่าย" style={{padding:'6px 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand-text)',fontSize:'12px',fontWeight:500,cursor:'pointer',whiteSpace:'nowrap'}}>สร้างการ์ดจากชิปเม้นนี้</button>}
                     </div>
                   </div>)}
                 </div>;
@@ -2472,12 +2517,12 @@ class App extends Component {
                           border:'1px solid var(--color-border)',borderRadius:'999px',background:'var(--color-surface-muted)',
                           color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'10.5px',cursor:'pointer'}}>
                         <Ico name="boxes" size={11} sw={1.8}/>บิลจริง ฿{Math.round(act).toLocaleString()}</button>}
-                      <button onClick={()=>this.openBillPicker(k,l)}
+                      {this.canEditPo(sel.poNo)&&<button onClick={()=>this.openBillPicker(k,l)}
                         title="เลือกบิลจาก Odoo มาใส่ช่องนี้ — ใช้ตอนที่ระบบต้นทุนยังผูกบิลให้ไม่ได้ (เช่นบิลกรมศุลกากร)"
                         style={{display:'inline-flex',alignItems:'center',gap:'4px',padding:'2px 8px',
                           border:'1px solid var(--color-border)',borderRadius:'999px',background:'var(--color-surface)',
                           color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'10.5px',cursor:'pointer'}}>
-                        <Ico name="sync" size={11} sw={1.8}/>Odoo</button>
+                        <Ico name="sync" size={11} sw={1.8}/>Odoo</button>}
                     </span>
                   </div>
                   <input value={ef[k]===''||ef[k]==null?'':ef[k]} onChange={e=>this.setEdit(k,e.target.value)} type="number" placeholder="0" style={INP}/>
@@ -2511,14 +2556,14 @@ class App extends Component {
         </div>
         <div style={{padding:'14px 22px',borderTop:'1px solid var(--color-border)',display:'flex',gap:'10px'}}>
           {!editing&&<>
-            <button onClick={()=>this.splitShipment()} title="แยกเป็น shipment ย่อยใหม่ (PO เดียวกัน ส่งคนละรอบ)" style={{width:'40px',height:'40px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand-text)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="split" size={16} sw={1.8}/></button>
-            {sel._synthetic&&<button onClick={()=>this.openDeleteDialog(sel.poNo)} title="ลบ shipment ย่อยนี้ (ต้องมีรหัสผ่านผู้มีอำนาจ)" style={{width:'40px',height:'40px',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-danger)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="trash" size={16} sw={1.8}/></button>}
+            {this.canEditPo(sel.poNo)&&<button onClick={()=>this.splitShipment()} title="แยกเป็น shipment ย่อยใหม่ (PO เดียวกัน ส่งคนละรอบ)" style={{width:'40px',height:'40px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand-text)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="split" size={16} sw={1.8}/></button>}
+            {sel._synthetic&&this.canEditPo(sel.poNo)&&<button onClick={()=>this.openDeleteDialog(sel.poNo)} title="ลบ shipment ย่อยนี้ (ต้องมีรหัสผ่านผู้มีอำนาจ)" style={{width:'40px',height:'40px',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-danger)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="trash" size={16} sw={1.8}/></button>}
             <button onClick={()=>this.setState({detailId:null})} style={{flex:1,height:'40px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ปิด</button>
-            <button onClick={()=>this.startEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="edit" size={15} sw={1.8}/>แก้ไข</button>
+            {this.canEditPo(sel.poNo)&&<button onClick={()=>this.startEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="edit" size={15} sw={1.8}/>แก้ไข</button>}
           </>}
           {editing&&<>
             <button onClick={()=>this.cancelEdit()} style={{flex:1,height:'40px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-            <button onClick={()=>this.saveEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:savingEdit?'default':'pointer',opacity:savingEdit?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="check" size={15} sw={2.2}/>{savingEdit?'กำลังบันทึก…':'บันทึก'}</button>
+            {this.canEditPo(sel.poNo)&&<button onClick={()=>this.saveEdit()} style={{flex:1,height:'40px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13px',fontWeight:500,cursor:savingEdit?'default':'pointer',opacity:savingEdit?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'6px'}}><Ico name="check" size={15} sw={2.2}/>{savingEdit?'กำลังบันทึก…':'บันทึก'}</button>}
           </>}
         </div>
       </div>
@@ -2645,13 +2690,13 @@ class App extends Component {
           {billLoading&&<div style={{textAlign:'center',color:'var(--color-text-muted)',fontSize:'13px',padding:'40px 0'}}>กำลังโหลดบิลจาก Odoo… (ไม่เกิน 15 วินาที)</div>}
           {!billLoading&&billError&&<div style={{textAlign:'center',padding:'40px 0'}}>
             <div style={{color:'var(--color-danger-text)',fontSize:'13px',marginBottom:'12px'}}>เชื่อมต่อ Odoo ไม่สำเร็จ</div>
-            <button onClick={()=>{this._billListCompany=null;this.openBillPicker();}} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'8px 16px',border:'1px solid var(--color-brand)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}><Ico name="sync" size={13} sw={2}/>ลองอีกครั้ง</button>
+            {this.state.canWrite&&<button onClick={()=>{this._billListCompany=null;this.openBillPicker();}} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'8px 16px',border:'1px solid var(--color-brand)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}><Ico name="sync" size={13} sw={2}/>ลองอีกครั้ง</button>}
           </div>}
           {!billLoading&&!billError&&list.length===0&&<div style={{textAlign:'center',color:'var(--color-text-muted)',fontSize:'13px',padding:'40px 0'}}>ไม่พบบิล{q?'ที่ตรงกับคำค้น':''}</div>}
           {!billLoading&&list.map(b=>{
-            const on=!!sel[b.id];
+            const on=!!sel[b.id],missingRate=b.fxStatus==='missing'||b.amount==null;
             const used=usedBy[b.id];
-            return <div key={b.id} onClick={()=>this.toggleBill(b)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',marginBottom:'7px',border:on?'1px solid var(--color-brand)':'1px solid var(--color-border)',borderRadius:'var(--radius)',background:on?'var(--color-brand-soft)':(used?'var(--color-warn-soft)':'var(--color-surface)'),cursor:'pointer',opacity:used&&!on?0.75:1}}>
+            return <div key={b.id} aria-disabled={missingRate} onClick={()=>this.toggleBill(b)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',marginBottom:'7px',border:on?'1px solid var(--color-brand)':'1px solid var(--color-border)',borderRadius:'var(--radius)',background:on?'var(--color-brand-soft)':(used?'var(--color-warn-soft)':'var(--color-surface)'),cursor:'pointer',opacity:used&&!on?0.75:1}}>
               <span style={{width:'20px',height:'20px',borderRadius:'var(--radius-sm)',border:on?'0':'1px solid var(--color-border)',background:on?'var(--color-brand)':'var(--color-surface)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{on&&<Ico name="check" size={13} sw={2.6}/>}</span>
               <div style={{minWidth:0,flex:1}}>
                 <div style={{fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</div>
@@ -2664,10 +2709,10 @@ class App extends Component {
                 </div>
               </div>
               <span style={{textAlign:'right',flexShrink:0}}>
-                <div style={{fontSize:'13px',fontWeight:500,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>฿{Math.round(b.amount).toLocaleString()}</div>
+                <div style={{fontSize:'13px',fontWeight:500,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{missingRate?'ขาดอัตราแลกเปลี่ยน':'฿'+Math.round(b.amount).toLocaleString()}</div>
                 {/* โชว์ยอดต้นฉบับ+อัตราแลกเปลี่ยนเมื่อบิลไม่ใช่ THB — กันประวัติ bug ที่เคยเอายอดสกุลต่างประเทศมานับเป็นบาทตรงๆ
                     โดยไม่มีอะไรฟ้องเลยว่าแปลงหรือยัง ให้ผู้ใช้เช็คด้วยตาได้ว่าเลขบาทสมเหตุสมผลกับยอดเดิมไหม */}
-                {b.origAmount!=null&&<div style={{fontSize:'10px',color:'var(--color-text-muted)',marginTop:'2px'}}>{fmtAmt(b.origAmount,b.currency)} × {b.fxRate.toFixed(2)}</div>}
+                {b.origAmount!=null&&<div style={{fontSize:'10px',color:'var(--color-text-muted)',marginTop:'2px'}}>{fmtAmt(b.origAmount,b.currency)}{Number.isFinite(b.fxRate)?' × '+b.fxRate.toFixed(2):' · รออัตราแลกเปลี่ยน'}</div>}
               </span>
             </div>;
           })}
@@ -2719,8 +2764,8 @@ class App extends Component {
                 <span style={{fontSize:'11.5px',fontWeight:500,color:kind==='late'?'var(--color-danger)':'#d97706',whiteSpace:'nowrap',flexShrink:0}}>{days<0?('เลย '+Math.abs(days)+' วัน'):days===0?'ถึงวันนี้':('อีก '+days+' วัน')}</span>
               </div>
               <div style={{display:'flex',gap:'7px',marginTop:'9px'}}>
-                <button onClick={e=>{e.stopPropagation();this.quickCloseAlert(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1px solid var(--color-success-border)',borderRadius:'var(--radius)',background:'var(--color-success-soft)',color:'var(--color-success-text)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:500,cursor:'pointer'}}><Ico name="check" size={13} sw={2.4}/>{s._board==='export'?'ถึงปลายทางแล้ว':'รับเข้าคลังแล้ว'}</button>
-                <button onClick={e=>{e.stopPropagation();this.openAlertEdit(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:500,cursor:'pointer'}}><Ico name="cal" size={13} sw={1.8}/>แก้ ETA / สถานะ</button>
+                {this.canEditPo(s.poNo)&&<button onClick={e=>{e.stopPropagation();this.quickCloseAlert(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1px solid var(--color-success-border)',borderRadius:'var(--radius)',background:'var(--color-success-soft)',color:'var(--color-success-text)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:500,cursor:'pointer'}}><Ico name="check" size={13} sw={2.4}/>{s._board==='export'?'ถึงปลายทางแล้ว':'รับเข้าคลังแล้ว'}</button>}
+                {this.canEditPo(s.poNo)&&<button onClick={e=>{e.stopPropagation();this.openAlertEdit(s);}} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'5px',height:'30px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'11.5px',fontWeight:500,cursor:'pointer'}}><Ico name="cal" size={13} sw={1.8}/>แก้ ETA / สถานะ</button>}
               </div>
             </div>;
           })}
@@ -2730,6 +2775,7 @@ class App extends Component {
   }
 
   renderCreateForm(){
+    if(!this.state.canWrite)return null;
     const {creating,saving,form}=this.state;
     if(!creating)return null;
     const sf=(k,v)=>this.setState(s=>({form:{...s.form,[k]:v}}));
@@ -2741,6 +2787,7 @@ class App extends Component {
           <button onClick={()=>this.setState({creating:false})} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
         </div>
         <div style={{flex:1,overflowY:'auto',padding:'20px 22px'}}>
+          {this.renderWorkflow({_board:form.board,poNo:form.poNo},form,sf)}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'14px'}}>
             <FSelect label="ประเภทรายการ" value={form.board} onChange={e=>sf('board',e.target.value)}>
               <option value="import">Import (นำเข้า)</option><option value="export">Export (ส่งออก)</option>
@@ -2784,7 +2831,7 @@ class App extends Component {
         </div>
         <div style={{padding:'14px 22px',borderTop:'1px solid var(--color-border)',display:'flex',gap:'10px'}}>
           <button onClick={()=>this.setState({creating:false})} style={{flex:1,height:'42px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-          <button onClick={()=>this.submitCreate()} style={{flex:2,height:'42px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:saving?'default':'pointer',opacity:saving?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>{saving?'กำลังบันทึก…':'บันทึก'}</button>
+          {this.state.canWrite&&<button onClick={()=>this.submitCreate()} style={{flex:2,height:'42px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:saving?'default':'pointer',opacity:saving?0.75:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>{saving?'กำลังบันทึก…':'บันทึก'}</button>}
         </div>
       </div>
     </>;
@@ -2797,6 +2844,7 @@ class App extends Component {
       {this.renderSidebar()}
       <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',overflow:'hidden'}}>
         {this.renderTopbar()}
+        {(this.state.ambiguousPoNames||[]).length>0&&<div role="alert" style={{padding:'10px 22px',background:'var(--color-warn-soft)',color:'var(--color-warn-text)',fontSize:'12px'}}>ข้อมูลไม่ครบ: เลข PO ซ้ำข้ามบริษัทหรือบอร์ด ({this.state.ambiguousPoNames.join(', ')}) — ระงับการแก้ไข ลบ ย้ายสถานะ และแยก shipment ของเลขเหล่านี้จนกว่าจะระบุขอบเขตได้</div>}
         {/* โหมดตัวอย่างเดิมบอกแค่จุดสีเล็กๆ กับข้อความ "โหมดตัวอย่าง" ที่ topbar — แต่ข้อมูลตัวอย่างใช้ชื่อผู้ขาย
             และเลข PO ที่หน้าตาเหมือนของจริงทุกอย่าง เสี่ยงมากที่จะมีคนอ่านตัวเลขไปใช้ตัดสินใจ/รายงานโดยไม่รู้ตัว
             (ยิ่งเข้าหน้า Dashboard ตรงๆ จะไม่ได้มองที่ป้าย) จึงกั้นเป็นแถบเตือนเต็มความกว้างให้พลาดไม่ได้

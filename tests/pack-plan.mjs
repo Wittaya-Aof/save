@@ -11,6 +11,8 @@
 //   node tests/pack-plan.mjs             # เร็ว (~20 วิ) ใช้ตาราง KNOWN_MAX ที่ยืนยันไว้แล้ว
 //   node tests/pack-plan.mjs --prove     # ค้นหาใหม่ทั้งหมดด้วย DFS (นาที+) ยืนยันตารางเองอีกรอบ
 import { chromium } from 'playwright';
+// Read-only local fixture; never target the user's running port 3000.
+const packingFixtureURL = new URL('../container-loading-calculator.html', import.meta.url).href;
 import { CONTAINERS, PRESETS, KNOWN_MAX, upperBound, gridBest, tryPack, searchMax }
   from './lib/pallet-optimum.mjs';
 
@@ -20,7 +22,8 @@ const b = await chromium.launch();
 const p = await b.newPage();
 const pageErrs = [];
 p.on('pageerror', e => pageErrs.push(e.message));
-await p.goto('http://localhost:3000/container-loading-calculator.html', { waitUntil: 'load' });
+await p.route('https://**/*', route => route.abort());
+await p.goto(packingFixtureURL, { waitUntil: 'load' });
 await p.waitForTimeout(1500);
 
 // ดึงแผนทุกแบบที่แอปเสนอ (ทั้งอนุญาตสลับทิศและไม่อนุญาต) ออกมาตรวจตรงๆ

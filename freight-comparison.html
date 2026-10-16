@@ -21,6 +21,7 @@
 })();
 </script>
 <style>
+[hidden]{display:none!important;}
 /* Design tokens — ชุดเดียวกับ import-export-os.html / container-loading-calculator.html (Supabase) */
 :root{
   --color-text:#171717; --color-text-secondary:#212121; --color-text-tertiary:#707070; --color-text-muted:#9a9a9a;
@@ -219,8 +220,8 @@ td.num input.price.frompdf{box-shadow:inset 0 0 0 1px var(--color-warn-border)}
   <button class="btn btn-outline" id="btnDup" title="ทำสำเนาใบนี้เป็นใบใหม่">ทำสำเนา</button>
   <button class="btn btn-outline" id="btnXlsx">ส่งออก Excel</button>
   <button class="btn btn-outline" id="btnPrint">พิมพ์ / PDF</button>
-  <button class="btn btn-danger btn-sm" id="btnDel" title="ลบใบนี้ออกจาก server">ลบ</button>
-  <button class="btn btn-primary" id="btnSave">บันทึก</button>
+  <button class="btn btn-danger btn-sm" id="btnDel" hidden disabled title="ลบใบนี้ออกจาก server">ลบ</button>
+  <button class="btn btn-primary" id="btnSave" hidden disabled>บันทึก</button>
 </div>
 
 <div class="content">
@@ -232,7 +233,7 @@ td.num input.price.frompdf{box-shadow:inset 0 0 0 1px var(--color-warn-border)}
   <div class="card" style="position:relative" id="chargeCard">
     <div class="card-header">Charge items <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— ช่องพื้นเหลือง = กรอกราคาต่อหน่วย · ว่าง = ไม่มีค่าใช้จ่ายรายการนั้น</span>
       <div class="spacer"></div>
-      <button class="btn btn-outline btn-sm no-print" id="btnReadPdf" title="อ่านใบเสนอราคา PDF แล้วเติมราคาให้ (ลากไฟล์มาวางบนการ์ดนี้ก็ได้)">อ่านจาก PDF</button>
+      <button class="btn btn-outline btn-sm no-print" id="btnReadPdf" hidden disabled title="อ่านใบเสนอราคา PDF แล้วเติมราคาให้ (ลากไฟล์มาวางบนการ์ดนี้ก็ได้)">อ่านจาก PDF</button>
       <button class="btn btn-outline btn-sm no-print" id="btnAddOpt">+ เพิ่มคอลัมน์ตัวเลือก</button>
     </div>
     <div style="overflow-x:auto"><table id="tbl"></table></div>
@@ -353,7 +354,7 @@ function newQuote(type){
   const T=TEMPLATES[type];
   const today=new Date().toISOString().slice(0,10);
   return {
-    id:uid(), type, createdAt:today, updatedAt:null,
+    id:uid(), type, createdAt:today, updatedAt:null, _baseUpdatedAt:null,
     head:{ref:'',party:'',category:'',group:'',qty:null,term:T.termOptions[0]==='EXW'&&type!=='export-sea'?'FOB':T.termOptions[0],
           fx:fxRates?.USD?+fxRates.USD.toFixed(4):null, fxAsOf:fxRates?.USD_asOf||'', cbm:null,gw:null,vw:null,docRef:type.startsWith('import')?'SCM-IF-':''},
     options:T.options.map(o=>({label:o.label,kind:o.kind,containers:1,cw:null,tiers:[]})),
@@ -618,7 +619,9 @@ function renderToolbar(){
       const tl=TEMPLATES[q.type]?.title.split('—').pop().trim()||q.type;
       return `<option value="${esc(q.id)}" ${q.id===Q.id?'selected':''}>${esc(q.head?.ref||'(ไม่มีเลขอ้างอิง)')} · ${esc(q.head?.party||'')} · ${tl} · ${esc((q.updatedAt||q.createdAt||'').slice(0,10))}</option>`;}).join('');
   if(!saved.some(q=>q.id===Q.id))sel.value='';
-  $('btnDel').disabled=!saved.some(q=>q.id===Q.id);
+  $('btnSave').hidden=!canWrite; $('btnDel').hidden=!canWrite; $('btnReadPdf').hidden=!canWrite;
+  $('btnSave').disabled=!canWrite; $('btnReadPdf').disabled=!canWrite;
+  $('btnDel').disabled=!canWrite||!saved.some(q=>q.id===Q.id);
   $('status').textContent=dirty?'● ยังไม่บันทึก':(Q.updatedAt?'บันทึกล่าสุด '+Q.updatedAt.replace('T',' ').slice(0,16):'ใบใหม่ (ยังไม่บันทึก)');
 }
 function renderAll(){ renderToolbar(); renderHead(); renderTable(); renderSummary();
@@ -731,18 +734,22 @@ function switchType(type){
 }
 
 // ─── server I/O ──────────────────────────────────────────────────────────────
-async function api(path,opts){ const r=await fetch(path,{headers:{'Content-Type':'application/json',Accept:'application/json'},...opts}); const j=await r.json().catch(()=>({})); if(!r.ok)throw new Error(j.error||('HTTP '+r.status)); return j; }
+let canWrite=false;
+async function loadPermissions(){try{const j=await api('/api/me');canWrite=j.canWrite===true;}catch(e){canWrite=false;}if(Q)renderToolbar();}
+async function api(path,opts){ const r=await fetch(path,{headers:{'Content-Type':'application/json',Accept:'application/json'},...opts}); const j=await r.json().catch(()=>({})); if(!r.ok||j.ok!==true)throw new Error(j.error||('HTTP '+r.status)); return j; }
 async function loadSaved(){ try{ const j=await api('/api/freight-quotes'); saved=j.rows||[]; }catch(e){ saved=[]; toast('โหลดรายการที่บันทึกไม่ได้: '+e.message,true); } renderToolbar(); }
 async function saveQuote(){
+  if(!canWrite){toast('สิทธิ์ดูข้อมูล — คำนวณและส่งออกได้',true);return;}
   const T=TEMPLATES[Q.type];
   if(!Q.head.ref){ toast('กรอก '+T.refLabel+' ก่อนบันทึก',true); document.querySelector('[data-p="head.ref"]')?.focus(); return; }
-  try{ const j=await api('/api/freight-quotes/upsert',{method:'POST',body:JSON.stringify(Q)}); Q.updatedAt=j.row.updatedAt; dirty=false; try{localStorage.removeItem(DRAFT_KEY);}catch(e){} await loadSaved(); toast('บันทึกแล้ว · '+Q.head.ref); }
+  try{ const j=await api('/api/freight-quotes/upsert',{method:'POST',body:JSON.stringify({...Q,_baseUpdatedAt:Q.updatedAt||null})}); Q.updatedAt=j.row.updatedAt; dirty=false; try{localStorage.removeItem(DRAFT_KEY);}catch(e){} await loadSaved(); toast('บันทึกแล้ว · '+Q.head.ref); }
   catch(e){ toast('บันทึกไม่สำเร็จ: '+e.message,true); }
 }
 async function deleteQuote(){
+  if(!canWrite)return;
   if(!saved.some(q=>q.id===Q.id))return;
   if(!confirm('ลบใบเปรียบเทียบ "'+(Q.head.ref||Q.id)+'" ออกจาก server?'))return;
-  try{ await api('/api/freight-quotes/delete',{method:'POST',body:JSON.stringify({id:Q.id})}); await loadSaved(); Q=newQuote(Q.type); dirty=false; renderAll(); toast('ลบแล้ว'); }
+  try{ await api('/api/freight-quotes/delete',{method:'POST',body:JSON.stringify({id:Q.id,_baseUpdatedAt:Q.updatedAt||null})}); await loadSaved(); Q=newQuote(Q.type); dirty=false; renderAll(); toast('ลบแล้ว'); }
   catch(e){ toast('ลบไม่สำเร็จ: '+e.message,true); }
 }
 async function loadFx(force){
@@ -869,6 +876,7 @@ function wireTierEditor(){
 let pdfData=null, pdfName='';
 let normWarn='';   // ข้อความเตือนจาก normalizeQuote() — โชว์หลัง render เพราะตอน normalize ยังไม่มี DOM
 async function readPdf(file){
+  if(!canWrite)return;
   if(!file)return;
   if(!/\.pdf$/i.test(file.name)){ toast('รองรับเฉพาะไฟล์ PDF',true); return; }
   if(file.size>6*1024*1024){ toast('ไฟล์ใหญ่เกิน 6MB',true); return; }
@@ -985,7 +993,7 @@ let toastT; function toast(msg,err){ const t=$('toast'); t.textContent=msg; t.cl
 window.addEventListener('beforeunload',e=>{ if(dirty){e.preventDefault();e.returnValue='';} });
 
 $('btnNew').onclick=()=>{ if(dirty&&!confirm('ใบปัจจุบันยังไม่บันทึก เริ่มใบใหม่?'))return; Q=newQuote(Q.type); dirty=false; try{localStorage.removeItem(DRAFT_KEY);}catch(e){} renderAll(); };
-$('btnDup').onclick=()=>{ const c=JSON.parse(JSON.stringify(Q)); c.id=uid(); c.updatedAt=null; c.createdAt=new Date().toISOString().slice(0,10); c.head.ref=(c.head.ref||'')+' (copy)'; Q=c; dirty=true; touch(); renderAll(); toast('ทำสำเนาแล้ว — แก้เลขอ้างอิงแล้วบันทึก'); };
+$('btnDup').onclick=()=>{ const c=JSON.parse(JSON.stringify(Q)); c.id=uid(); c.updatedAt=null; c._baseUpdatedAt=null; c.createdAt=new Date().toISOString().slice(0,10); c.head.ref=(c.head.ref||'')+' (copy)'; Q=c; dirty=true; touch(); renderAll(); toast('ทำสำเนาแล้ว — แก้เลขอ้างอิงแล้วบันทึก'); };
 $('btnSave').onclick=saveQuote;
 $('btnDel').onclick=deleteQuote;
 $('btnXlsx').onclick=exportXlsx;
@@ -996,6 +1004,7 @@ document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key.toLowe
 
 (async function init(){
   let draft=null; try{draft=JSON.parse(localStorage.getItem(DRAFT_KEY)||'null');}catch(e){}
+  await loadPermissions();
   await loadFx(false);
   if(draft&&TEMPLATES[draft.type]&&Array.isArray(draft.rows)&&Array.isArray(draft.options)){ Q=normalizeQuote(draft); dirty=true; }
   else { Q=newQuote('import-sea'); }

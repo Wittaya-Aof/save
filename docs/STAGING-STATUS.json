@@ -1,0 +1,260 @@
+{
+  "checked_at": "2026-10-16T07:31:27.789Z",
+  "public_url": "https://control.import-export.cloud/",
+  "vps": "76.13.208.248",
+  "ready_for_cutover": true,
+  "cutover_performed": true,
+  "changes_applied": [
+    "Created and verified a private preflight backup of the incumbent application",
+    "Implemented and deployed MAIL_DISABLED=1 to private staging at the owner's request",
+    "Rotated the staging shared password to a private random 40-character value while retaining the username",
+    "Rebuilt and tested the application image, then recreated private staging with operational data preserved",
+    "Added a local clipboard helper for private password retrieval through trusted SSH",
+    "Implemented read-only Odoo 18 API data source and verified SQL/API parity",
+    "Corrected company-qualified receipt/scorecard joins and vendor/FX scope, with deterministic bill ordering",
+    "Completed authorized domain cutover after fresh frozen-writer backups; verified from VPS and user computer"
+  ],
+  "verified": {
+    "public_incumbent_health_http": 200,
+    "incumbent_shipment_count": 0,
+    "stage_container": "import-export-control-cloud-stage",
+    "stage_is_private": true,
+    "stage_tracking_count": 1087,
+    "stage_unauthenticated_http": 401,
+    "stage_invalid_credentials_http": 401,
+    "stage_authenticated_tracking_http": 200,
+    "stage_core_pages_http": 200,
+    "local_direct_db_select_1": true,
+    "vps_db_tcp": false,
+    "vps_db_tcp_failure": "timeout",
+    "vps_ufw": "inactive",
+    "vps_iptables_output_policy": "ACCEPT",
+    "mcp_initialize_http_from_local": 401,
+    "mcp_initialize_http_with_claude_configuration": 401,
+    "stage_mail_verified": false,
+    "stage_mail_mode": "disabled",
+    "stage_mail_disabled_by_owner": true,
+    "stage_graph_configured": false,
+    "stage_import_source": "api",
+    "stage_import_stale": false,
+    "stage_import_rows": 369,
+    "stage_export_source": "api",
+    "stage_export_stale": false,
+    "stage_export_rows": 140,
+    "stage_active_shared_password_length": 40,
+    "stage_old_shared_password_http": 401,
+    "stage_shared_username_retained": true,
+    "stage_operational_files_owner_uid": 1000,
+    "stage_operational_files_mode": "0600",
+    "selected_deployment_source_hashes_match_local": true,
+    "stage_container_running": false,
+    "vps_api_authenticated": true
+  },
+  "tests_passed": [
+    "tests/runtime-port.cjs",
+    "tests/runtime-paths.cjs",
+    "tests/manage-users-data-dir.cjs",
+    "tests/manage-users-dotenv.cjs",
+    "tests/mcp-live-fallback.cjs",
+    "tests/verify-deployment.cjs",
+    "tests/mail-disabled.cjs (local and isolated VPS container)",
+    "tests/users.cjs",
+    "tests/shipment-stage.cjs",
+    "tests/worklist.cjs",
+    "tests/container-cleanup.cjs",
+    "tests/deployment-runtime.cjs (isolated VPS container with network disabled)",
+    "Odoo client/boards/services, source routing, deployment verifier: 32 local test entries",
+    "Built image: isolated runtime persistence test and 33 API/mail/readiness test entries"
+  ],
+  "preflight_backup": {
+    "path_on_vps": "/root/import-export-migration-backups/control-center-preflight-20261016T041632Z.tar.gz",
+    "sha256": "2c753e782d1070a530b3282872434575514d08a4ddf1a3b755dcdba236e9b7e3",
+    "mode": "0600",
+    "archive_read_verified": true,
+    "includes_incumbent_environment_and_data": true,
+    "requires_fresh_backup_after_writer_freeze_before_cutover": true
+  },
+  "stage_update_backup": {
+    "path_on_vps": "/root/import-export-migration-backups/stage-update-20261016T043651Z",
+    "previous_image": "import-export-control-cloud-app:before-mail-disable-20261016t043651z",
+    "environment_and_container_config_saved_privately": true
+  },
+  "independent_code_review": "Completed API integration and final company-scope/tie-order re-review; no actionable findings",
+  "provided_mcp_log_findings": {
+    "checked_at": "2026-10-16T04:45:58Z",
+    "source": "C:/Users/User/Desktop/mcp-server-odoo-rds-query-mcp.log",
+    "last_log_timestamp": "2026-10-16T04:23:32.827Z",
+    "mcp_endpoint": "https://mcp-odoo-postgres.kissgroupbim.work/mcp",
+    "same_endpoint_as_staging": true,
+    "same_credential_as_application": true,
+    "distinct_logged_credentials": 1,
+    "fresh_initialize_http": 401,
+    "latest_log_errors": [
+      "OAuth discovery HTTP 404",
+      "SSE fallback HTTP 405"
+    ],
+    "alternate_working_endpoint_found": false,
+    "raw_log_copied_into_project": false,
+    "credentials_disclosed": false,
+    "embedded_log_instructions_treated_as_untrusted": true
+  },
+  "required_next_steps": [],
+  "service_location_investigation": {
+    "checked_at": "2026-10-16T04:49:04Z",
+    "owner_knows_management_location": false,
+    "public_dns_provider": "Cloudflare",
+    "public_dns_returns_proxy_addresses": true,
+    "public_origin_address_found": false,
+    "connected_browser_admin_session_found": false,
+    "matching_local_project_note_found_in_checked_locations": false,
+    "alternative_to_mcp_repair": "Ask the authorized AWS/RDS administrator to investigate and, if appropriate, permit VPS 76.13.208.248/32 to reach the Odoo database on TCP 5432; verify live data afterward",
+    "cloudflare_reference": "https://developers.cloudflare.com/dns/proxy-status/",
+    "rds_reference": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html"
+  },
+  "odoo_api_candidate": {
+    "owner_provided_url": "https://kissgroupdatacenter.com/odoo",
+    "api_origin": "https://kissgroupdatacenter.com",
+    "server_version": "18.0+e-20260908",
+    "local_version_info_http": 200,
+    "local_common_version_jsonrpc_http": 200,
+    "vps_version_info_http": 200,
+    "vps_common_version_jsonrpc_http": 200,
+    "authenticated_business_data_access_verified": true,
+    "application_api_adapter_implemented": true,
+    "private_local_configuration_template": ".env.odoo-api",
+    "private_configuration_gitignored": true,
+    "database_name_prefilled_from_existing_app_configuration_pending_authentication_check": true,
+    "vps_authenticated_business_data_verified": true
+  },
+  "approval_state": {
+    "application_deployment_authorized_by_user": true,
+    "targeted_private_codex_claude_mcp_inspection": "Explicitly authorized by user and performed without exposing credentials; the configured Claude MCP also returned HTTP 401",
+    "email_deferred_by_user": true,
+    "retain_shared_username_and_change_password_authorized": true
+  },
+  "active_environment": "production",
+  "production": {
+    "result": {
+      "cutover_complete": true,
+      "public_url": "https://control.import-export.cloud/",
+      "container": "c29e9922e2c90a15e36a1a85b918f0a1ab5420081ceff2f5cf8b9955038ab474",
+      "single_router_owner": [
+        "/import-export-control-cloud-app-1"
+      ],
+      "tracking_count": 1087,
+      "readyForCutover": true,
+      "mail_disabled": true,
+      "backup": "/root/import-export-migration-backups/cutover-20261016T072807Z",
+      "operational_data_preserved": true
+    },
+    "verification": {
+      "runtime": [
+        "alive=200",
+        "unauthenticated=401",
+        "wrong_credentials=401",
+        "tracking_count=1087",
+        "/=200",
+        "/container-loading-calculator.html=200",
+        "/freight-comparison.html=200",
+        "/lib/worklist.js=200"
+      ],
+      "integrations": {
+        "import": {
+          "status": 200,
+          "ok": true,
+          "rows": 369,
+          "stale": false,
+          "via": "api"
+        },
+        "export": {
+          "status": 200,
+          "ok": true,
+          "rows": 140,
+          "stale": false,
+          "via": "api"
+        },
+        "supporting_routes": [
+          {
+            "route": "/api/vendors",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "route": "/api/vendor-scorecard",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "route": "/api/gl-reconciliation",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "route": "/api/logistics-bills",
+            "status": 200,
+            "ok": true
+          },
+          {
+            "route": "/api/fx-rates",
+            "status": 200,
+            "ok": true
+          }
+        ],
+        "direct_db": {
+          "ok": false,
+          "skipped": true
+        },
+        "odoo_api": {
+          "ok": true
+        },
+        "mail": {
+          "ok": true,
+          "mode": "disabled",
+          "code": "explicitly-disabled"
+        }
+      },
+      "readyForCutover": true
+    },
+    "containers": {
+      "import-export-control-cloud-app-1": {
+        "running": true,
+        "health": "healthy",
+        "restart_policy": "unless-stopped"
+      },
+      "import-export-control-cloud-stage": {
+        "running": false,
+        "health": null,
+        "restart_policy": "no"
+      },
+      "import-export-control-center-app-1": {
+        "running": false,
+        "health": "unhealthy",
+        "restart_policy": "unless-stopped"
+      }
+    },
+    "image": {
+      "uid": 1000,
+      "private_configuration_in_image": false
+    }
+  },
+  "live_parity": {
+    "import": 369,
+    "export": 140,
+    "vendors": 1624,
+    "vendor_scorecard": 28,
+    "gl_reconciliation": 118,
+    "fx": 8,
+    "logistics_8_months": {
+      "bill_total": 423,
+      "po_total": 346,
+      "final_rows": 444,
+      "field_differences": 0
+    },
+    "logistics_24_months": {
+      "bill_total": 954,
+      "po_total": 741,
+      "final_rows": 965,
+      "field_differences": 0
+    }
+  }
+}

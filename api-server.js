@@ -10,16 +10,30 @@ const fs    = require('fs');
 const path  = require('path');
 const crypto = require('crypto');
 
-const PORT = 3000;
+let PORT;
 const ROOT = __dirname;
+const { loadProjectEnv } = require('./lib/config-env.cjs');
+loadProjectEnv(ROOT);
+const API_MODE = process.env.ODOO_DATA_SOURCE === 'api';
+const odooClient = API_MODE ? require('./lib/odoo-api.cjs').createOdooClient(process.env) : null;
+const odooBoards = API_MODE ? require('./lib/odoo-boards.cjs').createOdooBoards(odooClient) : null;
+const odooServices = API_MODE ? require('./lib/odoo-services.cjs').createOdooServices(odooClient) : null;
 const { autoStage, stageWriteNeeded } = require('./lib/shipment-rules.cjs');
+const { resolveRuntimePaths, resolveRuntimePort } = require('./lib/runtime-paths.cjs');
 // ─── บัญชีรายคน (users.json) ────────────────────────────────────────────────────────────────
 // ไม่มีไฟล์ = ไม่มีบัญชี → ระบบทำงานเหมือนเดิมทุกประการ (APP_PASSWORD ร่วม หรือไม่มี auth เลย)
 // มีบัญชีอย่างน้อย 1 คนที่ใช้งานได้ = เปิดโหมดตรวจรายคน
 const usersLib = require('./lib/users.cjs');
-const USERS_FILE = path.join(ROOT, 'users.json');
+const accessLib = require('./lib/authorization.cjs');
+const storageLib = require('./lib/operational-storage.cjs');
+const shipmentIdentity = require('./lib/shipment-identity.cjs');
+const { buildWorklist } = require('./lib/worklist.js');
+const { createRuntimeBackup } = require('./lib/runtime-backup.cjs');
+const BACKGROUND_DISABLED = process.env.APP_BACKGROUND_DISABLED === '1';
+const SCHEDULED_MUTATIONS_DISABLED = BACKGROUND_DISABLED || process.env.DISABLE_SCHEDULED_MUTATIONS === '1';
+let USERS_FILE;
 const SHARED_OK = String(process.env.ALLOW_SHARED_PASSWORD || '') === '1';
-const USERS = { store: usersLib.emptyStore(), enabled: false, mtime: 0, checked: 0 };
+const USERS = { store: usersLib.emptyStore(), enabled: false, required: false, mtime: 0, checked: 0 };
 // โหลดใหม่เมื่อไฟล์เปลี่ยน — เพิ่ม/ปิดบัญชีแล้วมีผลทันที ไม่ต้องรีสตาร์ท server
 // เช็ค mtime อย่างมาก 1 ครั้งต่อ 5 วินาที (ไม่ stat ทุก request)
 function refreshUsers(force) {
@@ -28,6 +42,7 @@ function refreshUsers(force) {
   USERS.checked = now;
   try {
     const mt = fs.statSync(USERS_FILE).mtimeMs;
+    USERS.required = true;
     if (mt === USERS.mtime) return USERS;
     USERS.store  = usersLib.loadUsers(USERS_FILE);
     USERS.mtime  = mt;
@@ -45,27 +60,30 @@ function refreshUsers(force) {
   return USERS;
 }
 const clientIp = (req) => (req && req.socket && req.socket.remoteAddress) || '?';
-const TRACKING_FILE = path.join(ROOT, 'tracking_data.json');
-const AUDIT_FILE    = path.join(ROOT, 'tracking_audit.jsonl');
-const SHIPMENT_RUNS_FILE = path.join(ROOT, 'shipment_runs.jsonl'); // เขียนโดย scan-shipment-docs.mjs
-const FREIGHT_FILE = path.join(ROOT, 'freight_quotes.json'); // ใบเปรียบเทียบค่าเฟรท (freight-comparison.html)
-const BACKUP_DIR    = path.join(ROOT, 'backups');
-const INTEGRITY_SEEN_FILE = path.join(ROOT, 'integrity_seen.json');
-const INTEGRITY_DIGEST_FILE = path.join(ROOT, 'integrity_digest.json');
+let TRACKING_FILE;
+let AUDIT_FILE;
+let SHIPMENT_RUNS_FILE;
+let FREIGHT_FILE;
+let BACKUP_DIR;
+let INTEGRITY_SEEN_FILE;
+let INTEGRITY_DIGEST_FILE;
+let SNAPSHOT_FILE;
+let AI_USAGE_FILE;
 
-// ─── .env loader (ไม่ใช้ dependency) ─────────────────────────────
-// อ่าน key=value จากไฟล์ .env — ค่าใน environment จริงมีสิทธิ์เหนือกว่า
-(function loadEnv() {
-  try {
-    const envPath = path.join(ROOT, '.env');
-    if (!fs.existsSync(envPath)) return;
-    fs.readFileSync(envPath, 'utf8').split(/\r?\n/).forEach(line => {
-      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-      if (m && !m[1].startsWith('#') && process.env[m[1]] === undefined)
-        process.env[m[1]] = m[2];
-    });
-  } catch (e) { console.error('[Config] .env load error:', e.message); }
-})();
+// Configuration is loaded once, above, before auth and runtime settings.
+
+PORT = resolveRuntimePort(process.env.PORT);
+const RUNTIME = resolveRuntimePaths(ROOT, process.env.DATA_DIR);
+USERS_FILE = RUNTIME.usersFile;
+TRACKING_FILE = RUNTIME.trackingFile;
+AUDIT_FILE = RUNTIME.auditFile;
+SHIPMENT_RUNS_FILE = RUNTIME.shipmentRunsFile;
+FREIGHT_FILE = RUNTIME.freightFile;
+BACKUP_DIR = RUNTIME.backupDir;
+INTEGRITY_SEEN_FILE = RUNTIME.integritySeenFile;
+INTEGRITY_DIGEST_FILE = RUNTIME.integrityDigestFile;
+SNAPSHOT_FILE = RUNTIME.snapshotFile;
+AI_USAGE_FILE = RUNTIME.aiUsageFile;
 
 // ─── Helpers ที่ใช้ร่วมกันทั้งไฟล์ ────────────────────────────────
 // เขียนไฟล์แบบ atomic: เขียนลง .tmp ก่อนแล้ว rename ทับ — rename บน filesystem เดียวกันเป็น
@@ -90,18 +108,14 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASS) {
+if (!API_MODE && (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASS)) {
   console.error('[Config] ไม่พบค่าเชื่อมต่อฐานข้อมูล — สร้างไฟล์ .env จาก .env.example ก่อน');
   process.exit(1);
 }
 
 // ─── Tracking data (server-side JSON file) ───────────────────────
 function loadTracking() {
-  try {
-    if (fs.existsSync(TRACKING_FILE))
-      return JSON.parse(fs.readFileSync(TRACKING_FILE, 'utf8'));
-  } catch(e) { console.error('[Tracking] load error:', e.message); }
-  return [];
+  return storageLib.readArray(TRACKING_FILE).map(row => shipmentIdentity.normalizeTrackingRecord(row));
 }
 function saveTracking(data) {
   try {
@@ -240,7 +254,7 @@ ${rows.map(r => '- ' + r).join('\n')}`;
   const usage = { input: u.input_tokens || 0, cachedInput: u.input_tokens_details?.cached_tokens || 0,
     output: u.output_tokens || 0, ms: Date.now() - t0 };
   try {
-    fs.appendFileSync(path.join(ROOT, 'ai_usage.jsonl'), JSON.stringify({
+    fs.appendFileSync(AI_USAGE_FILE, JSON.stringify({
       ts: new Date().toISOString(), model: process.env.VERIFY_MODEL || 'gpt-5.4-mini', calls: 1,
       input: usage.input, cachedInput: usage.cachedInput, output: usage.output, reasoning: 0,
       source: 'freight-extract', file: filename,
@@ -249,13 +263,7 @@ ${rows.map(r => '- ' + r).join('\n')}`;
   return { parsed, usage };
 }
 function loadFreight() {
-  try {
-    if (fs.existsSync(FREIGHT_FILE)) {
-      const d = JSON.parse(fs.readFileSync(FREIGHT_FILE, 'utf8'));
-      if (Array.isArray(d)) return d;
-    }
-  } catch(e) { console.error('[Freight] load error:', e.message); }
-  return [];
+  return storageLib.readArray(FREIGHT_FILE);
 }
 function saveFreight(rows) {
   try { writeFileAtomic(FREIGHT_FILE, JSON.stringify(rows)); return true; }
@@ -274,6 +282,7 @@ function saveFreight(rows) {
 //   2. `APP_USER` ใน .env — สำหรับเครื่องที่ยังไม่เปิด Basic Auth
 //   3. 'local' — เข้าจาก loopback โดยไม่มีอะไรระบุตัวตนเลย
 function actorOf(req) {
+  if (req.auth && req.auth.user) return usersLib.normUser(req.auth.user);
   try {
     const hdr = String(req.headers['authorization'] || '');
     if (hdr.startsWith('Basic ')) {
@@ -312,6 +321,7 @@ const PROVENANCE_FIELDS = new Set([
   'origin', 'dest', 'mode', 'seaType', 'containerQty', 'courierCo',
   'freight', 'clearance', 'insurance', 'duty', 'vat', 'other', 'expectedCost',
   'amount', 'cur', 'rate', 'stage', 'note', 'overReceipt',
+  'owner', 'dueDate', 'documentChecklist', 'poRefs', '_shipmentId', 'bills', '_billsBy',
 ]);
 // origin ต้องสะอาดก่อนเอาไปต่อสตริง — กันชื่อไฟล์ที่มี @ หรือขึ้นบรรทัดใหม่ทำให้ parse ฝั่งอ่านเพี้ยน
 function sanitizeOrigin(v) {
@@ -346,14 +356,24 @@ function backupTracking() {
     while (files.length > 14) fs.unlinkSync(path.join(BACKUP_DIR, files.shift()));
   } catch(e) { console.error('[Backup]', e.message); }
 }
-backupTracking();
-setInterval(backupTracking, 6 * 60 * 60 * 1000).unref(); // เช็คทุก 6 ชม.
+const FULL_BACKUP_DIR = process.env.FULL_BACKUP_DIR || path.join(path.dirname(RUNTIME.dataDir), path.basename(RUNTIME.dataDir) + '-backups');
+function backupRuntimeDaily() {
+  try {
+    const prefix = 'runtime-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + 'T';
+    if (fs.existsSync(FULL_BACKUP_DIR) && fs.readdirSync(FULL_BACKUP_DIR).some(name => name.startsWith(prefix))) return;
+    const result = createRuntimeBackup({ dataDir: RUNTIME.dataDir, backupDir: FULL_BACKUP_DIR, retain: 14 });
+    console.log('[Backup] full runtime saved', path.basename(result.backupPath));
+  } catch (error) { console.error('[Backup] full runtime failed:', error.message); }
+}
+if (!SCHEDULED_MUTATIONS_DISABLED) {
+  backupRuntimeDaily();
+  setInterval(backupRuntimeDaily, 6 * 60 * 60 * 1000).unref();
+}
 
 // ─── Snapshot ข้อมูล Odoo ล่าสุดลงดิสก์ ──────────────────────────
 // เก็บผล import-pos/export-sos/fx ที่ดึงสำเร็จครั้งล่าสุด เพื่อ:
 //   1) เปิดหน้าเว็บได้ทันทีแม้ Odoo หลุด (ไม่ต้องรอ timeout)
 //   2) ข้อมูลไม่หายเมื่อ restart server
-const SNAPSHOT_FILE = path.join(ROOT, 'odoo_snapshot.json');
 let snapshot = { _ts: {} };
 try {
   if (fs.existsSync(SNAPSHOT_FILE)) snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8'));
@@ -468,8 +488,21 @@ async function mcpConnect() {
 async function mcpRunSql(sid, sql) {
   const res = await mcpRpc(sid, 'tools/call', { name: 'run_sql', arguments: { sql } }, Math.floor(Math.random() * 1e6) + 2);
   if (res.status !== 200) throw new Error('MCP run_sql HTTP ' + res.status);
-  const c = res.body?.result?.content;
-  return Array.isArray(c) ? c.map(x => x.text || '').join('') : '';
+  if (!res.body || typeof res.body !== 'object' || Object.hasOwn(res.body, 'error')) {
+    throw new Error('MCP run_sql JSON-RPC error or missing response');
+  }
+  const result = res.body.result;
+  if (!result || typeof result !== 'object' || result.isError === true) {
+    throw new Error('MCP run_sql tool error or missing result');
+  }
+  if (result.isError !== undefined && typeof result.isError !== 'boolean') {
+    throw new Error('MCP run_sql malformed error flag');
+  }
+  const c = result.content;
+  if (!Array.isArray(c) || !c.length || c.some(x => !x || x.type !== 'text' || typeof x.text !== 'string')) {
+    throw new Error('MCP run_sql malformed text content');
+  }
+  return c.map(x => x.text).join('\n');
 }
 // SELECT ที่คืนแต่ละแถวเป็น base64 หั่น NCOLS คอลัมน์ — MCP tool ตัดข้อความที่ ~58 ตัว/ช่อง
 // เข้ารหัส base64 ทั้งแถวเป็น JSON เดียวแล้วหั่นเป็นคอลัมน์เล็กๆ กันตัด ประกอบคืนฝั่งนี้ (lossless)
@@ -487,24 +520,71 @@ function mcpWrap(innerSelect, orderCols, off, ncols = MCP_NCOLS) {
     ORDER BY ${orderBy}`;
 }
 function mcpParseTable(text) {
-  const lines = text.split(/\r?\n/).filter(l => l.includes('│'));
+  const input = text.trim();
+  if (/^(?:no rows returned\.?|query returned 0 rows\.?|0 rows returned\.?|\(0 rows\))$/i.test(input)) return [];
+  const lines = input.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const fail = () => { throw new Error('MCP malformed or incomplete SQL table'); };
   const rows = [];
-  for (const line of lines) {
-    const cells = line.split('│').map(s => s.trim());
-    if (cells.every(c => /^c\d+$/.test(c) || c === '')) continue; // header row
-    const b64 = cells.join('').replace(/\s+/g, '');
-    if (b64) rows.push(b64);
+  let columns = 0, topColumns = 0, closed = false, counted = false;
+  for (const [index, line] of lines.entries()) {
+    if (counted) fail();
+    if (/^┌─+(?:┬─+)*┐$/.test(line)) {
+      if (index !== 0 || columns || topColumns) fail();
+      topColumns = line.split('┬').length;
+      continue;
+    }
+    if (/^├─+(?:┼─+)*┤$/.test(line)) {
+      if (!columns || closed || line.split('┼').length !== columns) fail();
+      continue;
+    }
+    if (/^└─+(?:┴─+)*┘$/.test(line)) {
+      if (!topColumns || !columns || closed || line.split('┴').length !== columns) fail();
+      closed = true;
+      continue;
+    }
+    const count = line.match(/^\((\d+) rows?\)$/i);
+    if (count) {
+      if (!columns || (topColumns && !closed) || Number(count[1]) !== rows.length) fail();
+      counted = true;
+      continue;
+    }
+    // Validate every line: never discard error prose or truncated table fragments.
+    if (closed || !line.startsWith('│') || !line.endsWith('│')) fail();
+    const cells = line.split('│').slice(1, -1).map(cell => cell.trim());
+    if (!columns) {
+      if (!cells.length || cells.some((cell, i) => cell !== 'c' + i)) fail();
+      columns = cells.length;
+      if (topColumns && topColumns !== columns) fail();
+      continue;
+    }
+    if (cells.length !== columns || !cells[0] || cells.some(cell => !/^[A-Za-z0-9+/=]*$/.test(cell))) fail();
+    let emptySeen = false;
+    for (const cell of cells) {
+      if (!cell) emptySeen = true;
+      else if (emptySeen) fail();
+    }
+    rows.push(cells.join(''));
   }
+  // A header alone is ambiguous. Require the complete frame or explicit row count.
+  if (!columns || (topColumns && !closed) || (!closed && !counted)) fail();
   return rows;
 }
-// ถอดรหัส base64 → JSON ต่อแถว ใช้ร่วมกันทั้ง mcpPull (bulk, paginate) และ mcpFetchPoLines (เดี่ยว ไม่ paginate)
-// แถวเสีย (เช่น ยาวเกิน budget ของคอลัมน์ base64 ที่หั่นไว้) เคย silent ข้ามเงียบๆ — log ไว้ให้เห็นใน server log
-// อย่างน้อย จะได้ไล่ดูได้ว่าควรขยาย MCP_NCOLS ไหม แทนที่จะไม่รู้ตัวว่าข้อมูลหาย
+// Reject malformed rows rather than turning partial/error results into live success.
 function decodeB64Rows(b64rows, label) {
   const out = [];
   for (const b of b64rows) {
-    try { out.push(JSON.parse(Buffer.from(b, 'base64').toString('utf8'))); }
-    catch (e) { console.error('[MCP] แถวเสีย (parse ไม่ได้' + (label ? ', ' + label : '') + '):', e.message); }
+    try {
+      const bytes = Buffer.from(b, 'base64');
+      if (bytes.toString('base64') !== b) throw new Error('non-canonical base64');
+      const text = bytes.toString('utf8');
+      if (!Buffer.from(text, 'utf8').equals(bytes)) throw new Error('invalid UTF-8');
+      const row = JSON.parse(text);
+      if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('not an object row');
+      out.push(row);
+    } catch (e) {
+      // No row content in errors: SQL data can be sensitive.
+      throw new Error('MCP malformed encoded row' + (label ? ' (' + label + ')' : ''));
+    }
   }
   return out;
 }
@@ -543,11 +623,11 @@ async function liveOrSnapshot(key, sql, force) {
   try {
     const rows = await cachedQuery(key, sql, force);
     snapshot[key] = rows;
-    snapshot._ts[key] = new Date().toISOString();
+    snapshot._ts[key] = new Date(cache.ts[key] || Date.now()).toISOString();
     saveSnapshot();
-    return { rows, stale: false, as_of: snapshot._ts[key], via: 'direct' };
+    return { rows, stale: false, as_of: snapshot._ts[key], via: API_MODE ? 'api' : 'direct' };
   } catch (e) {
-    if (MCP_URL && MCP_TOKEN && (key === 'import' || key === 'export') && (force || Date.now() >= mcpNextTry[key])) {
+    if (!API_MODE && MCP_URL && MCP_TOKEN && (key === 'import' || key === 'export') && (force || Date.now() >= mcpNextTry[key])) {
       mcpNextTry[key] = Date.now() + MCP_RETRY_INTERVAL;
       try {
         const rows = await mcpFetch(key);
@@ -797,6 +877,7 @@ const SQL_IMPORT = `
       po.id,
       po.name                   AS po_number,
       po.company_id,
+      po.currency_id,
       rc.name                   AS company_name,
       CASE po.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
       rp.id                     AS partner_id,
@@ -837,12 +918,12 @@ const SQL_IMPORT = `
     -- รวมทีเดียวแล้ว hash join — ห้ามใช้ LATERAL ที่อ้าง po.name ตรงๆ เพราะ stock_picking.origin
     -- ไม่มี index ทำให้สแกนทั้งตารางซ้ำต่อ PO (ลองแล้ว: direct timeout ทันที ต้องตกไป MCP)
     LEFT JOIN (
-      SELECT sp.origin AS po_name, MAX(sp.date_done)::date AS last_receipt
+      SELECT sp.origin AS po_name, sp.company_id, MAX(sp.date_done)::date AS last_receipt
       FROM stock_picking sp
       WHERE sp.state = 'done' AND sp.date_done IS NOT NULL
         AND sp.date_done >= NOW() - INTERVAL '2 years'
-      GROUP BY sp.origin
-    ) rcpt ON rcpt.po_name = po.name
+      GROUP BY sp.origin, sp.company_id
+    ) rcpt ON rcpt.po_name = po.name AND rcpt.company_id = po.company_id
     WHERE po.company_id IN (1, 2)
       AND po.state NOT IN ('cancel')
       AND po.date_order >= NOW() - INTERVAL '2 years'
@@ -859,15 +940,19 @@ const SQL_IMPORT = `
   -- ต้องกัน currency<>'THB' ก่อนเสมอ — PO ที่ผู้ขายต่างประเทศแต่ตกลงจ่ายเป็น THB (rate=1 ถูกต้องอยู่แล้ว
   -- ไม่ต้องแปลง) ไม่ควรถูกนับเป็น "เพี้ยน" (เจอจริงฝั่ง export 17/105 แถวเป็นแบบนี้ ก่อนแก้ 16 ก.ค. 2569)
   bad_names AS (
-    SELECT po_number FROM base
+    SELECT DISTINCT po_number, company_id, currency_id FROM base
     WHERE currency <> 'THB' AND (raw_rate IS NULL OR raw_rate <= 0 OR ABS(raw_rate - 1) < 1e-9)
   ),
   fixed_rates AS (
-    SELECT DISTINCT ON (am.invoice_origin) am.invoice_origin, am.invoice_currency_rate
+    SELECT DISTINCT ON (am.invoice_origin, am.company_id, am.currency_id)
+      am.invoice_origin, am.company_id, am.currency_id, am.invoice_currency_rate
     FROM account_move am
-    WHERE am.invoice_origin IN (SELECT po_number FROM bad_names)
-      AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
-    ORDER BY am.invoice_origin, am.invoice_date DESC
+    JOIN bad_names bad ON am.invoice_origin = bad.po_number
+      AND am.company_id = bad.company_id AND am.currency_id = bad.currency_id
+    WHERE am.state = 'posted' AND am.move_type = 'in_invoice'
+      AND am.invoice_currency_rate > 0
+      AND am.invoice_currency_rate::text NOT IN ('NaN', 'Infinity', '-Infinity')
+    ORDER BY am.invoice_origin, am.company_id, am.currency_id, am.invoice_date DESC, am.id DESC
   )
   SELECT
     base.id, base.po_number, base.company_id, base.company_name, base.company_code,
@@ -881,6 +966,7 @@ const SQL_IMPORT = `
     base.last_receipt_date
   FROM base
   LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.po_number
+    AND fixed_rates.company_id = base.company_id AND fixed_rates.currency_id = base.currency_id
   ORDER BY base.date_order DESC
 `;
 
@@ -890,6 +976,7 @@ const SQL_EXPORT = `
       so.id,
       so.name                   AS so_number,
       so.company_id,
+      so.currency_id,
       rc.name                   AS company_name,
       CASE so.company_id WHEN 1 THEN 'KOB' WHEN 2 THEN 'BTV' ELSE 'OTHER' END AS company_code,
       rp.id                     AS partner_id,
@@ -920,15 +1007,19 @@ const SQL_EXPORT = `
     LIMIT 500
   ),
   bad_names AS (
-    SELECT so_number FROM base
+    SELECT DISTINCT so_number, company_id, currency_id FROM base
     WHERE currency <> 'THB' AND (raw_rate IS NULL OR raw_rate <= 0 OR ABS(raw_rate - 1) < 1e-9)
   ),
   fixed_rates AS (
-    SELECT DISTINCT ON (am.invoice_origin) am.invoice_origin, am.invoice_currency_rate
+    SELECT DISTINCT ON (am.invoice_origin, am.company_id, am.currency_id)
+      am.invoice_origin, am.company_id, am.currency_id, am.invoice_currency_rate
     FROM account_move am
-    WHERE am.invoice_origin IN (SELECT so_number FROM bad_names)
-      AND am.state = 'posted' AND am.invoice_currency_rate IS NOT NULL
-    ORDER BY am.invoice_origin, am.invoice_date DESC
+    JOIN bad_names bad ON am.invoice_origin = bad.so_number
+      AND am.company_id = bad.company_id AND am.currency_id = bad.currency_id
+    WHERE am.state = 'posted' AND am.move_type = 'out_invoice'
+      AND am.invoice_currency_rate > 0
+      AND am.invoice_currency_rate::text NOT IN ('NaN', 'Infinity', '-Infinity')
+    ORDER BY am.invoice_origin, am.company_id, am.currency_id, am.invoice_date DESC, am.id DESC
   )
   SELECT
     base.id, base.so_number, base.company_id, base.company_name, base.company_code,
@@ -939,6 +1030,7 @@ const SQL_EXPORT = `
     base.delivery_status, base.invoice_status, base.origin, base.country_code, base.source_type
   FROM base
   LEFT JOIN fixed_rates ON fixed_rates.invoice_origin = base.so_number
+    AND fixed_rates.company_id = base.company_id AND fixed_rates.currency_id = base.currency_id
   ORDER BY base.date_order DESC
 `;
 
@@ -948,7 +1040,13 @@ const SQL_EXPORT = `
 // SELECT ร่วมสำหรับรายการสินค้าใน PO/SO — ponameSql คือนิพจน์ SQL ที่แทนค่าเลข PO/SO
 // ($1 สำหรับ direct pg แบบ parameterized, หรือ string literal ที่ escape แล้วสำหรับ MCP ที่ต้องฝัง SQL เป็น text)
 // รวมเป็นจุดเดียวเพื่อไม่ให้ direct กับ MCP fallback มีข้อมูลไม่ตรงกันถ้าแก้ query ฝั่งเดียวแล้วลืมอีกฝั่ง
-function poLineSelectBody(board, ponameSql) {
+function poLineSelectBody(board, ponameSql, scope = {}) {
+  const table = board === 'export' ? 'so' : 'po';
+  const orderTable = board === 'export' ? 'sale_order' : 'purchase_order';
+  const scoped = `${table}.company_id IN (1,2)` + (scope.companyId ? ` AND ${table}.company_id = ${scope.companyId}` : '') +
+    (scope.orderId ? ` AND ${table}.id = ${scope.orderId}` : '');
+  const unambiguous = `(SELECT COUNT(*) FROM ${orderTable} check_order WHERE check_order.name = ${ponameSql} AND check_order.company_id IN (1,2)` +
+    (scope.companyId ? ` AND check_order.company_id = ${scope.companyId}` : '') + (scope.orderId ? ` AND check_order.id = ${scope.orderId}` : '') + ') = 1';
   return board === 'export' ? `
     SELECT sol.id, sol.sequence,
       COALESCE(pt.name->>'en_US', pt.name->>'th_TH', sol.name) AS product_name,
@@ -961,7 +1059,7 @@ function poLineSelectBody(board, ponameSql) {
     LEFT JOIN product_product pp ON pp.id = sol.product_id
     LEFT JOIN product_template pt ON pt.id = pp.product_tmpl_id
     LEFT JOIN uom_uom uom ON uom.id = sol.product_uom
-    WHERE so.name = ${ponameSql} AND sol.display_type IS NULL` : `
+    WHERE so.name = ${ponameSql} AND ${scoped} AND ${unambiguous} AND sol.display_type IS NULL` : `
     SELECT pol.id, pol.sequence,
       COALESCE(pt.name->>'en_US', pt.name->>'th_TH', pol.name) AS product_name,
       pt.default_code AS sku, pol.product_qty AS qty,
@@ -975,17 +1073,17 @@ function poLineSelectBody(board, ponameSql) {
     LEFT JOIN product_product pp ON pp.id = pol.product_id
     LEFT JOIN product_template pt ON pt.id = pp.product_tmpl_id
     LEFT JOIN uom_uom uom ON uom.id = pol.product_uom
-    WHERE po.name = ${ponameSql} AND pol.display_type IS NULL`;
+    WHERE po.name = ${ponameSql} AND ${scoped} AND ${unambiguous} AND pol.display_type IS NULL`;
 }
 function poLineOrderBy(board) { return board === 'export' ? 'sol.sequence, sol.id' : 'pol.sequence, pol.id'; }
-function poLineSqlDirect(board) {
-  return poLineSelectBody(board, '$1') + '\n    ORDER BY ' + poLineOrderBy(board);
+function poLineSqlDirect(board, scope = {}) {
+  return poLineSelectBody(board, '$1', scope) + '\n    ORDER BY ' + poLineOrderBy(board);
 }
 // path MCP ส่ง SQL เป็น text ตรงๆ (ไม่มี placeholder แบบ pg) จึง escape เลข PO เองก่อนฝังในสตริง
 // รายการสินค้าต่อ PO มีไม่กี่บรรทัด (ไม่ต้อง paginate) แต่ยังเข้ารหัส base64 กันชื่อสินค้ายาวเกิน 58 ตัวโดนตัด
-async function mcpFetchPoLines(board, poNumber) {
+async function mcpFetchPoLines(board, poNumber, scope = {}) {
   const esc = poNumber.replace(/'/g, "''");
-  const inner = poLineSelectBody(board, `'${esc}'`);
+  const inner = poLineSelectBody(board, `'${esc}'`, scope);
   const sql = `
     SELECT ${Array.from({ length: MCP_NCOLS }, (_, i) => `substring(b,${i * MCP_CHUNK + 1},${MCP_CHUNK}) AS c${i}`).join(', ')}
     FROM (
@@ -1035,6 +1133,20 @@ async function cachedQuery(key, sql, force, mcp) {
   // snapshot._ts เป็นเวลาปัจจุบัน ทำให้ as_of โกหกว่าข้อมูลสดกว่าความเป็นจริงได้ถึง ~5 นาที
   if (!force && cache.data[key] && (now - cache.ts[key]) < CACHE_TTL) {
     return cache.data[key];
+  }
+  if (API_MODE) {
+    const readers = {
+      import: () => odooBoards.boards('import'),
+      export: () => odooBoards.boards('export'),
+      'vendor-scorecard': () => odooServices.vendorScorecard(),
+      'gl-reconciliation': () => odooServices.glReconciliation(),
+      'fx-rates': () => odooServices.fxRates(),
+    };
+    if (!readers[key]) throw new Error('Unsupported Odoo API dataset');
+    const rows = await readers[key]();
+    cache.data[key] = rows;
+    cache.ts[key] = Date.now();
+    return rows;
   }
   // ดึงผ่าน MCP bridge (คนละ path จาก direct — port 443 ไม่ติดปัญหา IP allowlist) แล้ว cache แบบเดียวกัน
   // คืน null = ไม่มีทางนี้ให้ใช้ (endpoint ไม่รองรับ / ไม่ได้ตั้งค่า MCP / เพิ่งลองไปเมื่อกี้)
@@ -1142,7 +1254,7 @@ function jsonErr(res, code, msg) {
     'Cache-Control': 'no-cache',
     ...SECURITY_HEADERS,
   });
-  res.end(JSON.stringify({ error: msg }));
+  res.end(JSON.stringify({ ok: false, error: msg }));
 }
 
 // สำหรับ error ที่มาจาก exception จริง (SQL/DB/network) — e.message อาจมีชื่อ table/column/host จริงติดมาด้วย
@@ -1160,6 +1272,9 @@ function jsonErrEx(res, code, label, err) {
 // คืนค่า null แปลว่า response ถูกส่งไปแล้ว (413/400) — caller แค่ return ทันที ไม่ต้องทำอะไรต่อ
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024; // 10MB
 function readJsonBody(req, res, maxBytes = MAX_JSON_BODY_BYTES) {
+  if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) {
+    jsonErr(res, 415, 'ต้องส่งข้อมูลแบบ application/json'); req.resume(); return Promise.resolve(null);
+  }
   return new Promise((resolve) => {
     // เก็บเป็น Buffer แล้วต่อทีเดียวตอนจบ — ห้าม `body += chunk` เพราะการบวก Buffer เข้ากับ string จะ
     // toString('utf8') ต่อ chunk ทันที ถ้าขอบ chunk (TCP/64KB) ตกกลางตัวอักษร UTF-8 หลายไบต์ (ภาษาไทย
@@ -1182,7 +1297,11 @@ function readJsonBody(req, res, maxBytes = MAX_JSON_BODY_BYTES) {
     });
     req.on('end', () => {
       if (settled) return;
-      try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); }
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+        if (parsed === null || typeof parsed !== 'object') { jsonErr(res, 400, 'ต้องส่ง JSON object หรือ array'); finish(null); }
+        else finish(parsed);
+      }
       catch (e) { jsonErr(res, 400, e.message); finish(null); }
     });
     req.on('error', (e) => {
@@ -1194,6 +1313,7 @@ function readJsonBody(req, res, maxBytes = MAX_JSON_BODY_BYTES) {
 
 // ─── HTTP Server ──────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
+  try {
   const reqUrl  = req.url.split('?')[0];
   const method  = req.method;
 
@@ -1205,27 +1325,24 @@ const server = http.createServer(async (req, res) => {
   //   ไม่งั้นการเพิ่มบัญชีจะกลายเป็นการ "เพิ่มทางเข้า" แทนที่จะเป็นการ "ปิดทางเข้าร่วม"
   // /api/alive ยกเว้นเสมอ เพื่อให้ watchdog เช็คสถานะได้โดยไม่ต้องถือรหัส
   refreshUsers();
-  if ((USERS.enabled || process.env.APP_PASSWORD) && reqUrl !== '/api/alive') {
-    let authed = false, who = '';
-    const hdr = req.headers['authorization'] || '';
-    if (hdr.startsWith('Basic ')) {
-      try {
-        const dec  = Buffer.from(hdr.slice(6), 'base64').toString('utf8');
-        const user = dec.split(':')[0].trim();
-        const pass = dec.split(':').slice(1).join(':');
-        if (USERS.enabled) {
-          const v = usersLib.verify(USERS.store, user, pass);
-          authed = v.ok; who = v.user || user;
-          if (!authed && SHARED_OK && process.env.APP_PASSWORD) authed = safeEqual(pass, process.env.APP_PASSWORD);
-        } else {
-          authed = safeEqual(pass, process.env.APP_PASSWORD);
-        }
-      } catch (e) {}
-    }
-    if (!authed) {
-      if (USERS.enabled && who) console.log(`[Auth] ปฏิเสธ "${who}" จาก ${clientIp(req)}`);
+  const authRequired = USERS.required || USERS.enabled || !!process.env.APP_PASSWORD || !!process.env.VIEWER_PASSWORD;
+  req.auth = accessLib.resolveAccess({ authorization: req.headers.authorization, env: process.env,
+    store: USERS.store, requireUsers: USERS.required, localNoAuth: !authRequired && isLoopback });
+  if (reqUrl !== '/api/alive') {
+    if (!req.auth) {
       res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Logistics Tracking"', 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('ต้องใส่ชื่อผู้ใช้และรหัสผ่าน'); return;
+    }
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !req.auth.canWrite) {
+      jsonErr(res, 403, 'บัญชีนี้ดูข้อมูลได้อย่างเดียว — ต้องใช้บัญชีแอดมินหรือผู้พัฒนาเพื่อแก้ไข'); return;
+    }
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      let crossSite = req.headers['sec-fetch-site'] === 'cross-site';
+      if (req.headers.origin) {
+        try { crossSite = crossSite || new URL(req.headers.origin).host !== req.headers.host; }
+        catch { crossSite = true; }
+      }
+      if (crossSite) { jsonErr(res, 403, 'ไม่รับการแก้ไขข้อมูลจากเว็บไซต์อื่น'); req.resume(); return; }
     }
   }
 
@@ -1240,11 +1357,24 @@ const server = http.createServer(async (req, res) => {
   // ── API Routes ──
   if (reqUrl.startsWith('/api/')) {
 
+    if (reqUrl === '/api/me' && method === 'GET') {
+      jsonOk(res, { ok: true, ...req.auth }); return;
+    }
+    if (reqUrl === '/api/worklist' && method === 'GET') {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+      jsonOk(res, { ok: true, ...buildWorklist(loadTracking(), today) }); return;
+    }
+    if (reqUrl === '/api/shipments' && method === 'GET') {
+      const requested = new URL('http://x' + req.url).searchParams.get('po');
+      const rows = loadTracking().filter(row => !requested || row.poRefs.some(ref => ref.poNumber === requested));
+      jsonOk(res, { ok: true, count: rows.length, rows }); return;
+    }
+
     if (reqUrl === '/api/import-pos' && method === 'GET') {
       const force = new URL('http://x' + req.url).searchParams.get('force') === '1';
       try {
         const r = await liveOrSnapshot('import', SQL_IMPORT, force);
-        jsonOk(res, { ok: true, count: r.rows.length, rows: r.rows, stale: r.stale, as_of: r.as_of });
+        jsonOk(res, { ok: true, count: r.rows.length, rows: r.rows, stale: r.stale, as_of: r.as_of, via: r.via });
       } catch (e) {
         jsonErrEx(res, 500, 'import-pos', e);
       }
@@ -1255,7 +1385,7 @@ const server = http.createServer(async (req, res) => {
       const force = new URL('http://x' + req.url).searchParams.get('force') === '1';
       try {
         const r = await liveOrSnapshot('export', SQL_EXPORT, force);
-        jsonOk(res, { ok: true, count: r.rows.length, rows: r.rows, stale: r.stale, as_of: r.as_of });
+        jsonOk(res, { ok: true, count: r.rows.length, rows: r.rows, stale: r.stale, as_of: r.as_of, via: r.via });
       } catch (e) {
         jsonErrEx(res, 500, 'export-sos', e);
       }
@@ -1271,13 +1401,28 @@ const server = http.createServer(async (req, res) => {
       if (!po) { jsonErr(res, 400, 'ต้องระบุ po'); return; }
       // allowlist รูปแบบเลข PO/SO — กัน injection ฝั่ง MCP ที่ต้องฝัง SQL เป็น text ตรงๆ (ไม่มี placeholder)
       if (!/^[\w\-\s().#/]{1,60}$/.test(po)) { jsonErr(res, 400, 'รูปแบบเลข PO ไม่ถูกต้อง'); return; }
-      const cacheKey = board + ':' + po;
+      const companyId = params.get('company_id') == null ? undefined : Number(params.get('company_id'));
+      const orderId = params.get('order_id') == null ? undefined : Number(params.get('order_id'));
+      if ((companyId !== undefined && ![1, 2].includes(companyId)) || (orderId !== undefined && (!Number.isSafeInteger(orderId) || orderId < 1))) {
+        jsonErr(res, 400, 'บริษัทหรือรหัส PO ไม่ถูกต้อง'); return;
+      }
+      const scope = { companyId, orderId };
+      const cacheKey = JSON.stringify([board, po, companyId, orderId]);
       const cached = poLineCacheGet(cacheKey);
       if (cached) { jsonOk(res, { ok: true, rows: cached, source: 'cache' }); return; }
+      if (API_MODE) {
+        try {
+          const rows = await odooBoards.poLines(board, po, scope);
+          poLineCacheSet(cacheKey, rows);
+          jsonOk(res, { ok: true, rows, source: 'api' });
+        } catch (error) { jsonErr(res, /ambiguous/.test(error.message) ? 409 : /invalid/.test(error.message) ? 400 : 503,
+          /ambiguous/.test(error.message) ? 'เลข PO ซ้ำ — กรุณาระบุบริษัทและรายการใน Odoo' : 'ดึงรายการสินค้าจาก Odoo ไม่สำเร็จ'); }
+        return;
+      }
       let directErr = null;
       if (!dbLikelyDown()) {
         try {
-          const r = await db.query(poLineSqlDirect(board), [po]);
+          const r = await db.query(poLineSqlDirect(board, scope), [po]);
           markDbUp();
           poLineCacheSet(cacheKey, r.rows);
           jsonOk(res, { ok: true, rows: r.rows, source: 'direct' });
@@ -1287,7 +1432,7 @@ const server = http.createServer(async (req, res) => {
       // direct ต่อไม่ได้ (หรือรู้อยู่แล้วว่าล่ม) — ลองผ่าน MCP bridge ก่อนยอมแพ้
       if (MCP_URL && MCP_TOKEN) {
         try {
-          const rows = await mcpFetchPoLines(board, po);
+          const rows = await mcpFetchPoLines(board, po, scope);
           poLineCacheSet(cacheKey, rows);
           jsonOk(res, { ok: true, rows, source: 'mcp' });
           return;
@@ -1300,6 +1445,12 @@ const server = http.createServer(async (req, res) => {
 
     if (reqUrl === '/api/vendors' && method === 'GET') {
       try {
+        if (API_MODE) {
+          const result = await odooServices.vendors();
+          jsonOk(res, { ok: true, count: result.rows.length, total: result.total, limit: 3000,
+            truncated: result.rows.length < result.total, rows: result.rows });
+          return;
+        }
         // เพดานเดิม 500 ตัดเงียบเหมือน logistics-bills — วัดจริง 2026-08-13: ผู้ขายที่เข้าเงื่อนไขมี 2,518 ราย
         // คืนได้ 500 (ชนเพดานเป๊ะ) หายไป 2,018 ราย = 80% · autocomplete ผู้ขาย/ตัวแทนขนส่งจึงหาไม่เจอ
         // เรียงตามจำนวน PO มาก→น้อย เจ้าที่ไม่เคยสั่งเลยจึงตกหายก่อน ซึ่งคือเจ้าที่คนพิมพ์หาบ่อยที่สุด
@@ -1307,6 +1458,7 @@ const server = http.createServer(async (req, res) => {
         const vTotal = await cachedQuery('vendors_count', `
           SELECT COUNT(*)::int AS n FROM res_partner rp
           WHERE rp.supplier_rank > 0 AND rp.active = true AND rp.is_company = true
+            AND (rp.company_id IS NULL OR rp.company_id IN (1, 2))
         `, false, { orderCols: 'r.n AS _ord, r.n AS _id', maxRows: 1 }).then(r => r[0]?.n ?? null).catch(() => null);
         const rows = await cachedQuery('vendors', `
           SELECT
@@ -1338,6 +1490,7 @@ const server = http.createServer(async (req, res) => {
           WHERE rp.supplier_rank > 0
             AND rp.active = true
             AND rp.is_company = true
+            AND (rp.company_id IS NULL OR rp.company_id IN (1, 2))
           ORDER BY COALESCE(v.po_count, 0) DESC, rp.name ASC
           LIMIT ${VENDOR_CAP}
         `, false, { orderCols: 'r.po_count AS _ord, r.id AS _id', maxRows: VENDOR_CAP });
@@ -1359,7 +1512,7 @@ const server = http.createServer(async (req, res) => {
             COUNT(*) FILTER (WHERE sp.date_done <= sp.scheduled_date) AS on_time,
             ROUND(AVG(EXTRACT(EPOCH FROM (sp.date_done - sp.scheduled_date))/86400)::numeric, 1) AS avg_delay_days
           FROM stock_picking sp
-          JOIN purchase_order po ON po.name = sp.origin
+          JOIN purchase_order po ON po.name = sp.origin AND po.company_id = sp.company_id
           JOIN res_partner rp ON rp.id = po.partner_id
           LEFT JOIN res_country rco ON rco.id = rp.country_id
           JOIN res_currency cu ON cu.id = po.currency_id
@@ -1590,7 +1743,7 @@ const server = http.createServer(async (req, res) => {
       // (1) Vendor Bills: partner เข้า pattern หรือ line เป็นสินค้าหมวด Import Expenses
       const billSql = (search) => `
         SELECT
-          am.id,
+          am.id, am.company_id,
           am.move_type::text        AS move_type,
           am.name::text             AS bill_name,
           (am.invoice_origin)::text AS invoice_origin,
@@ -1598,7 +1751,7 @@ const server = http.createServer(async (req, res) => {
           am.amount_total,
           am.amount_tax,
           cu.name::text             AS currency,
-          COALESCE(NULLIF(am.inverse_currency_rate,0), 1.0/NULLIF(am.invoice_currency_rate,0)) AS rate_thb,
+          CASE WHEN am.inverse_currency_rate>0 AND am.inverse_currency_rate::text NOT IN ('NaN','Infinity','-Infinity') THEN am.inverse_currency_rate WHEN am.invoice_currency_rate>0 AND am.invoice_currency_rate::text NOT IN ('NaN','Infinity','-Infinity') THEN 1.0/am.invoice_currency_rate ELSE NULL END AS rate_thb,
           rp.name::text             AS partner,
           am.invoice_date::text     AS doc_date,
           COALESCE(aml_s.lines_json, '[]'::json) AS lines
@@ -1607,23 +1760,23 @@ const server = http.createServer(async (req, res) => {
         JOIN res_partner  rp ON rp.id = am.partner_id
         LEFT JOIN LATERAL (
           SELECT json_agg(json_build_object('name', aml.name, 'amount', aml.price_subtotal)
-            ORDER BY aml.price_subtotal DESC) AS lines_json
+            ORDER BY aml.price_subtotal DESC, aml.id ASC) AS lines_json
           FROM account_move_line aml
           WHERE aml.move_id = am.id AND aml.display_type = 'product'
         ) aml_s ON true
         ${billWhere(search)}
-        ORDER BY am.invoice_date DESC
+        ORDER BY am.invoice_date DESC, am.id ASC
         LIMIT ${limit} OFFSET ${offset}`;
 
       // (2) Expense POs: หมวด Import Expenses หรือ partner โลจิสติกส์ — รอออกบิล
       const poSql = (search) => `
         SELECT
-          po.id,
+          po.id, po.company_id,
           po.name::text        AS po_number,
           po.origin::text,
           po.amount_total,
           cu.name::text        AS currency,
-          1.0/NULLIF(po.currency_rate,0) AS rate_thb,
+          CASE WHEN po.currency_rate>0 AND po.currency_rate::text NOT IN ('NaN','Infinity','-Infinity') THEN 1.0/po.currency_rate ELSE NULL END AS rate_thb,
           rp.name::text        AS partner,
           po.date_order::text  AS doc_date,
           prod.main_product,
@@ -1632,23 +1785,29 @@ const server = http.createServer(async (req, res) => {
         JOIN res_partner  rp ON rp.id = po.partner_id
         JOIN res_currency cu ON cu.id = po.currency_id
         LEFT JOIN LATERAL (
-          SELECT (pt.name)::text AS main_product, pc.complete_name::text AS cat_name
+          SELECT COALESCE(pt.name->>'en_US', pt.name->>'th_TH') AS main_product, pc.complete_name::text AS cat_name
           FROM purchase_order_line pol
           JOIN product_product  pp ON pp.id = pol.product_id
           JOIN product_template pt ON pt.id = pp.product_tmpl_id
           JOIN product_category pc ON pc.id = pt.categ_id
           WHERE pol.order_id = po.id
-          ORDER BY pol.price_subtotal DESC LIMIT 1
+          ORDER BY pol.price_subtotal DESC, pol.id ASC LIMIT 1
         ) prod ON true
         ${poWhere(search)}
-        ORDER BY po.date_order DESC
+        ORDER BY po.date_order DESC, po.id ASC
         LIMIT ${limit} OFFSET ${offset}`;
 
       // MCP path หั่นคอลัมน์ตาม doc_date/id (ต้องมีใน SELECT ทั้งสอง query) — ใช้ NCOLS_WIDE เพราะ bill มี lines[]
       const BILL_ORDER = 'r.doc_date AS _ord, r.id AS _id';
       let billRows, poRows, via = null, billTotal = null, poTotal = null;
+      if (API_MODE) {
+        try {
+          ({ billRows, poRows, billTotal, poTotal } = await odooServices.logisticsBills({ company: co, months, q, limit, offset }));
+          via = 'api';
+        } catch { jsonErr(res, 503, 'โหลดรายการบิลจาก Odoo ไม่สำเร็จ'); return; }
+      }
       // ลอง direct ก่อน (ข้ามถ้า circuit เพิ่งเปิด — จะได้ไม่รอ timeout เปล่าๆ)
-      if (!dbLikelyDown()) {
+      if (!via && !dbLikelyDown()) {
         try {
           billRows = (await db.query(billSql(billSearchDirect), q ? args : [])).rows;
           poRows   = (await db.query(poSql(poSearchDirect),     q ? args : [])).rows;
@@ -1687,87 +1846,7 @@ const server = http.createServer(async (req, res) => {
         // ── จำแนกประเภท ──
         // บิลที่มีหลาย line ปนกัน (เช่น freight+insurance ใบเดียว) → แยกตามยอดของแต่ละ line
         // บิลที่ line หักล้างกัน (ภาษีกรมศุลกากร: +ฐาน −ฐาน) → จำแนกทั้งใบ ยอดจริง = amount_tax/amount_total
-        const INS_RE   = /insurance|ประกันภัย|ประกัน/i;
-        const VAT_RE   = /custom\s*\(?\s*vat|\bvat\b|ภาษีมูลค่าเพิ่ม|ภพ\.?\s*30|ภาษีนำเข้า/i;
-        const DUTY_RE  = /custom\s*\(?\s*duty|\bduty\b|อากร|tariff|ภาษีขาเข้า|import\s*duty/i;
-        const CLR_RE   = /clearance|พิธีการ|เดินพิธี|ชิปปิ้ง|shipping\s*service|\bbroker|clearing|d\/o|delivery\s*order|เอกสารนำเข้า|customs\s*service/i;
-        const FRT_RE   = /freight|ขนส่ง|shipping|transport|cargo|courier|express|ระวาง/i;
-        function lineCat(name) {
-          const t = (name || '').toLowerCase();
-          if (INS_RE.test(t))  return 'insurance';
-          if (VAT_RE.test(t))  return 'vat';
-          if (DUTY_RE.test(t)) return 'duty';
-          if (CLR_RE.test(t))  return 'clearance';
-          return 'freight';
-        }
-        function wholeBillCat(text, partner, tax) {
-          const t = (text || '').toLowerCase(), p = (partner || '').toLowerCase();
-          if (INS_RE.test(t) || INS_RE.test(p)) return 'insurance';
-          if (VAT_RE.test(t))  return 'vat';
-          if (DUTY_RE.test(t)) return 'duty';
-          if (CLR_RE.test(t) || CLR_RE.test(p)) return 'clearance';
-          if (/กรมศุลกากร|customs|ศุลกากร/.test(p)) return tax > 0 ? 'vat' : 'duty';
-          return 'freight';
-        }
-        const zero5  = () => ({ freight: 0, clearance: 0, insurance: 0, duty: 0, vat: 0 });
-        const round5 = c => { Object.keys(c).forEach(k => { c[k] = Math.round(c[k]); }); return c; };
-        const argmax = c => Object.keys(c).reduce((a, b) => c[b] > c[a] ? b : a);
-
-        const out = [];
-        const billedPoNames = new Set();
-        // แปลงเป็นบาทเสมอตาม rate_thb ของแต่ละบิล/PO — เดิมไม่แปลงเลย บิลสกุลต่างประเทศ (เช่น DHL/forwarder
-        // ที่ออกบิลเป็น USD) ถูกนับเป็นบาทตรงๆ ผิดขนาด ~30 เท่า (bug จริงที่เจอและแก้ 13 ก.ค. 2569 — คนละจุด
-        // กับ bug currency_rate ของ export SO ที่แก้ไปก่อนหน้านี้ แต่เป็น "โรค" เดียวกัน: ดึงยอดสกุลเงินมาโดยไม่แปลง)
-        const thbRate = r => { if (!r.currency || r.currency === 'THB') return 1; const v = parseFloat(r.rate_thb); return v > 0 ? v : 1; };
-        billRows.forEach(r => {
-          const fx   = thbRate(r);
-          // ใบลดหนี้ (in_refund) เก็บยอดใน Odoo เป็นบวกเสมอ (ความหมาย "เครดิต" มาจาก move_type ไม่ใช่เครื่องหมาย)
-          // ต้องกลับเครื่องหมายลบเองตอนแสดงผล ไม่งั้นใบลดหนี้จะดูเหมือนบิลจ่ายเพิ่มอีกใบ
-          const sign = r.move_type === 'in_refund' ? -1 : 1;
-          const origAmount = (parseFloat(r.amount_total) || 0) * sign;
-          const total = origAmount * fx;
-          const tax   = (parseFloat(r.amount_tax) || 0) * fx * sign;
-          const lines = Array.isArray(r.lines) ? r.lines : [];
-          const text  = lines.map(l => l.name || '').join(' ');
-          const c = zero5();
-          // ลองแยกตาม line ก่อน — ใช้ได้เมื่อยอด line บวกรวมแล้วเป็นยอดจริง (ไม่หักล้างกัน)
-          // เฉพาะใบที่ total ไม่ติดลบ (ไม่ใช่ in_refund) — Math.max(0,...) ด้านล่างสมมติว่าแต่ละหมวดไม่ติดลบ
-          // สมมติฐานนี้ใช้ไม่ได้กับใบลดหนี้ (total ติดลบทั้งใบ) เลยส่งใบลดหนี้ไปทาง wholeBillCat แทนเสมอ
-          let lineTotal = 0;
-          const lineSums = zero5();
-          lines.forEach(l => { const a = (parseFloat(l.amount) || 0) * fx * sign; lineTotal += a; lineSums[lineCat(l.name)] += a; });
-          let cat;
-          if (lines.length && total >= 0 && lineTotal > total * 0.5) {
-            // scale ยอด line (ก่อน VAT) ให้เท่ายอดจ่ายจริงทั้งใบ
-            const f = total / lineTotal;
-            Object.keys(lineSums).forEach(k => { c[k] = Math.max(0, lineSums[k] * f); });
-            cat = argmax(c);
-          } else {
-            cat = wholeBillCat(text, r.partner, tax);
-            if (cat === 'vat' && tax > 0) { c.vat = tax; c.duty = Math.max(0, total - tax); }
-            else c[cat] = total;
-          }
-          [r.invoice_origin, r.ref].forEach(v => { if (v) billedPoNames.add(v.trim()); });
-          out.push({ id: r.id, kind: 'bill', bill: r.bill_name, partner: r.partner,
-            ref: r.ref, origin: r.invoice_origin, amount: total, currency: r.currency,
-            origAmount: fx !== 1 ? origAmount : null, fxRate: fx !== 1 ? fx : null,
-            date: r.doc_date, category: cat, ...round5(c) });
-        });
-        poRows.forEach(r => {
-          // PO ที่มีบิลอ้างถึงแล้ว → ข้าม (ใช้ยอดจากบิลจริงแทน)
-          if (billedPoNames.has((r.po_number || '').trim())) return;
-          const fx = thbRate(r);
-          const origAmount = parseFloat(r.amount_total) || 0;
-          const total = origAmount * fx;
-          const text  = (r.main_product || '') + ' ' + (r.cat_name || '');
-          const cat   = wholeBillCat(text, r.partner, 0);
-          const c = zero5(); c[cat] = total;
-          out.push({ id: 'po_' + r.id, kind: 'po', bill: r.po_number, partner: r.partner,
-            ref: r.origin, origin: r.origin, amount: total, currency: r.currency,
-            origAmount: fx !== 1 ? origAmount : null, fxRate: fx !== 1 ? fx : null,
-            date: r.doc_date, category: cat, ...round5(c) });
-        });
-        out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        const out = require('./lib/logistics-costs.cjs').classifyLogisticsCosts(billRows, poRows);
 
         // via บอกว่าดึงมาจาก direct หรือ MCP bridge (markDbUp/markDbDown จัดการไปแล้วในขั้นดึงข้อมูล)
         // total/truncated = สัญญาว่า "ไม่ตัดข้อมูลโดยไม่บอก" — หน้าเว็บเอาไปแสดงว่าเห็นกี่จากกี่รายการ
@@ -1788,6 +1867,13 @@ const server = http.createServer(async (req, res) => {
 
     if (reqUrl === '/api/ping' && method === 'GET') {
       const out = { ok: true, db: process.env.DB_NAME || '?', ts: new Date().toISOString() };
+      if (API_MODE) {
+        try { await odooClient.searchCount('res.company', [['id', 'in', [1, 2]]]); out.api = true; }
+        catch { out.api = false; }
+        out.ok = out.api;
+        jsonOk(res, out);
+        return;
+      }
       try { await db.query('SELECT 1'); markDbUp(); out.direct = true; }
       catch (e) { if (isConnFailure(e)) markDbDown(); out.direct = false; out.direct_error = e.message; }
       if (MCP_URL && MCP_TOKEN) {
@@ -1817,13 +1903,14 @@ const server = http.createServer(async (req, res) => {
     // ── ผลตรวจสอบข้อมูลอัตโนมัติ — GET /api/integrity-check?force=1 เพื่อสั่งตรวจใหม่ทันที ──
     if (reqUrl === '/api/integrity-check' && method === 'GET') {
       const force = new URL('http://x' + req.url).searchParams.get('force') === '1';
+      if (force && !req.auth.canWrite) { jsonErr(res, 403, 'บัญชีดูข้อมูลไม่สามารถสั่งตรวจหรือเปลี่ยนสถานะการตรวจได้'); return; }
       // force=1 เขียนไฟล์ integrity_seen.json + อาจส่งอีเมลแจ้งเตือน — จำกัดไว้กันกดรัว/ยิงซ้ำ
       // (คืนผลรอบล่าสุดไปก่อน ไม่ต้อง error เพราะข้อมูลชุดเดิมก็ยังใช้ได้)
       if (force && !rateLimit('integrity:' + (req.socket.remoteAddress || '?'), 6, 60 * 1000)) {
         jsonOk(res, { ok: true, throttled: true, ...integrityReport });
         return;
       }
-      if (force || !integrityReport.ranAt) await runIntegrityCheck(force ? 'Manual' : 'FirstView');
+      if (req.auth.canWrite && (force || !integrityReport.ranAt)) await runIntegrityCheck(force ? 'Manual' : 'FirstView');
       jsonOk(res, { ok: true, ...integrityReport });
       return;
     }
@@ -1837,14 +1924,8 @@ const server = http.createServer(async (req, res) => {
 
     // (legacy) เขียนทับทั้งไฟล์ — คงไว้เพื่อ compatibility แต่ frontend ใช้ upsert แล้ว
     if (reqUrl === '/api/tracking' && method === 'POST') {
-      const data = await readJsonBody(req, res);
-      if (data === null) return;
-      try {
-        if (!Array.isArray(data)) { jsonErr(res, 400, 'expected array'); return; }
-        auditLog('replace_all', '*', ['(' + data.length + ' records)'], req.socket.remoteAddress, actorOf(req));
-        const ok = saveTracking(data);
-        jsonOk(res, { ok, count: data.length });
-      } catch(e) { jsonErr(res, 400, e.message); }
+      req.resume();
+      jsonErr(res, 405, 'ปิดการเขียนทับข้อมูลทั้งชุด — ใช้ /api/tracking/upsert พร้อมเวอร์ชันข้อมูล');
       return;
     }
 
@@ -1856,6 +1937,10 @@ const server = http.createServer(async (req, res) => {
       if (input === null) return;
       try {
         const recs  = Array.isArray(input) ? input : [input];
+        if (!recs.length || recs.some(r => !r || typeof r !== 'object' || Array.isArray(r) ||
+            typeof (r.po_so ?? r.id) !== 'string' || !String(r.po_so ?? r.id).trim() || String(r.po_so ?? r.id).length > 120)) {
+          jsonErr(res, 400, 'ข้อมูลแต่ละรายการต้องมีเลข PO หรือรหัสรายการที่ถูกต้อง'); return;
+        }
         // ที่มาของค่าในรอบนี้ — client ส่ง _origin มาได้ (ข้อมูลเก่ามี 'verify:<ไฟล์>' จากโมดูลตรวจเอกสารที่ถอดออกแล้ว)
         // ไม่ส่ง = คนกรอกผ่านหน้าเว็บ ซึ่งเป็นกรณีปกติ
         // ค่าที่คนกรอกผ่านหน้าเว็บติดชื่อคนไปด้วย → `manual:<ผู้ใช้>` ซึ่งเข้ารูปแบบเดิม
@@ -1864,15 +1949,14 @@ const server = http.createServer(async (req, res) => {
         const origin = sanitizeOrigin(!Array.isArray(input) && input._origin ? input._origin : 'manual:' + actor);
         const nowIso = new Date().toISOString();
         const data  = loadTracking();
-        const byKey = new Map();
-        data.forEach((r, i) => { const k = r.po_so || r.id; if (k != null && !byKey.has(k)) byKey.set(k, i); });
         // เดิม endpoint นี้ merge JSON จาก client ตรงๆ โดยไม่ตรวจสอบเลย — ฟิลด์ตัวเลขที่ผิดปกติ (ติดลบ/ไม่ใช่
         // ตัวเลข) จะถูกบันทึกเงียบๆ แล้วไปพังผลรวมต้นทุน/Dashboard ที่อื่นในภายหลังโดยไม่มี error ให้เห็น
         const NUM_FIELDS = ['freight','clearance','insurance','duty','vat','other','expectedCost','amount','rate','containerQty'];
         const invalidField = r => NUM_FIELDS.find(f => {
           if (r[f] === undefined || r[f] === null || r[f] === '') return false;
           const n = Number(r[f]);
-          return !Number.isFinite(n) || n < 0;
+          const signedCost = ['freight', 'clearance', 'insurance', 'duty', 'vat', 'other'].includes(f);
+          return !Number.isFinite(n) || (n < 0 && !signedCost);
         });
         // ISO 6346: 3 ตัวอักษร + ตัวระบุประเภท (U/J/Z) + 6 หลัก + เลขตรวจสอบ 1 หลัก
         // เลขตรวจสอบคำนวณจากน้ำหนักฐาน 2 ของ 10 ตัวแรก จึงยืนยันได้ว่า "เป็นเลขตู้จริง" ไม่ใช่แค่หน้าตาคล้าย
@@ -1901,6 +1985,8 @@ const server = http.createServer(async (req, res) => {
         const cleaned = [];
         // record ที่ "มีคนแก้ไปแล้วหลังจากที่ client โหลด" — ดูเหตุผลที่จุดตรวจด้านล่าง
         const conflicts = [];
+        const savedRows = [];
+        const pendingAudit = [];
         recs.forEach(r => {
           const key = r && (r.po_so || r.id);
           if (key == null) return;
@@ -1934,7 +2020,7 @@ const server = http.createServer(async (req, res) => {
               else delete r.container;
             }
           }
-          const idx    = byKey.has(key) ? byKey.get(key) : -1;
+          const idx    = shipmentIdentity.resolveTrackingIndex(data, r);
           const before = idx >= 0 ? data[idx] : null;
           // ── ⭐ กันสองคนแก้ record เดียวกันทับกัน (optimistic concurrency) ──────────────
           // ขอบเขตของปัญหาที่แก้จริง: การอ่าน→แก้→เขียนในตัว upsert **ไม่มี await คั่นเลย**
@@ -1949,7 +2035,8 @@ const server = http.createServer(async (req, res) => {
           //   และมันมีเกราะของตัวเองอยู่แล้ว: _fillEmptyOnly + ตัวตรวจตัวตนชิปเม้น)
           const baseTs = r._baseTs;
           delete r._baseTs;
-          if (baseTs != null && before && before._ts != null && Number(before._ts) > Number(baseTs)) {
+          const controlledFill = r._fillEmptyOnly === true && /^scan:/.test(sanitizeOrigin(r._origin || origin));
+          if (!controlledFill && !storageLib.matchesRevision(before, baseTs)) {
             const who = String(before._by || '').trim();
             conflicts.push({
               po_so: key,
@@ -2055,31 +2142,48 @@ const server = http.createServer(async (req, res) => {
             } else if (hasStage >= 0) changed.splice(hasStage, 1);
           }
           const srcTag = stampProvenance(before && before._src, changed, recOrigin, nowIso);
-          const merged = { ...r };
+          const candidate = { ...(before || {}), ...r };
+          if (!before) delete candidate._shipmentId;
+          const normalized = shipmentIdentity.normalizeTrackingRecord(candidate, before, { strict: true });
+          const merged = { ...r, _shipmentId: normalized._shipmentId, poRefs: normalized.poRefs,
+            owner: normalized.owner, dueDate: normalized.dueDate, documentChecklist: normalized.documentChecklist };
           delete merged._origin;
           delete merged._src;
           delete merged._baseTs;
+          merged._ts = storageLib.nextRevision(before && before._ts);
           // ใครแก้ล่าสุด — ใช้บอกชื่อในข้อความ conflict ของคนถัดไป (ประวัติเต็มอยู่ใน audit log)
           if (!r._origin) merged._by = actor;
           if (Object.keys(srcTag).length) merged._src = srcTag;
           if (idx >= 0) data[idx] = { ...data[idx], ...merged };
-          else { byKey.set(key, data.length); data.push(merged); }
+          else data.push(merged);
           // ไม่เขียน audit เมื่อ "อัปเดต" ที่ไม่มีฟิลด์ไหนเปลี่ยนจริง (หรือเปลี่ยนแค่ _ts = เวลาที่กดบันทึก)
           // เดิมบันทึกทุกครั้งที่ client ส่ง upsert เข้ามา ไม่ว่าจะมีอะไรต่างหรือไม่ ทำให้แถวชนิด
           // "แก้ไข (ไม่มีฟิลด์สำคัญเปลี่ยน)" กินพื้นที่ ~8% ของ audit log (43/540 แถว ณ วันตรวจ) แล้วดัน
           // การแก้ไขจริงตกออกจากแผง "ประวัติการแก้ไขล่าสุด" ที่โชว์แค่ 40 รายการล่าสุดบน Dashboard
           const meaningful = changed.filter(k => k !== '_ts');
           if (!before || meaningful.length) {
-            auditLog(before ? 'update' : 'create', key, changed, req.socket.remoteAddress, actorOf(req));
+            pendingAudit.push([before ? 'update' : 'create', key, changed]);
           }
+          savedRows.push(idx >= 0 ? data[idx] : data[data.length - 1]);
           applied++;
         });
+        if (conflicts.length) {
+          res.writeHead(409, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+          res.end(JSON.stringify({ ok: false, applied: 0, conflicts, rejected, skipped: skippedRecords, rows: [] }));
+          return;
+        }
+        if (rejected.length) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache', ...SECURITY_HEADERS });
+          res.end(JSON.stringify({ ok: false, applied: 0, error: 'ข้อมูลบางรายการไม่ถูกต้อง — ยังไม่ได้บันทึกทั้งชุด', rejected, rows: [] })); return;
+        }
         const ok = saveTracking(data);
+        if (!ok) { jsonErr(res, 500, 'บันทึกข้อมูลไม่สำเร็จ — ข้อมูลเดิมยังคงอยู่ กรุณาลองใหม่'); return; }
+        pendingAudit.forEach(([action, key, fields]) => auditLog(action, key, fields, req.socket.remoteAddress, actorOf(req)));
         if (rejected.length) console.error('[Upsert] ปฏิเสธค่าที่ผิดปกติ:', JSON.stringify(rejected));
         if (skippedRecords.length) console.log(`[Upsert] ข้าม ${skippedRecords.length} record (เป็นคนละชิปเม้น) — รายงานกลับให้ผู้เรียกแล้ว`);
         if (conflicts.length) console.log(`[Upsert] ไม่เขียน ${conflicts.length} record — มีคนบันทึกทับระหว่างทาง`);
-        jsonOk(res, { ok, applied, total: data.length, rejected, skipped: skippedRecords, conflicts, cleaned });
-      } catch(e) { jsonErr(res, 400, e.message); }
+        jsonOk(res, { ok, applied, total: data.length, rows: savedRows, rejected, skipped: skippedRecords, conflicts, cleaned });
+      } catch(e) { jsonErr(res, e.code === 'OPERATIONAL_STORAGE_UNAVAILABLE' ? 500 : e.code === 'TRACKING_IDENTITY_CONFLICT' ? 409 : 400, e.message); }
       return;
     }
 
@@ -2103,17 +2207,19 @@ const server = http.createServer(async (req, res) => {
         }
         if (!po_so) { jsonErr(res, 400, 'ไม่พบ po_so'); return; }
         const data = loadTracking();
-        const idx  = data.findIndex(r => (r.po_so || r.id) === po_so);
+        const idx  = shipmentIdentity.resolveTrackingIndex(data, parsedBody);
         if (idx < 0) { jsonErr(res, 404, 'ไม่พบรายการนี้'); return; }
+        if (!storageLib.matchesRevision(data[idx], parsedBody._baseTs)) { jsonErr(res, 409, 'ข้อมูลรายการนี้เปลี่ยนแล้ว — โหลดล่าสุดก่อนลบ'); return; }
         if (!data[idx]._synthetic) {
           jsonErr(res, 400, 'ลบได้เฉพาะ shipment ที่แยกเอง (สร้างในแอป) เท่านั้น — PO จริงจาก Odoo ลบผ่านหน้านี้ไม่ได้');
           return;
         }
         data.splice(idx, 1);
         const ok = saveTracking(data);
+        if (!ok) { jsonErr(res, 500, 'ลบข้อมูลไม่สำเร็จ'); return; }
         auditLog('delete', po_so, ['deleted'], req.socket.remoteAddress, actorOf(req));
         jsonOk(res, { ok });
-      } catch (e) { jsonErr(res, 400, e.message); }
+      } catch (e) { jsonErr(res, e.code === 'OPERATIONAL_STORAGE_UNAVAILABLE' ? 500 : e.code === 'TRACKING_IDENTITY_CONFLICT' ? 409 : 400, e.message); }
       return;
     }
 
@@ -2208,7 +2314,14 @@ const server = http.createServer(async (req, res) => {
       const rows = loadFreight();
       const idx = rows.findIndex(r => r.id === q.id);
       if (idx < 0 && rows.length >= FREIGHT_MAX_QUOTES) { jsonErr(res, 400, `เก็บได้สูงสุด ${FREIGHT_MAX_QUOTES} ใบ — ลบใบเก่าก่อน`); return; }
-      q.updatedAt = new Date().toISOString();
+      const expected = q._baseUpdatedAt ?? q.updatedAt;
+      if (idx < 0 && expected) { jsonErr(res, 409, 'ใบเดิมถูกลบหรือไม่พบแล้ว — สร้างใบใหม่โดยใช้รหัสใหม่'); return; }
+      if (idx >= 0 && (!expected || expected !== rows[idx].updatedAt)) {
+        jsonErr(res, 409, 'ใบเปรียบเทียบนี้ถูกแก้แล้ว — โหลดข้อมูลล่าสุดก่อนบันทึก'); return;
+      }
+      const previousTime = idx >= 0 ? Date.parse(rows[idx].updatedAt) : 0;
+      q.updatedAt = new Date(Math.max(Date.now(), Number.isFinite(previousTime) ? previousTime + 1 : 0)).toISOString();
+      delete q._baseUpdatedAt;
       q.savedBy = req.socket.remoteAddress || '';
       if (idx >= 0) rows[idx] = q; else rows.push(q);
       if (!saveFreight(rows)) { jsonErr(res, 500, 'บันทึกไฟล์ไม่สำเร็จ'); return; }
@@ -2222,6 +2335,10 @@ const server = http.createServer(async (req, res) => {
       const id = String(body?.id || '');
       if (!FREIGHT_ID_RE.test(id)) { jsonErr(res, 400, 'id ไม่ถูกต้อง'); return; }
       const rows = loadFreight();
+      const current = rows.find(r => r.id === id);
+      if (current && (!body._baseUpdatedAt || body._baseUpdatedAt !== current.updatedAt)) {
+        jsonErr(res, 409, 'ใบเปรียบเทียบนี้เปลี่ยนแล้ว — โหลดล่าสุดก่อนลบ'); return;
+      }
       const next = rows.filter(r => r.id !== id);
       if (next.length === rows.length) { jsonErr(res, 404, 'ไม่พบใบนี้'); return; }
       if (!saveFreight(next)) { jsonErr(res, 500, 'บันทึกไฟล์ไม่สำเร็จ'); return; }
@@ -2235,16 +2352,17 @@ const server = http.createServer(async (req, res) => {
         const rows = await cachedQuery('fx-rates', `
           SELECT DISTINCT ON (c.name)
             c.name::text  AS currency,
-            r.rate,
+            r.rate, r.company_id,
             r.name::text  AS as_of
           FROM res_currency_rate r
           JOIN res_currency c ON c.id = r.currency_id
+          WHERE r.company_id IS NULL OR r.company_id IN (1, 2)
           ORDER BY c.name, r.name DESC
         `, false, { orderCols: 'r.currency AS _ord', maxRows: 500 });
         // Odoo เก็บ rate = จำนวนหน่วยเงินนั้นต่อ 1 บาท → thb_per_unit = 1/rate
         const out = rows.map(r => {
           const rate = parseFloat(r.rate) || 0;
-          return { currency: r.currency, thb_per_unit: rate > 0 ? 1 / rate : null, as_of: r.as_of };
+          return { currency: r.currency, company_id: r.company_id ?? null, thb_per_unit: Number.isFinite(rate) && rate > 0 ? 1 / rate : null, as_of: r.as_of };
         }).filter(r => r.thb_per_unit);
         jsonOk(res, { ok: true, count: out.length, rows: out });
       } catch(e) {
@@ -2299,6 +2417,11 @@ const server = http.createServer(async (req, res) => {
     });
     res.end(data);
   });
+  } catch (error) {
+    console.error('[HTTP]', error.code || error.name, error.message);
+    if (!res.headersSent) jsonErr(res, 500, 'อ่านหรือประมวลผลข้อมูลไม่สำเร็จ — ข้อมูลเดิมยังคงอยู่');
+    else res.destroy();
+  }
 });
 
 // /api/freight-extract ส่ง PDF ให้ OpenAI อ่าน จึงตั้ง timeout ไว้กว้าง เผื่อไฟล์ใหญ่/โมเดลตอบช้า
@@ -2326,7 +2449,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 // ข้อมูล Odoo production ได้ ปฏิเสธการ start ทันทีเพื่อกันเปิดช่องโดยไม่ตั้งใจ
 const isLoopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
 refreshUsers(true);   // โหลดบัญชีก่อนตัดสินใจเรื่องความปลอดภัยตอน start
-if (!isLoopback && !USERS.enabled && !process.env.APP_PASSWORD) {
+if (!isLoopback && !USERS.required && !USERS.enabled && !process.env.APP_PASSWORD && !process.env.VIEWER_PASSWORD) {
   console.error(`[Config] ❌ HOST=${HOST} เปิดสู่เครือข่าย แต่ไม่มีทั้งบัญชีผู้ใช้และ APP_PASSWORD — อันตราย ปฏิเสธการเริ่มระบบ`);
   console.error('         สร้างบัญชีด้วย `node manage-users.mjs add <ชื่อ>` (แนะนำ) หรือตั้ง APP_PASSWORD ใน .env');
   console.error('         หรือใช้ HOST=127.0.0.1 (เฉพาะเครื่องนี้)');
@@ -2371,8 +2494,10 @@ server.listen(PORT, HOST, () => {
     // สำเร็จ → ปลด breaker ทันที (กลับมา live); ล้ม → markDbDown (request จาก browser fast-fail)
     // หมายเหตุ: ต่อให้ direct ล้ม ก็ยังเรียก liveOrSnapshot ต่อเสมอ (ไม่ return ตรงนี้) เพราะ
     // liveOrSnapshot มีชั้น MCP bridge fallback ในตัวแล้ว — ให้โอกาสดึงสดผ่าน MCP ต่อทุกรอบ
-    try { await db.query('SELECT 1'); markDbUp(); }
-    catch (e) { markDbDown(); console.log('[' + label + '] Odoo ตรงยังต่อไม่ได้ — ลอง MCP bridge ต่อ'); }
+    if (!API_MODE) {
+      try { await db.query('SELECT 1'); markDbUp(); }
+      catch (e) { markDbDown(); console.log('[' + label + '] Odoo ตรงยังต่อไม่ได้ — ลอง MCP bridge ต่อ'); }
+    }
     try {
       // import/export แต่ละอันเปิด MCP session ของตัวเอง (ไม่แชร์กัน — ดู comment ที่ mcpFetch) ยิงพร้อมกันได้เลย
       // ไม่งั้นตอน direct หลุดจะรอ MCP handshake+pagination ของ import จบก่อนค่อยเริ่ม export ช้าเป็น 2 เท่าโดยไม่จำเป็น
@@ -2385,10 +2510,10 @@ server.listen(PORT, HOST, () => {
     } catch (e) { console.log('[' + label + '] ล้มเหลวทั้ง direct และ MCP — เสิร์ฟ snapshot เดิม:', e.message); return false; }
   };
   // รอข้อมูลพร้อมก่อน ไม่งั้นรอบแรกจะเช็คจากลิสต์ว่างเปล่า — แล้วส่งสรุปรายสัปดาห์ถ้าถึงรอบ (ครั้งแรก = ยืนยันระบบพร้อม)
-  warm('Warmup').then(() => runIntegrityCheck('Startup')).then(() => maybeSendWeeklyDigest());
+  if (!BACKGROUND_DISABLED) warm('Warmup').then(() => SCHEDULED_MUTATIONS_DISABLED ? null : runIntegrityCheck('Startup')).then(() => SCHEDULED_MUTATIONS_DISABLED ? null : maybeSendWeeklyDigest());
   // Probe เป็นระยะ — สร้าง/อัปเดต snapshot ทันทีที่ Odoo กลับมาต่อได้ แม้ไม่มีใครเปิดหน้าเว็บ
   // ทำให้ครั้งถัดไปที่เปิด browser มีข้อมูลสดเสิร์ฟทันที ไม่ต้องรอ
-  setInterval(() => { warm('AutoProbe'); }, 2 * 60 * 1000).unref();
+  if (!BACKGROUND_DISABLED) setInterval(() => { warm('AutoProbe'); }, 2 * 60 * 1000).unref();
   // รอบตรวจสอบข้อมูลอัตโนมัติ — ทุก 24 ชม. โดยไม่ต้องรอให้คนสังเกตตัวเลขผิดปกติเอง + เช็คว่าถึงรอบสรุปรายสัปดาห์ไหม
-  setInterval(() => { runIntegrityCheck('Scheduled').then(() => maybeSendWeeklyDigest()); }, INTEGRITY_CHECK_INTERVAL).unref();
+  if (!SCHEDULED_MUTATIONS_DISABLED) setInterval(() => { runIntegrityCheck('Scheduled').then(() => maybeSendWeeklyDigest()); }, INTEGRITY_CHECK_INTERVAL).unref();
 });
