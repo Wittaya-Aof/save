@@ -30,3 +30,10 @@ jobs:
         run: node node_modules/playwright/cli.js install --with-deps chromium
       - name: Isolated API, finance, browser, packing and restore tests
         run: npm run test:full
+      - name: Build the actual Linux release image
+        run: docker build -t control-cloud-ci .
+      - name: Exercise image entrypoint, private persistence and restart
+        run: >-
+          docker run --rm --network none -e TEST_APP_ROOT=/app
+          --mount "type=bind,src=${{ github.workspace }}/tests/deployment-runtime.cjs,dst=/tmp/deployment-runtime.cjs,readonly"
+          control-cloud-ci node /tmp/deployment-runtime.cjs
