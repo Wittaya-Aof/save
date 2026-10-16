@@ -1,24 +1,54 @@
-# Control Cloud stabilization — 16 October 2026
+# ผลแก้ไขและนำขึ้นเว็บ — 16 ตุลาคม 2026
 
-## Implemented and locally verified
+นำรุ่น a33d83aaafb7894b7d5c37900873a6d1aca440d5 ขึ้น https://control.import-export.cloud/ สำเร็จ วันที่ 16 ตุลาคม 2026 เวลาประมาณ 16:46 น. ประเทศไทย
 
-- Strict persisted revisions and atomic rejection of invalid/stale tracking batches; failed writes return failure and preserve previous data. Legacy full replacement is disabled. Quote conflicts/deletions cannot silently overwrite or resurrect records.
-- Exact shared administrator identity and separate shared viewer; server-side mutation checks, read-only UI and safe account lifecycle. Existing owner-selected administrator credential is preserved privately.
-- Additive immutable shipment IDs, explicit PO references and import document checklist with responsible person and deadline. Legacy splits remain linked without inventing receipt quantities. Follow-up work appears when explicitly due.
-- Company/currency/direction-scoped FX, scoped PO line requests, signed discounts/refunds and explicit missing-rate handling.
-- Canonical save acknowledgments, refresh/conflict race protection, partial board outage visibility, bill selection persistence and payload/pallet weight enforcement. Ambiguous legacy names are flagged and blocked for unsafe name-based edits.
-- Full runtime backups with SHA-256 manifest, byte-exact isolated restore, retention and separate staging data; immutable-image staged promotion with rollback. Environment credentials are stored separately from runtime backups.
+## สิ่งที่แก้แล้ว
 
-## Verification before remote release
+- ป้องกันหน้าจอเก่าเขียนทับข้อมูลใหม่ ทั้ง Tracking และใบเปรียบเทียบ; ชุดข้อมูลผิดหรือบันทึกไม่สำเร็จจะตอบข้อผิดพลาดและรักษาข้อมูลเดิม ไม่ตอบว่าบันทึกสำเร็จ
+- ปิดช่องทางเขียน Tracking ทับทั้งก้อน ตรวจบริษัท/Shipment เมื่อ PO ชื่อซ้ำ และป้องกันใบเปรียบเทียบที่ลบแล้วกลับมาจากหน้าจอเก่า
+- แยกบัญชีกลาง viewer สำหรับดูข้อมูลจาก admin; ตรวจสิทธิ์ที่เซิร์ฟเวอร์ทุกคำสั่งแก้ไขและซ่อนปุ่มแก้ไขในหน้าเว็บ รหัส admin เดิมคงไว้ตามที่เจ้าของกำหนด
+- เพิ่ม Shipment ID ถาวรและรายการ PO ที่สัมพันธ์แบบเพิ่มเติมจากข้อมูลเดิม คงความสัมพันธ์ของ Shipment ที่แบ่งส่ง; ไม่สร้างเที่ยวส่ง จำนวนรับ หรือวันรับสมมติ ID ของรายการเดิมคำนวณซ้ำได้ค่าเดิมและเก็บลงไฟล์เมื่อบันทึกครั้งถัดไป
+- เพิ่มผู้รับผิดชอบ กำหนดติดตาม และ checklist เอกสารนำเข้า/Forwarder/B/L/Insurance/Form E/ใบขน/TISI/แจ้งคลัง/แจ้งบัญชี งานที่ระบุกำหนดและยังค้างจะแสดงในงานค้าง ไม่สรุปการบังคับใช้ใบอนุญาตแทนผู้รับผิดชอบ
+- แก้ FX ให้ตรงบริษัท สกุลเงิน และทิศทางเอกสาร แยก PO detail ตามบริษัท/รหัส Odoo; รักษายอดส่วนลดและคืนเงินที่ติดลบ และแสดงเมื่อไม่มีอัตราแลกเปลี่ยนแทนการใช้ 1:1
+- แก้ผลบันทึก หน้าเว็บเก่าทับผลใหม่ การโหลดข้อมูลได้เพียงบางบอร์ด การเลือกบิลและเก็บรายการบิล รวมทั้งข้อจำกัดน้ำหนักสินค้า/พาเลทและ payload ในเครื่องโหลดตู้
+- สำรอง runtime ครบตามรายการที่กำหนด พร้อม checksum และทดลองกู้คืน ใช้ staging คนละข้อมูล และส่ง image เดียวกันจาก staging ไป production พร้อมทางย้อนรุ่น
 
-Full isolated test run: 127/127 primary tests, all 20 groups passed, including packing invariants/capacity/planning and mocked plus actual-handler browser journeys for viewer/admin. Independent reviews resolved frontend refresh issues, strict live-Odoo release gates and four persistence/permission/scope findings. No test mutated production business records.
+## หลักฐานตรวจสอบ
 
-## Release evidence
+| รายการ | ผลจริง |
+|---|---|
+| ชุดทดสอบหลัก | 127/127 ผ่าน; รวม 20 กลุ่มไม่มีความล้มเหลว |
+| เบราว์เซอร์จำลองและ API จริงบนข้อมูลจำลอง | ผ่านทั้ง admin/viewer, stale save, บิล และลิงก์ PO/Shipment |
+| การคำนวณโหลดตู้ | ผ่าน invariant/capacity/planner/lanes และกรณีน้ำหนัก |
+| Linux image บน VPS | ผ่าน entrypoint, สิทธิ์ไฟล์, บัญชี, การบันทึกและ restart |
+| GitHub Actions ของรุ่นติดตั้ง | [38882428180](https://github.com/Wittaya-Aof/save/actions/runs/38882428180) ผ่าน รวมสร้าง image และทดสอบเริ่ม container |
+| staging | admin/viewer เห็น Tracking 1,087; viewer แก้ไขถูกปฏิเสธ; Import 369 / Export 140 มาจาก API สด |
+| โดเมนจริงและเบราว์เซอร์จริงหลัง deploy | ผ่านทั้งสองบัญชี; ไม่มี page error; ตรวจแบบอ่านอย่างเดียวและทดสอบ viewer ด้วยชุดบันทึกว่างที่ถูกปฏิเสธ |
+| ข้อมูลเดิม | Tracking 1,087 รายการ ไบต์ตรงกับก่อน deploy; Import 369 / Export 140 สดจาก API |
+| เส้นทางสนับสนุน | FX 8 แถว, logistics bills 370 รายการ, worklist HTTP 200; รอบตรวจไม่พบบิลที่ไม่มี FX |
+| PO ตัวอย่างส่วนตัว 4 รายการ | พบลิงก์ Shipment/PO ถูกต้อง แต่ละ PO มีรายการเดิม 1 เที่ยว ไม่สร้างเที่ยวแบ่งส่งเพิ่ม |
+| Full backup และ restore drill | 9 ไฟล์ที่มีจริงผ่าน checksum และกู้คืนตรงทุกไบต์ ไม่มี warning |
 
-Remote container integration, GitHub Actions and production promotion are pending at this source snapshot. This section will be updated with actual results.
+เทสเก่าสองชุดเคยไม่ผ่านบน CI เพราะอ้างไฟล์ Tracking ส่วนตัว แก้ให้ใช้ fixture จำลองที่ครอบคลุมเงื่อนไขเดิมโดยไม่เผยแพร่ข้อมูลจริง การทดสอบ container พบการแปลงบรรทัดจาก Windows; กำหนด .sh ให้เป็น LF และเพิ่ม Linux image gate จนผ่านก่อน production
 
-The GitHub repository is public. Runtime files, private environment files, credentials, backups and actual example PO identifiers are excluded from publication. Local baseline history containing private case references is not pushed; the reviewed sanitized source tree is published on a new codex branch atop the existing remote main without force-push.
+## รุ่นและการกู้คืน
 
-## Operation
+- สาขาที่เผยแพร่: [codex/control-cloud-release](https://github.com/Wittaya-Aof/save/tree/codex/control-cloud-release); ไม่แก้ main และไม่ force-push
+- Source ของ image: a33d83aaafb7894b7d5c37900873a6d1aca440d5
+- Image: sha256:97327c6283f34c5736f991fbb52196baf41fd3dbae0777c350d0551ae6953ef7
+- Image ก่อนหน้า: sha256:9fb28e36265343dda31c42b525a639190ee538eb6ff35af24a13ff8fbd34df3d
+- Release record: /srv/import-export-control-cloud-releases/20261016T094546899Z-d7a2efa5f5a5
+- Full backup: /srv/import-export-control-cloud-backups/runtime-20261016T094600654Z-5739397a69176e6e
+- Restore drill: โฟลเดอร์ restore-drill/data ภายใน release record; แยกจากข้อมูลจริง
+- ตรวจ manifest ครบ 13 ชื่อ: มีจริง 9 ไฟล์; users.json และประวัติหมุนเวียน .1 สามไฟล์ยังไม่มี จึงบันทึกว่าไม่มีโดยไม่สร้างข้อมูลปลอม บัญชีกลางอยู่ใน environment และสำรองแบบส่วนตัวแยกไว้แล้ว
+- ข้อมูล production: /srv/import-export-control-cloud-data; staging: /srv/import-export-control-cloud-staging-data; ตรวจ mount คนละโฟลเดอร์แล้ว
 
-See [BACKUP-AND-RELEASE.md](BACKUP-AND-RELEASE.md) for backup coverage, restore constraints, promotion gates and rollback commands. GitHub Actions runs source tests; production promotion remains a separate gated command. SSH deployment credentials have not been provisioned in GitHub. Email remains disabled; Odoo remains read-only.
+รายละเอียดคำสั่งย้อนรุ่นและกู้ข้อมูลอยู่ใน [BACKUP-AND-RELEASE.md](BACKUP-AND-RELEASE.md) การย้อน image รักษาข้อมูลจริงไว้ การกู้ข้อมูลต้องทดลองในโฟลเดอร์แยกก่อน
+
+## การทำงานหลังจากนี้
+
+เมื่อส่งโค้ดเข้าสาขา codex หรือ main ระบบทดสอบบน GitHub อัตโนมัติ การขึ้นเว็บจริงยังใช้คำสั่ง release ที่บังคับผ่าน staging → ตรวจ Odoo/สิทธิ์ → หยุด writer/สำรอง → ทดลองกู้คืน → production จึงยังไม่ deploy production เพียงเพราะพิมพ์คำสั่งในแชตหรือ push โค้ด ไม่มี SSH secret สำหรับ deploy ถูกตั้งใน GitHub
+
+สำรอง runtime รายวันโดยตรวจทุก 6 ชั่วโมงและเก็บ 14 ชุดที่ผ่านการตรวจ สำรองปัจจุบันอยู่บน VPS เครื่องเดียว; ยังไม่ได้ตั้งสำเนานอกเครื่อง อีเมลยังปิดและ Odoo เป็นการอ่านอย่างเดียว
+
+Repository เป็นสาธารณะ จึงไม่เผยแพร่ environment, รหัสผ่าน, runtime, backup หรือเลข PO ตัวอย่าง ประวัติ baseline ในเครื่องที่มีข้อมูลเคสส่วนตัวไม่ได้ถูก push; เผยแพร่เฉพาะ source ที่ตรวจแล้วบนประวัติ main เดิม

@@ -27,7 +27,7 @@ Restore validates and reads every byte before creating output. The destination m
 
 ## Staging and manual release
 
-`docker-compose.staging.yml` has its own project name `import-export-control-cloud-staging`, fixed `/srv/import-export-control-cloud-staging-data` bind mount, `traefik.enable=false`, and no published ports. Its private env file must differ from production. Seed only separate fixture data and preserve an intentionally configured admin/viewer pair. Use read-only Odoo credentials for companies 1 and 2. `DISABLE_SCHEDULED_MUTATIONS=1` disables scheduled writes; AI and delivery credentials are blanked by the compose configuration. The staging data directory is never a production mount.
+`docker-compose.staging.yml` has its own project name `import-export-control-cloud-staging`, fixed `/srv/import-export-control-cloud-staging-data` bind mount, `traefik.enable=false`, and no published ports. Its private env file must differ from production. Seed only a separately copied runtime snapshot or synthetic fixture data and preserve an intentionally configured admin/viewer pair. Use read-only Odoo credentials for companies 1 and 2. `DISABLE_SCHEDULED_MUTATIONS=1` disables scheduled writes; AI and delivery credentials are blanked by the compose configuration. The staging data directory is never a production mount.
 
 Before first use, the release owner must:
 

@@ -69,18 +69,18 @@ Produces versioned backup+manifest, validated restore-to-empty, separate staging
 - [x] Write failing full-file byte restoration, checksums, malformed manifest, traversal, nonempty restore and interrupted backup tests.
 - [x] Implement full backup/restore and retention; parent calls scheduled backup from server and uses frozen-writer backup before production.
 - [x] Add staging/release dry-run tests, implement scripts and CI test workflow without embedding credentials or overwriting unrelated GitHub repository content.
-- [ ] Verify remote repository/runner/access, separate staging directory, privately provision viewer, run restore drill and staged gates, then use the tested release path for production.
+- [x] Verify remote repository/runner/access, separate staging directory, privately provision viewer, run restore drill and staged gates, then use the tested release path for production.
 
 ## Task 5 Integration and release verification
 
 - [x] Run all safe local suites and isolated E2E, record every failure; fix integration issues and complete independent spec/quality review.
-- [ ] Commit versioned release; publish only to the authorized repository/branch after inspecting existing contents, attach a PR if created.
-- [ ] Build once, stage with separate data, verify viewer/admin/read-only Odoo and restore drill, back up production coherently, deploy and verify public routes/data counts/roles.
-- [ ] Record current runtime/release evidence, rollback commands and any cloud credential/runner limitation accurately in docs; do not label unrun automation active.
+- [x] Commit versioned release; publish only to the authorized repository/branch after inspecting existing contents, attach a PR if created.
+- [x] Build once, stage with separate data, verify viewer/admin/read-only Odoo and restore drill, back up production coherently, deploy and verify public routes/data counts/roles.
+- [x] Record current runtime/release evidence, rollback commands and any cloud credential/runner limitation accurately in docs; do not label unrun automation active.
 
 ## Execution ledger
 
-Local implementation and independent review complete. Baseline: d0c1df8 (private local history). Full isolated run: 127/127 primary tests, 20 groups without failures, packing and admin/viewer browser journeys passed. Final scoped integration review: 20/20 HTTP/workflow tests, four findings resolved. Remote container, CI and production evidence will be recorded in docs/STABILIZATION-2026-10-16.md after those gates actually run.
+Local implementation and independent review complete. Baseline: d0c1df8 (private local history). Full isolated run: 127/127 primary tests, 20 groups without failures, packing and admin/viewer browser journeys passed. Final scoped integration review: 20/20 HTTP/workflow tests, four findings resolved. Remote image runtime passed, GitHub Actions38882428180 passed, staging passed and production promoted image97327c6 from sourcea33d83a with backup+restore verified. See docs/STABILIZATION-2026-10-16.md for actual evidence.
 
 Ruling: Existing dirty source is the already deployed baseline; preserve it before feature changes and never reset or discard it. All changes remain on a codex branch in the authorized project workspace.
 

@@ -56,7 +56,7 @@ node tests/container-cleanup.cjs
 
 ## Online status and cutover
 
-The public domain now runs this application using the Odoo 18 HTTPS API. Cutover completed on 2026-10-16 after live data parity, isolated runtime tests and private staging verification passed. Public checks returned 369 import rows, 140 export rows and 1,087 tracking records. The incumbent and private staging containers are stopped; recoverable backups are retained on the VPS.
+The public domain now runs this application using the Odoo 18 HTTPS API. Cutover completed on 2026-10-16 after live data parity, isolated runtime tests and private staging verification passed. Public checks returned 369 import rows, 140 export rows and 1,087 tracking records. The legacy incumbent/staging containers remain stopped. A new isolated staging container uses a distinct data directory; recoverable backups are retained on the VPS. See `docs/STABILIZATION-2026-10-16.md` for the current verified release.
 
 Email is intentionally disabled with `MAIL_DISABLED=1`; diagnostics report `explicitly-disabled`, not successful mail authentication. The old direct RDS and MCP paths are not used in API mode. A snapshot-backed 200 response is not a live-integration pass. The verifier remains `readyForCutover=false` in remote HTTP-only mode or if required evidence is missing. See `docs/STAGING-STATUS.json` for the deployment record.
 
@@ -81,7 +81,7 @@ these links and work items.
 Full runtime backups, validated restore-to-empty and the immutable-image
 staging/promotion/rollback command are documented in
 `docs/BACKUP-AND-RELEASE.md`. Staging has its own data directory and private env.
-GitHub Actions runs source-only isolated tests on codex branches/main/PRs;
+GitHub Actions runs isolated source/browser tests and Linux image startup checks on codex branches/main/PRs;
 production promotion uses the gated release command, not an ungated source push.
 
 The optional `ODOO_DATA_SOURCE=api` mode reads Odoo 18 over HTTPS using `ODOO_API_URL`, `ODOO_DB`, `ODOO_LOGIN`, and `ODOO_API_KEY`. Configure these privately in the server environment. `.env.odoo-api` is an ignored local credential-entry file and is not loaded automatically by the server or copied into the image. API mode covers boards, order lines, vendors, scorecards, GL reconciliation, logistics bills and exchange rates without direct PostgreSQL or MCP queries. Readiness still requires fresh data, authentication and successful supporting routes.
