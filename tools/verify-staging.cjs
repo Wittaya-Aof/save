@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const assert = require('node:assert/strict');
-async function verifyStaging({ base = 'http://127.0.0.1:3000', env = process.env, production = false } = {}) {
+async function verifyStaging({ base = 'http://127.0.0.1:3000', env = process.env, production = false, loginChecks = false } = {}) {
   assert.ok(env.APP_PASSWORD && env.VIEWER_PASSWORD, 'Private admin/viewer passwords must be configured for release verification');
   const identities = [
     { user: env.APP_USER || 'admin', password: env.APP_PASSWORD, canWrite: true },
@@ -23,6 +23,20 @@ async function verifyStaging({ base = 'http://127.0.0.1:3000', env = process.env
     counts[identity.canWrite ? 'adminTracking' : 'viewerTracking'] = payload.rows.length;
   }
   assert.equal(counts.adminTracking, counts.viewerTracking, 'both roles see the same tracking data');
+  if (loginChecks && !production) {
+    const page=await request('/login');assert.equal(page.status,200,'login page must exist in the release image');
+    assert.match(await page.text(),/autocomplete="current-password"/);
+    for (const identity of identities) {
+      const login=await request('/api/auth/login',null,{method:'POST',headers:{'content-type':'application/json','x-control-request':'1'},body:JSON.stringify({username:identity.user,password:identity.password})});
+      assert.equal(login.status,200,'form login must succeed');
+      assert.equal((await login.json()).canWrite,identity.canWrite);
+      const value=login.headers.get('set-cookie')||'';assert.match(value,/HttpOnly/);assert.match(value,/SameSite=Lax/);
+      const cookie=value.split(';')[0];
+      const me=await request('/api/me',null,{headers:{cookie,'user-agent':'Mozilla/5.0'}});assert.equal(me.status,200);assert.equal((await me.json()).canWrite,identity.canWrite);
+      const logout=await request('/api/auth/logout',null,{method:'POST',headers:{cookie,'content-type':'application/json','x-control-request':'1'},body:'{}'});assert.equal(logout.status,200);
+      assert.equal((await request('/api/me',null,{headers:{cookie}})).status,401,'logged-out cookie must be revoked');
+    }
+  }
   if (!production) {
     const denied = await request('/api/tracking/upsert', identities[1], { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"rows":[]}' });
     assert.equal(denied.status, 403, 'viewer mutation must be denied');
@@ -36,7 +50,7 @@ async function verifyStaging({ base = 'http://127.0.0.1:3000', env = process.env
     assert.equal(payload.stale, false, board + ' must be explicitly current');
     counts[board] = payload.rows.length;
   }
-  return { ok: true, mode: production ? 'production-get-only' : 'isolated-staging', counts };
+  return { ok: true, mode: production ? 'production-get-only' : 'isolated-staging', counts, ...(loginChecks&&!production?{loginVerified:true}:{}) };
 }
-if (require.main === module) verifyStaging().then(result => console.log(JSON.stringify(result))).catch(e => { console.error('Staging check failed: ' + e.message); process.exitCode = 1; });
+if (require.main === module) verifyStaging({loginChecks:true}).then(result => console.log(JSON.stringify(result))).catch(e => { console.error('Staging check failed: ' + e.message); process.exitCode = 1; });
 module.exports = { verifyStaging };

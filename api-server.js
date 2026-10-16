@@ -25,6 +25,14 @@ const { resolveRuntimePaths, resolveRuntimePort } = require('./lib/runtime-paths
 // มีบัญชีอย่างน้อย 1 คนที่ใช้งานได้ = เปิดโหมดตรวจรายคน
 const usersLib = require('./lib/users.cjs');
 const accessLib = require('./lib/authorization.cjs');
+const webSessions = require('./lib/web-sessions.cjs');
+const browserSessions = webSessions.createSessionStore();
+const loginLimiter = webSessions.createLoginLimiter();
+function sessionProof(identity) {
+  return crypto.createHash('sha256').update(JSON.stringify([identity.user, USERS.required,
+    USERS.store.users?.[identity.user] || null, process.env.APP_USER, process.env.APP_PASSWORD,
+    process.env.VIEWER_USER, process.env.VIEWER_PASSWORD, process.env.ALLOW_SHARED_PASSWORD])).digest('hex');
+}
 const storageLib = require('./lib/operational-storage.cjs');
 const shipmentIdentity = require('./lib/shipment-identity.cjs');
 const { buildWorklist } = require('./lib/worklist.js');
@@ -1240,7 +1248,7 @@ function jsonOk(res, data) {
   const body = JSON.stringify(data);
   res.writeHead(200, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-store',
     ...SECURITY_HEADERS,
   });
   res.end(body);
@@ -1251,7 +1259,7 @@ function jsonOk(res, data) {
 function jsonErr(res, code, msg) {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-store',
     ...SECURITY_HEADERS,
   });
   res.end(JSON.stringify({ ok: false, error: msg }));
@@ -1317,7 +1325,7 @@ const server = http.createServer(async (req, res) => {
   const reqUrl  = req.url.split('?')[0];
   const method  = req.method;
 
-  // ── Basic Auth ──
+  // Browser sessions are revocable. Basic remains available to existing non-browser API tools.
   // สองโหมด เลือกเองตามว่ามีบัญชีรายคนหรือยัง (ดู usersMode ตอน start):
   //   1. มีบัญชีใน users.json → **ตรวจรายคน** ชื่อใน audit log จึงเป็นชื่อที่พิสูจน์แล้ว
   //   2. ยังไม่มีบัญชี       → APP_PASSWORD ร่วมกันแบบเดิม (ไม่ตั้ง = ไม่มี auth เลย)
@@ -1326,12 +1334,63 @@ const server = http.createServer(async (req, res) => {
   // /api/alive ยกเว้นเสมอ เพื่อให้ watchdog เช็คสถานะได้โดยไม่ต้องถือรหัส
   refreshUsers();
   const authRequired = USERS.required || USERS.enabled || !!process.env.APP_PASSWORD || !!process.env.VIEWER_PASSWORD;
-  req.auth = accessLib.resolveAccess({ authorization: req.headers.authorization, env: process.env,
-    store: USERS.store, requireUsers: USERS.required, localNoAuth: !authRequired && isLoopback });
+  // Node fetch also sends Sec-Fetch-Mode; only browser site/destination metadata identifies the browser path.
+  const browserRequest = req.headers['sec-fetch-site'] !== undefined || req.headers['sec-fetch-dest'] !== undefined || /text\/html/i.test(req.headers.accept || '') || /Mozilla\/|Opera\/|Dalvik\//i.test(req.headers['user-agent'] || '');
+  const sessionToken = webSessions.tokenFromCookie(req.headers.cookie);
+  const session = browserSessions.get(sessionToken, sessionProof);
+  const secureCookie = process.env.NODE_ENV === 'production' || !!req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
+  const crossSiteRequest = () => {
+    if (req.headers['sec-fetch-site'] === 'cross-site') return true;
+    try { return !!req.headers.origin && new URL(req.headers.origin).host !== req.headers.host; } catch { return true; }
+  };
+  if (!['GET','HEAD','OPTIONS'].includes(method) && crossSiteRequest()) {
+    jsonErr(res,403,'ไม่รับการแก้ไขข้อมูลจากเว็บไซต์อื่น');req.resume();return;
+  }
+  if (reqUrl.startsWith('/api/auth/')) {
+    if (!['/api/auth/login','/api/auth/logout','/api/auth/refresh'].includes(reqUrl)) { jsonErr(res,404,'ไม่พบคำสั่ง'); return; }
+    if (method !== 'POST') { jsonErr(res,405,'ต้องใช้ POST'); return; }
+    if (crossSiteRequest() || req.headers['x-control-request'] !== '1') { jsonErr(res,403,'ไม่รับคำสั่งเข้าสู่ระบบจากเว็บไซต์อื่น'); req.resume(); return; }
+    const input = await readJsonBody(req,res,8192); if(input===null)return;
+    if (reqUrl === '/api/auth/logout') {
+      browserSessions.revoke(sessionToken); res.setHeader('Set-Cookie',webSessions.sessionCookie('',secureCookie));
+      jsonOk(res,{ok:true}); return;
+    }
+    if (reqUrl === '/api/auth/refresh') {
+      const refreshed=browserSessions.touch(sessionToken,sessionProof);
+      if(!refreshed){jsonErr(res,401,'หมดเวลาใช้งาน กรุณาเข้าสู่ระบบใหม่');return;}
+      jsonOk(res,{ok:true,expiresAt:refreshed.expiresAt,idleMs:refreshed.idleMs});return;
+    }
+    const user=typeof input.username==='string'?input.username.trim():'';
+    if(!user||user.length>120||user.includes(':')||typeof input.password!=='string'||input.password.length>1024){jsonErr(res,400,'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');return;}
+    const attemptKey=clientIp(req)+'\0'+user.toLowerCase();
+    if(loginLimiter.blocked(attemptKey)){res.setHeader('Retry-After','900');jsonErr(res,429,'ลองเข้าสู่ระบบหลายครั้งเกินไป กรุณารอ 15 นาที');return;}
+    const identity=accessLib.resolveAccess({authorization:'Basic '+Buffer.from(user+':'+input.password).toString('base64'),env:process.env,store:USERS.store,requireUsers:USERS.required});
+    if(!identity){loginLimiter.failed(attemptKey);jsonErr(res,401,'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');return;}
+    let token;
+    try{token=browserSessions.create(identity,sessionProof(identity));}catch{jsonErr(res,503,'มีผู้ใช้งานพร้อมกันจำนวนมาก กรุณาลองใหม่');return;}
+    browserSessions.revoke(sessionToken);loginLimiter.clear(attemptKey);
+    res.setHeader('Set-Cookie',webSessions.sessionCookie(token,secureCookie));
+    const created=browserSessions.get(token,sessionProof);
+    jsonOk(res,{ok:true,...identity,expiresAt:created.expiresAt,idleMs:created.idleMs,next:webSessions.safeNext(input.next)});return;
+  }
+  if (reqUrl === '/login' || reqUrl === '/login.html') {
+    if(!['GET','HEAD'].includes(method)){jsonErr(res,405,'ต้องใช้ GET');return;}
+    if(session){res.writeHead(303,{Location:webSessions.safeNext(new URL('http://x'+req.url).searchParams.get('next')),'Cache-Control':'no-store'});res.end();return;}
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store',...SECURITY_HEADERS});
+    res.end(method==='HEAD'?'':fs.readFileSync(path.join(ROOT,'login.html')));return;
+  }
+  req.auth = session ? session.identity : !sessionToken && !browserRequest ? accessLib.resolveAccess({ authorization: req.headers.authorization, env: process.env,
+    store: USERS.store, requireUsers: USERS.required, localNoAuth: !authRequired && isLoopback }) : !authRequired && isLoopback ? {user:'local',role:'developer',canWrite:true} : null;
+  if (reqUrl === '/vendor/auth.js' && ['GET','HEAD'].includes(method)) {
+    res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store',...SECURITY_HEADERS});
+    res.end(method==='HEAD'?'':fs.readFileSync(path.join(ROOT,'vendor','auth.js')));return;
+  }
   if (reqUrl !== '/api/alive') {
     if (!req.auth) {
-      res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Logistics Tracking"', 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('ต้องใส่ชื่อผู้ใช้และรหัสผ่าน'); return;
+      if(!reqUrl.startsWith('/api/')&&['GET','HEAD'].includes(method)){
+        res.writeHead(303,{Location:'/login?next='+encodeURIComponent(webSessions.safeNext(req.url)),'Cache-Control':'no-store',...SECURITY_HEADERS});res.end();
+      }else jsonErr(res,401,'กรุณาเข้าสู่ระบบ');
+      return;
     }
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !req.auth.canWrite) {
       jsonErr(res, 403, 'บัญชีนี้ดูข้อมูลได้อย่างเดียว — ต้องใช้บัญชีแอดมินหรือผู้พัฒนาเพื่อแก้ไข'); return;
@@ -1358,7 +1417,7 @@ const server = http.createServer(async (req, res) => {
   if (reqUrl.startsWith('/api/')) {
 
     if (reqUrl === '/api/me' && method === 'GET') {
-      jsonOk(res, { ok: true, ...req.auth }); return;
+      jsonOk(res, { ok: true, ...req.auth, ...(session?{session:true,expiresAt:session.expiresAt,idleMs:session.idleMs}:{session:false}) }); return;
     }
     if (reqUrl === '/api/worklist' && method === 'GET') {
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -2412,7 +2471,7 @@ const server = http.createServer(async (req, res) => {
     // ส่วน vendor/*.js เป็นไลบรารีตายตัว (react/babel/xlsx) cache ได้นานๆ ให้โหลดหน้าเร็วขึ้น
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'text/plain',
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=86400',
+      'Cache-Control': ext === '.html' ? 'no-store' : 'public, max-age=86400',
       ...SECURITY_HEADERS,
     });
     res.end(data);

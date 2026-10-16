@@ -8,6 +8,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 # Explicit source inputs only; never copy environment or runtime files.
 COPY api-server.js odoo-queries.js manage-users.mjs ./
 COPY import-export-os.html freight-comparison.html container-loading-calculator.html ./
+COPY login.html ./
 COPY lib/ ./lib/
 COPY tools/ ./tools/
 COPY vendor/ ./vendor/

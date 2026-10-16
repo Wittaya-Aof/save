@@ -1,0 +1,24 @@
+'use strict';
+const assert=require('node:assert/strict'),{chromium}=require('playwright');
+const {fixture}=require('./persistence-permissions.cjs');
+(async()=>{const f=await fixture();let browser;try{
+ browser=await chromium.launch({headless:true});const context=await browser.newContext();const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(f.base+'/freight-comparison.html');await page.waitForURL(/\/login\?next=/);
+ await page.locator('#username').fill('viewer');await page.locator('#password').fill('wrong');await page.locator('#submit').click();await page.getByRole('alert').filter({hasText:'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'}).waitFor();
+ await page.locator('#password').fill('fixture-viewer');await page.getByRole('button',{name:'แสดงรหัสผ่าน'}).click();assert.equal(await page.locator('#password').getAttribute('type'),'text');await page.locator('#submit').click();await page.waitForURL(f.base+'/freight-comparison.html');
+ await page.getByRole('button',{name:'ออกจากระบบ',exact:true}).waitFor();assert.equal(await page.locator('#btnSave').isVisible(),false);
+ const cookie=(await context.cookies()).find(x=>x.name==='control_session');assert(cookie.httpOnly);assert.equal(cookie.sameSite,'Lax');
+ await page.goto(f.base+'/');await page.getByRole('button',{name:'ออกจากระบบ',exact:true}).waitFor();
+ await page.goto(f.base+'/freight-comparison.html');await page.getByRole('button',{name:'ออกจากระบบ',exact:true}).waitFor();
+ const other=await context.newPage();await other.goto(f.base+'/');await other.getByRole('button',{name:'ออกจากระบบ',exact:true}).waitFor();
+ assert.equal((await other.evaluate(()=>fetch('/api/me').then(r=>r.json()))).canWrite,false);
+ await page.getByRole('button',{name:'ออกจากระบบ',exact:true}).click();await page.waitForURL(/\/login\?reason=logout/);await other.waitForURL(/\/login\?reason=logout/);
+ assert.equal((await context.request.get(f.base+'/api/tracking')).status(),401);
+ const replay=await fetch(f.base+'/api/me',{headers:{cookie:cookie.name+'='+cookie.value}});assert.equal(replay.status,401);
+ await page.goBack();await page.waitForURL(/\/login/);
+ await page.locator('#username').fill('admin');await page.locator('#password').fill('fixture-admin');await page.locator('#submit').click();await page.getByRole('button',{name:'ออกจากระบบ',exact:true}).waitFor();
+ assert.equal((await page.evaluate(()=>fetch('/api/me').then(r=>r.json()))).canWrite,true);
+ await page.goto(f.base+'/container-loading-calculator.html');await page.getByRole('button',{name:'ออกจากระบบ',exact:true}).waitFor();
+ await page.getByRole('button',{name:'ออกจากระบบ',exact:true}).click();await page.waitForURL(/\/login/);assert.deepEqual(errors,[]);
+ console.log('login-browser: passed (deep link, wrong credentials, viewer/admin, all-page logout, cross-tab logout, back navigation, no page errors)');
+ }finally{if(browser)await browser.close();await f.close();}})().catch(e=>{console.error(e.stack);process.exitCode=1;});

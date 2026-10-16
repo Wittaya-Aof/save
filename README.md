@@ -64,6 +64,10 @@ See `docs/VPS-DEPLOYMENT.md` for backup, deployment, cutover and rollback. Never
 
 ## Stabilization and roles
 
+Browser access now uses `/login` with the existing accounts and a Logout button
+on each standalone tool. Sessions expire after 30 minutes idle or 12 hours total;
+logout revokes the server token across tabs. See `docs/LOGIN-LOGOUT.md`.
+
 The shared `viewer` account reads the same business data as admin but cannot
 mutate server state. Only authenticated admin/developer roles can edit. The
 existing shared admin credential remains privately configured on the VPS; the

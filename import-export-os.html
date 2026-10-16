@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Import-Export OS — KOB &amp; BTV</title>
+<script src="/vendor/auth.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- ── ตัวอักษรตามระบบดีไซน์ Supabase (supabase.design.md) ──
@@ -1340,7 +1341,7 @@ class App extends Component {
   renderSidebar(){
     const {tab}=this.state;
     const inLogisticsGroup=tab==='import'||tab==='export'||tab==='dashboard';
-    return <aside style={{width:'224px',flexShrink:0,height:'100vh',background:'var(--color-chrome)',display:'flex',flexDirection:'column',borderRight:'1px solid var(--color-chrome-border)'}}>
+    return <aside style={{width:'224px',flexShrink:0,height:'var(--control-app-height,100vh)',background:'var(--color-chrome)',display:'flex',flexDirection:'column',borderRight:'1px solid var(--color-chrome-border)'}}>
       <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'0 18px',height:'60px',flexShrink:0,borderBottom:'1px solid var(--color-chrome-border)'}}>
         <div style={{width:'30px',height:'30px',borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Ico name="boxes" size={17} sw={1.8}/></div>
         <div style={{minWidth:0}}><div className="kobDisplayTight" style={{fontSize:'16px',color:'var(--color-chrome-display)'}}>Import-Export OS</div><div style={{fontSize:'10.5px',color:'var(--color-chrome-muted)'}}>KOB &amp; BTV</div></div>
@@ -2840,7 +2841,7 @@ class App extends Component {
   render(){
     const {tab,view,toast}=this.state;
     const isBoard=tab==='import'||tab==='export';
-    return <div style={{display:'flex',height:'100vh',width:'100%',overflow:'hidden',background:'var(--color-page-bg)'}}>
+    return <div style={{display:'flex',height:'var(--control-app-height,100vh)',width:'100%',overflow:'hidden',background:'var(--color-page-bg)'}}>
       {this.renderSidebar()}
       <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',overflow:'hidden'}}>
         {this.renderTopbar()}

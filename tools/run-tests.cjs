@@ -5,6 +5,7 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const unit = [
   'authorization', 'persistence-permissions', 'import-workflow', 'logistics-costs',
+  'login-sessions', 'session-store', 'client-session',
   'odoo-api', 'odoo-boards', 'odoo-services', 'odoo-financial-sql',
   'frontend-regressions', 'loading-weight', 'runtime-backup', 'release-runtime', 'release-checks',
 ].map(name => 'tests/' + name + '.cjs');
@@ -16,7 +17,7 @@ const scripts = [
 const tasks = [['isolated unit and HTTP regression tests', ['--test', ...unit]],
   ...scripts.map(file => [file, [file]])];
 if (process.argv.includes('--packing')) for (const name of ['pack-invariants', 'pack-capacity', 'pack-plan', 'pack-lanes']) tasks.push([name, ['tests/' + name + '.mjs']]);
-if (process.argv.includes('--browser')) tasks.push(['isolated browser journeys', ['tests/frontend-browser.cjs']], ['browser against real fixture API', ['tests/browser-real-api.cjs']]);
+if (process.argv.includes('--browser')) tasks.push(['isolated browser journeys', ['tests/frontend-browser.cjs']], ['browser against real fixture API', ['tests/browser-real-api.cjs']], ['login and logout browser journeys', ['tests/login-browser.cjs']]);
 const failures = [];
 for (const [label, args] of tasks) {
   const result = spawnSync(process.execPath, args, { cwd: root, encoding: 'utf8', timeout: 180000, maxBuffer: 8 * 1024 * 1024 });

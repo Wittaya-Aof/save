@@ -10,6 +10,7 @@
 !import-export-os.html
 !freight-comparison.html
 !container-loading-calculator.html
+!login.html
 !docker-entrypoint.sh
 !lib/
 !lib/*.cjs
