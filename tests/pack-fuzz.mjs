@@ -1,3 +1,4 @@
+import { fullySupported } from './lib/packing-support.cjs';
 import { chromium } from 'playwright';
 // Read-only local fixture; never target the user's running port 3000.
 const packingFixtureURL = new URL('../container-loading-calculator.html', import.meta.url).href;
@@ -10,6 +11,7 @@ await p.route('https://**/*', route => route.abort());
 await p.goto(packingFixtureURL, { waitUntil: 'load' });
 await p.waitForTimeout(1500);
 
+await p.addScriptTag({ content: fullySupported.toString() });
 const res = await p.evaluate((N) => {
   // PRNG แบบมี seed เพื่อให้เคสที่พังกลับมาทำซ้ำได้ (mulberry32)
   const rng = (s) => () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s);
@@ -63,14 +65,7 @@ const res = await p.evaluate((N) => {
                        && Math.min(a.z0 + a.H, d.z0 + d.H) - Math.max(a.z0, d.z0) > 0.01;
     for (let i = 0; i < blocks.length && bad.indexOf('intersect') < 0; i++)
       for (let j = i + 1; j < blocks.length; j++) if (ov3(blocks[i], blocks[j])) { bad.push('intersect'); break; }
-    const deckTops = new Set(decks.map(d => d.z0 + d.H));
-    boxes.forEach(bx => {
-      if (bx.z0 < 0.01 || deckTops.has(bx.z0)) return;
-      const sup = blocks.some(o => o !== bx && Math.abs(o.z0 + o.H - bx.z0) < 0.01
-        && Math.min(o.x0 + o.L, bx.x0 + bx.L) - Math.max(o.x0, bx.x0) > 0.01
-        && Math.min(o.y0 + o.W, bx.y0 + bx.W) - Math.max(o.y0, bx.y0) > 0.01);
-      if (!sup) bad.push('floating');
-    });
+    boxes.forEach(bx => { if (!fullySupported(bx, blocks)) bad.push('unsupported-footprint'); });
     const perColor = {};
     boxes.forEach(bx => { perColor[bx.color] = (perColor[bx.color] || 0) + (bx.nL || 1) * (bx.nW || 1) * (bx.nH || 1); });
     items.forEach((it, idx) => {
@@ -78,6 +73,9 @@ const res = await p.evaluate((N) => {
       if ((perColor[it.color] || 0) !== st.placed) bad.push('count-mismatch');
       if (st.placed > r.items[idx].needed) bad.push('over-placed');
       if (it.maxLayers > 0 && st.layers > it.maxLayers) bad.push('maxLayers-violated');
+      const deck = it.usePallet ? it.pallet.D : 0;
+      const ceiling = Math.min(c.H, it.usePallet ? it.pallet.H : c.H, it.maxH2 > 0 ? deck + it.maxH2 * 10 : c.H);
+      if (boxes.some(b => b.color === it.color && b.z0 + b.H > ceiling + .001)) bad.push('SKU-height-violated');
     });
     if (bad.length) violations.push({ seed, kinds: [...new Set(bad)], cont: c.id, nSku, mixMode,
       items: items.map(i => `${i.type} ${i.L}x${i.W}x${i.H} q${i.qty} ml${i.maxLayers} mh${i.maxH2} pal${i.usePallet?(i.pallet.L+'x'+i.pallet.W+'h'+i.pallet.H):'-'}`) });

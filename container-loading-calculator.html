@@ -1156,7 +1156,7 @@ function setUnitType(uid,typeId){
 }
 function setUnitField(uid,key,v){
   var u=findUnit(uid); if(!u)return;
-  var n=Math.max(1,parseInt(v)||1);
+  var n=Number(v);
   u[key]=n; // stored directly; no re-render so the input keeps focus
 }
 function removeUnit(uid){
@@ -1294,7 +1294,7 @@ function renderPalletRow(g){
 function setPallet(gid,k,v){
   var g=groups.find(g=>g.id===gid); if(!g)return;
   if(!g.pallet)g.pallet={...PALLET_PRESET};
-  g.pallet[k]=parseFloat(v)||0;
+  g.pallet[k]=Number(v);
 }
 
 function fmtDims(it){
@@ -1338,12 +1338,12 @@ function setItemField(gid,iid,key,v){
   var g=groups.find(x=>x.id===gid); var it=g&&g.items.find(i=>i.id===iid); if(!it)return;
   if(key==='name'){it.name=v; it._auto=false;}
   else if(key==='pieces'||key==='pcsPerCtn'){
-    it[key]=Math.max(1,Math.round(parseFloat(v)||1));
+    it[key]=Number(v);
     it.qty=cartonsOf(it);          // keep carton count in sync
     renderGroups();                // refresh the read-only "จำนวนกล่อง" cell
   }
-  else if(key==='qty'){it.qty=Math.max(1,Math.round(parseFloat(v)||1));}
-  else{it[key]=parseFloat(v)||0;}
+  else if(key==='qty'){it.qty=Number(v);}
+  else{it[key]=Number(v);}
 }
 function cpOpenItemRow(gid,iid,dotId){
   var g=groups.find(x=>x.id===gid); var it=g&&g.items.find(i=>i.id===iid); if(!it)return;
@@ -1504,16 +1504,16 @@ function updModalCartons(){
   var el=document.getElementById('mi-cartons'); if(el)el.textContent=Math.max(1,Math.ceil(pieces/pcs)).toLocaleString();
 }
 function getMVals(){
-  var n=id=>parseFloat(document.getElementById(id)?.value)||0;
+  var n=id=>Number(document.getElementById(id)?.value);
   var b=id=>!!(document.getElementById(id)?.checked);
   var s=id=>document.getElementById(id)?.value||'';
-  var pieces=Math.max(1,Math.round(n('mi-pieces')||1));
-  var pcsPerCtn=Math.max(1,Math.round(n('mi-pcsctn')||1));
+  var pieces=n('mi-pieces');
+  var pcsPerCtn=n('mi-pcsctn');
   return{
     type:_mitem.type, name:s('mi-name'), color:_mitem.color, // color from palette picker
-    L:n('mi-L')||40, W:n('mi-W')||30, H:n('mi-H')||25, D:n('mi-D')||20,
-    weight:n('mi-weight')||0.001,
-    pieces:pieces, pcsPerCtn:pcsPerCtn, qty:Math.max(1,Math.ceil(pieces/pcsPerCtn)),
+    L:n('mi-L'), W:n('mi-W'), H:n('mi-H'), D:n('mi-D'),
+    weight:n('mi-weight'),
+    pieces:pieces, pcsPerCtn:pcsPerCtn, qty:Math.ceil(pieces/pcsPerCtn),
     rotL:b('mi-rotL'), rotW:b('mi-rotW'), rotH:b('mi-rotH'),
     maxLayers:b('cb-layers')?n('mi-maxLayers'):0,
     maxH2:b('cb-mh')?n('mi-maxH2'):0,
@@ -1525,6 +1525,7 @@ function getMVals(){
 
 function saveItem(){
   var v=getMVals();
+  try{validateCargoInputs(CONTAINERS[0],[v]);}catch(ex){alert(ex.message);return;}
   if(!v.name)v.name=typeLabel(getTypeInfo(v.type));
   var g=groups.find(g=>g.id===modalGid);
   if(!g)return;
@@ -1543,8 +1544,35 @@ function saveItem(){
 }
 
 // ── CALCULATION ───────────────────────────────────────────────────────────────
+function validateCargoInputs(c,items){
+  function num(v,label,positive,integer){
+    if(!Number.isFinite(v)||(positive?v<=0:v<0)||(integer&&!Number.isInteger(v)))throw new RangeError('Invalid '+label+': enter a finite '+(positive?'positive':'nonnegative')+(integer?' integer':'')+' value');
+  }
+  ['L','W','H','maxW'].forEach(function(k){num(c[k],'vehicle '+k,true);});
+  items.forEach(function(it){
+    var label=it.name||'cargo';
+    var dims=it.type==='drum'?['D','H']:(it.type==='roll'||it.type==='pipe'?['L','D']:['L','W','H']);
+    dims.forEach(function(k){num(it[k],label+' '+k,true);});
+    num(it.qty,label+' cartons',true,true);
+    num(it.weight==null?0:it.weight,label+' weight',false);
+    if(it.pieces!=null)num(it.pieces,label+' pieces',true,true);
+    if(it.pcsPerCtn!=null)num(it.pcsPerCtn,label+' pieces/carton',true,true);
+    ['maxH2','maxWt','maxLayers'].forEach(function(k){if(it[k]!=null)num(it[k],label+' '+k,false,k==='maxLayers');});
+    if(it.usePallet){
+      var p=it.pallet;if(!p)throw new RangeError('Invalid pallet specification');
+      ['L','W','H','D'].forEach(function(k){num(p[k],label+' pallet '+k,true);});
+      ['maxW','tare'].forEach(function(k){if(p[k]!=null)num(p[k],label+' pallet '+k,false);});
+      if(p.H<p.D)throw new RangeError('Invalid pallet height below deck');
+    }
+  });
+}
+function piecesInCartons(it,cartons,offset){
+  var per=it.pcsPerCtn||1,total=it.pieces==null?it.qty*per:it.pieces;
+  return Math.max(0,Math.min(cartons*per,total-(offset||0)*per));
+}
 function buildResult(c,allItems){
   if(!c)return null;
+  validateCargoInputs(c,allItems);
   // Retain the geometric answer independently from operational weight limits.
   var geometry={c:c,items:allItems.map(function(it){return calcFit(it,c);}),_ignoreWeight:true};
   var geometricLayout=packLayout(geometry);
@@ -1572,6 +1600,7 @@ function buildResult(c,allItems){
   result.items.forEach(function(ir,idx){
     var placed=(layout.stats[idx]||{}).placed||0;
     ir.item=allItems[idx];ir.needed=allItems[idx].qty;ir.packed=placed;
+    ir.packedPieces=piecesInCartons(ir.item,placed);
     ir.vol=placed*itemVol(ir.item);ir.wt=placed*(ir.item.weight||0);
     totVol+=ir.vol;totPkg+=placed;
     if(placed<ir.needed)allFit=false;
@@ -1579,8 +1608,10 @@ function buildResult(c,allItems){
   });
   result.totVol=totVol;result.totWt=totWt;result.totPkg=totPkg;
   result.volPct=totVol/(c.L*c.W*c.H/1e9)*100;result.wtPct=totWt/c.maxW*100;
-  result.geometryAllFit=geometryAllFit;result.weightValid=totWt<=c.maxW+1e-7;
-  result.allFit=allFit&&result.weightValid;result.unitsNeeded=units;
+  result.geometryAllFit=geometryAllFit;
+  result.weightKnown=allItems.every(function(it){return it.weight>0;});
+  result.weightValid=result.weightKnown?totWt<=c.maxW+1e-7:null;
+  result.allFit=allFit&&result.weightValid===true;result.unitsNeeded=units;
   return result;
 }
 
@@ -1606,9 +1637,10 @@ function chainResults(specs,allItems){
     r.items.forEach(function(ir,k){
       var left=(ir.needed||0)-(ir.packed||0);
       if(ir.packed>0)progress=true;
-      if(left>0)next.push({...rem[k],qty:left});
+      if(left>0)next.push({...rem[k],qty:left,pieces:Math.max(0,(rem[k].pieces==null?rem[k].qty*(rem[k].pcsPerCtn||1):rem[k].pieces)-ir.packedPieces)});
     });
-    if(!next.length||!progress)break;      // done, or nothing fits at all (avoid infinite loop)
+    if(!next.length)break;
+    if(!progress&&i>=specs.length)break; // only the final selected spec repeats
     rem=next;
   }
   return out;
@@ -1620,6 +1652,7 @@ function calculate(){
   if(!allItems.length){alert(t('alert_no_items'));return}
 
   var results=[];
+  try{
   if(autoSelect){
     // Evaluate all sea containers, recommend the most efficient one that fits everything
     var seaResults=CONTAINERS.filter(c=>c.cat==='sea').map(c=>buildResult(c,allItems)).filter(Boolean);
@@ -1635,6 +1668,7 @@ function calculate(){
     if(!selUnits.length){alert(t('alert_no_cont'));switchTab('containers');return}
     results=chainResults(selUnits.map(unitSpec),allItems);
   }
+  }catch(ex){alert(ex.message);return;}
   // every block is ONE physical unit; unitsNeeded = total units in the plan
   results.forEach(function(r){r.unitsNeeded=results.length;});
 
@@ -1644,7 +1678,7 @@ function calculate(){
 
 function calcFit(it,c){
   var fits=0, orient=null;
-  if(it.type==='drum'){fits=calcDrum(it,c);}
+  if(it.type==='drum'){var dr=calcBox({...it,L:it.D,W:it.D},c);fits=dr.n;orient=dr.o;}
   else if(it.type==='roll'||it.type==='pipe'){fits=calcCyl(it,c);}
   else{var r=calcBox(it,c);fits=r.n;orient=r.o;}
   return{item:it,fits,needed:it.qty,orient};
@@ -1933,31 +1967,8 @@ function calcBox(it,c){
 }
 
 function calcDrum(it,c){
-  var d=mm(it.D), h=mm(it.H);
-  if(!d||!h)return 0;
-  var palD=(it.usePallet&&it.pallet)?(it.pallet.D||150):0;
-  var effH=c.H-palD;
-  var nx=Math.floor(c.L/d), ny=Math.floor(c.W/d);
-  var nz=Math.floor(effH/h);
-  if(it.maxLayers>0)nz=Math.min(nz,it.maxLayers);
-  var sq=nx*ny*nz;
-  // Hex (staggered) packing — rows offset by half a diameter so they nest closer together.
-  // Row centres sit at d/2 … (W - d/2), spaced rowH apart, so the number of rows that actually
-  // fit is floor((W - d)/rowH) + 1 — NOT floor((W - d/2)/rowH) + 1 as before: that formula gave
-  // the last row only d/2 of clearance instead of a full d, inflating the count by a phantom row
-  // whenever the leftover width was between rowH-d/2 and rowH (e.g. Ø580mm drums in a 2352mm-wide
-  // 40'HQ reported 5 rows where only 4 fit). It also had no "does one drum even fit" guard, so a
-  // drum WIDER than the container (ny = 0, sq = 0) still came back with a positive hex count.
-  if(it.hexPack && d<=c.W && d<=c.L && nz>0){
-    var rowH=d*Math.sin(Math.PI/3);
-    var totalRows=Math.floor((c.W-d)/rowH)+1;
-    var odd=Math.ceil(totalRows/2), even=Math.floor(totalRows/2);
-    // offset rows start half a diameter in, so they lose one position when the tail doesn't fit
-    var r1=Math.floor(c.L/d), r2=Math.floor((c.L-d/2)/d);
-    sq=Math.max(sq,(odd*r1+even*r2)*nz);
-  }
-  var nx2=Math.floor(c.L/h), ny2=Math.floor(c.W/d), nz2=Math.floor(effH/d);
-  return Math.max(sq,nx2*ny2*nz2);
+  // Capacity and physical layout share rectangular envelopes and allowed axes.
+  return calcBox({...it,L:it.D,W:it.D},c).n;
 }
 
 function calcCyl(it,c){
@@ -2006,7 +2017,7 @@ function renderResults(results){
     var manifest=r._palletManifest||null;
     var rows=r.items.map((ir,idx)=>{
       var gr=layout.stats[idx]||{across:0,along:0,layers:0};
-      var pcsLoaded=ir.packed*(ir.item.pcsPerCtn||1);
+      var pcsLoaded=ir.packedPieces;
       totPkg+=ir.packed; totPcs+=pcsLoaded;
       totAcross+=(gr.across||0); totAlong+=(gr.along||0); totLayers+=(gr.layers||0);
       totVol+=ir.vol; totWt+=ir.wt;
@@ -2042,7 +2053,7 @@ function renderResults(results){
         </div>
         <div class="rs-badge">
           ${r.recommended?'<span class="badge" style="background:var(--color-brand-soft);color:var(--color-brand)">'+t('recommended')+'</span> ':''}
-          <span class="badge ${r.allFit?'badge-ok':'badge-warn'}">${r.allFit?t('fit_all'):t('fit_partial')}</span>${r.geometryAllFit&&!r.allFit?'<span class="badge badge-warn">'+(LANG==='en'?'Geometric fit; split by weight/limits':'ขนาดวางครบได้ · แบ่งตามน้ำหนัก/ข้อจำกัด')+'</span>':''}
+          <span class="badge ${r.allFit?'badge-ok':'badge-warn'}">${r.allFit?t('fit_all'):t('fit_partial')}</span>${r.weightValid===null?'<span class="badge badge-warn">'+(LANG==='en'?'Weight not provided; payload unconfirmed':'ยังไม่ระบุน้ำหนัก · ยังยืนยันพิกัดบรรทุกไม่ได้')+'</span>':''}${r.geometryAllFit&&!r.allFit&&r.weightKnown?'<span class="badge badge-warn">'+(LANG==='en'?'Geometric fit; split by weight/limits':'ขนาดวางครบได้ · แบ่งตามน้ำหนัก/ข้อจำกัด')+'</span>':''}
         </div>
       </div>
       <div class="res-detail">
@@ -2142,7 +2153,7 @@ function doExportCIPL(ri){
     var saved=trade[code]||{};
     var entry={
       product_code:code, description:desc,
-      qty_pcs:ir.packed*pcsPerCtn,
+      qty_pcs:ir.packedPieces,
       price_unit:(saved.price_unit!=null?saved.price_unit:null),
       pcs_per_ctn:pcsPerCtn,
       nw_per_ctn:(saved.nw_per_ctn!=null?saved.nw_per_ctn:null),
@@ -2453,6 +2464,7 @@ function shade(hex,f){
   return 'rgb('+r+','+g+','+b+')';
 }
 function itemBoxMM(it,orient){
+  if(Array.isArray(orient))return orient;
   if(it.type==='drum')return[mm(it.D),mm(it.D),mm(it.H)];
   if(it.type==='roll'||it.type==='pipe')return[mm(it.L),mm(it.D),mm(it.D)];
   return Array.isArray(orient)?orient:[mm(it.L),mm(it.W),mm(it.H)];
@@ -2467,6 +2479,31 @@ function itemBoxMM(it,orient){
 // Pallet items: multiple SKUs share pallets, stacked vertically up to pallet.H, pallets
 // tiled along the container length; also produces result._palletManifest for the report.
 // Returns {blocks, stats} where stats[itemIndex] = {across, along, layers, placed}.
+function hasFootprintSupport(surfaces,x,y,z,L,W){
+  if(z===0)return true;
+  var eps=1e-7;
+  var under=surfaces.filter(function(b){return Math.abs(b.z0+b.H-z)<=eps&&b.x0<x+L-eps&&b.x0+b.L>x+eps&&b.y0<y+W-eps&&b.y0+b.W>y+eps;});
+  if(under.some(function(b){return b.x0<=x+eps&&b.x0+b.L>=x+L-eps&&b.y0<=y+eps&&b.y0+b.W>=y+W-eps;}))return true;
+  var xs=[x,x+L];
+  under.forEach(function(b){xs.push(Math.max(x,b.x0),Math.min(x+L,b.x0+b.L));});
+  xs.sort(function(a,b){return a-b;});
+  for(var i=1;i<xs.length;i++){
+    if(xs[i]-xs[i-1]<=eps)continue;
+    var spans=under.filter(function(b){return b.x0<=xs[i-1]+eps&&b.x0+b.L>=xs[i]-eps;}).sort(function(a,b){return a.y0-b.y0;});
+    var end=y;
+    for(var j=0;j<spans.length;j++){if(spans[j].y0>end+eps)break;end=Math.max(end,spans[j].y0+spans[j].W);}
+    if(end<y+W-eps)return false;
+  }
+  return true;
+}
+function supportedCartons(surfaces,x,y,z,bL,bW,nW,take){
+  if(z===0)return take;
+  // Common case: one continuous supporting face under the complete batch.
+  var cols=Math.floor(take/nW),tail=take-cols*nW;
+  if((!cols||hasFootprintSupport(surfaces,x,y,z,cols*bL,nW*bW))&&(!tail||hasFootprintSupport(surfaces,x+cols*bL,y,z,bL,tail*bW)))return take;
+  for(var n=0;n<take;n++)if(!hasFootprintSupport(surfaces,x+Math.floor(n/nW)*bL,y+(n%nW)*bW,z,bL,bW))return n;
+  return take;
+}
 function packLayout(result){
   if(result._layout)return result._layout;
   var c=result.c, blocks=[], stats={}, offsetX=0;
@@ -2718,7 +2755,7 @@ function packLayout(result){
             var oc=openA.openCol, ocLane=oc.pal.lanes[oc.lane||0];
             var ob=palBoxFor(oc.pal,openA.P,ocLane), bW=ob.bW;
             var nWp=ocLane.fixed?ocLane.nAcross:Math.max(1,Math.floor(ocLane.across/bW));
-            var fill=Math.min(openA.remaining,nWp-oc.cy,palWeightRoom(oc.pal,openA.P));
+            var fill=supportedCartons(oc.pal.places,oc.x,ocLane.y0+oc.cy*bW,oc.z,ob.bL,bW,nWp-oc.cy,Math.min(openA.remaining,nWp-oc.cy,palWeightRoom(oc.pal,openA.P)));
             if(fill<1){openA.openCol=null;continue;}
             oc.pal.places.push({idx:openA.P.idx,color:openA.P.it.color,x0:oc.x,y0:ocLane.y0+oc.cy*bW,z0:oc.z,L:ob.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
             oc.cy+=fill; openA.remaining-=fill; openA.placedHere+=fill; palAddCount(oc.pal,openA.P,fill);
@@ -2741,7 +2778,8 @@ function packLayout(result){
               // กล่องต้องวางตามความกว้างพาเลท (across) ได้อย่างน้อย 1 ใบ ไม่งั้นจะล้นออกนอกพาเลท
               // — nWp ด้านล่างใช้ Math.max(1,…) ซึ่งจะบังคับวาง 1 ใบแม้กล่องกว้างเกิน จึงต้องกันที่นี่
               if(c2b.bW>segLane.across)continue;
-              if(seg.z+c2.P.bH>capOf(pallets.length-1))continue;
+              if(seg.z+c2.P.bH>Math.min(capOf(pallets.length-1),c2.P.effH))continue;
+              if(!hasFootprintSupport(cur.places,seg.x0,segLane.y0,seg.z,c2b.bL,c2b.bW))continue;
               // เพดานจำนวนชั้นต่อ SKU (P.nH = min(ชั้นที่ความสูงรับได้, maxLayers ที่ผู้ใช้ตั้ง))
               // เดิม pallet packer ไม่เช็คข้อนี้เลย มีแต่เพดานความสูง (capOf) → ผู้ใช้ตั้ง "ซ้อนไม่เกิน 2 ชั้น"
               // (สินค้าเปราะ/ข้อกำหนดลูกค้า) แต่แผนบรรจุวางให้ 4 ชั้น เงียบๆ ทั้งที่ฝั่ง std เช็คอยู่แล้ว
@@ -2765,7 +2803,8 @@ function packLayout(result){
                   // ต้องเช็คเพดานชั้นด้วยเงื่อนไขเดียวกับตอนเลือกจริงด้านบน ไม่งั้นจะตอบว่า "ยังวางได้"
                   // ทั้งที่ติดเพดาน maxLayers แล้ว → วนซ้ำมาร์ค segment ตายไปเรื่อยๆ โดยไม่เปิดพาเลทใหม่
                   var cjb=palBoxFor(cur,cj.P,_sl);
-                  if(s.x1-s.x0>=cjb.bL&&cjb.bW<=_sl.across&&s.z+cj.P.bH<=capOf(pallets.length-1)
+                  if(s.x1-s.x0>=cjb.bL&&cjb.bW<=_sl.across&&s.z+cj.P.bH<=Math.min(capOf(pallets.length-1),cj.P.effH)
+                     &&hasFootprintSupport(cur.places,s.x0,_sl.y0,s.z,cjb.bL,cjb.bW)
                      &&palLayersUsed(cj,pallets.length-1,s.z)<cj.P.nH){ fitsSomewhere=true; break; }
                 }
               }
@@ -2779,7 +2818,7 @@ function packLayout(result){
           var bL=ab.bL,bW=ab.bW,bH=a.P.bH;
           var nWp=segLane.fixed?segLane.nAcross:Math.max(1,Math.floor(segLane.across/bW));
           var colsFit=Math.floor((seg.x1-seg.x0)/bL);
-          var take=Math.min(a.remaining,colsFit*nWp,palWeightRoom(cur,a.P));
+          var take=supportedCartons(cur.places,seg.x0,segLane.y0,seg.z,bL,bW,nWp,Math.min(a.remaining,colsFit*nWp,palWeightRoom(cur,a.P)));
           var fullCols=Math.floor(take/nWp), lastCol=take-fullCols*nWp;
           if(fullCols>0)cur.places.push({idx:a.P.idx,color:a.P.it.color,x0:seg.x0,y0:segLane.y0,z0:seg.z,L:fullCols*bL,W:nWp*bW,H:bH,nL:fullCols,nW:nWp});
           var xEnd=seg.x0+fullCols*bL;
@@ -2906,12 +2945,14 @@ function packLayout(result){
       offsetX=_right;
 
       // Build pallet manifest for display in results (one entry per physical pallet)
+      var palPieceOffsets={};
       palManifestAll=palManifestAll.concat(pallets.map(function(pal,pi){
         var gw=palTare, products=[];
         Object.keys(pal.counts).forEach(function(k){
           var e=pal.counts[k], wt=e.placed*e.P.perBoxWt; gw+=wt;
           products.push({idx:e.P.idx,name:e.P.it.name,color:e.P.it.color,placed:e.placed,
-            pcs:e.placed*(e.P.it.pcsPerCtn||1),wt:wt});
+            pcs:piecesInCartons(e.P.it,e.placed,palPieceOffsets[e.P.idx]||0),wt:wt});
+          palPieceOffsets[e.P.idx]=(palPieceOffsets[e.P.idx]||0)+e.placed;
         });
         return{palIdx:palNumBase+pi+1,L:pal.along,W:pal.across,H:palD0+pal.topZ,tare:palTare,gw:gw,
           products:products,rot:!!pal.slot.rot};
@@ -2970,7 +3011,8 @@ function packLayout(result){
       for(i=0;i<actives.length;i++){ if(actives[i].remaining>0&&actives[i].openCol){ openA=actives[i]; break; } }
       if(openA){
         var oc=openA.openCol, obW=openA.bW, onW=openA.nW;
-        var fill=Math.min(openA.remaining,onW-oc.cy);
+        var fill=supportedCartons(blocks,oc.x,oc.cy*obW,oc.z,openA.bL,obW,onW-oc.cy,Math.min(openA.remaining,onW-oc.cy));
+        if(fill<1){openA.openCol=null;continue;}
         blocks.push({x0:oc.x,y0:oc.cy*obW,z0:oc.z,L:openA.bL,W:fill*obW,H:openA.bH,
           nL:1,nW:fill,nH:1,color:openA.P.it.color});
         oc.cy+=fill; openA.remaining-=fill; openA.placedHere+=fill; openA.zSeen[oc.z]=1;
@@ -2987,6 +3029,7 @@ function packLayout(result){
         var cand2=actives[i];
         if(cand2.remaining<=0)continue;
         if(seg.x1-seg.x0<cand2.bL)continue;                  // too short for this SKU's box
+        if(!hasFootprintSupport(blocks,seg.x0,0,seg.z,cand2.bL,cand2.bW))continue;
         if(seg.z+cand2.bH>cand2.P.effH)continue;             // ceiling reached here
         if(!cand2.zSeen[seg.z]&&Object.keys(cand2.zSeen).length>=cand2.nH)continue; // layer cap
         a=cand2; break;
@@ -2994,7 +3037,7 @@ function packLayout(result){
       if(!a){ seg.z=1e15; continue; }   // nothing fits this lowest strip → exclude it (unavoidable dead space)
       var bL=a.bL,bW=a.bW,bH=a.bH,nW=a.nW;
       var colsFit=Math.floor((seg.x1-seg.x0)/bL);
-      var take=Math.min(a.remaining,colsFit*nW);
+      var take=supportedCartons(blocks,seg.x0,0,seg.z,bL,bW,nW,Math.min(a.remaining,colsFit*nW));
       var fullCols=Math.floor(take/nW), lastCol=take-fullCols*nW;
       if(fullCols>0)blocks.push({x0:seg.x0,y0:0,z0:seg.z,L:fullCols*bL,W:nW*bW,H:bH,
         nL:fullCols,nW:nW,nH:1,color:a.P.it.color});
@@ -3154,11 +3197,32 @@ function bindViewer3D(){
 }
 
 // ── IMPORT / EXPORT ───────────────────────────────────────────────────────────
+function serializeCargoCSV(rows){
+  return rows.map(function(row){return row.map(function(v){var s=String(v==null?'':v);return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}).join(',');}).join('\r\n');
+}
+function parseCargoCSV(text){
+  text=String(text).replace(/^\uFEFF/,'');
+  var rows=[],row=[],field='',quoted=false,closed=false;
+  function endField(){row.push(field);field='';closed=false;}
+  function endRow(){endField();if(row.some(function(v){return v!=='';}))rows.push(row);row=[];}
+  for(var i=0;i<text.length;i++){
+    var ch=text[i];
+    if(quoted){if(ch==='"'){if(text[i+1]==='"'){field+='"';i++;}else{quoted=false;closed=true;}}else field+=ch;continue;}
+    if(ch===','){endField();continue;}
+    if(ch==='\r'||ch==='\n'){if(ch==='\r'&&text[i+1]==='\n')i++;endRow();continue;}
+    if(ch==='"'&&!field&&!closed){quoted=true;continue;}
+    if(closed)throw new Error('Invalid CSV character after closing quote');
+    field+=ch;
+  }
+  if(quoted)throw new Error('Invalid CSV unterminated quoted field');
+  if(field!==''||row.length||closed)endRow();
+  return rows;
+}
 function doExport(){
   var rows=[['Group','Type','Name','L','W','H','D','Weight','Pieces','PcsPerCtn','Cartons','Color']];
   groups.forEach(g=>g.items.forEach(it=>
     rows.push([g.name,it.type,it.name,it.L,it.W,it.H,it.D,it.weight,(it.pieces!=null?it.pieces:it.qty),(it.pcsPerCtn||1),cartonsOf(it),it.color])));
-  var csv=rows.map(r=>r.join(',')).join('\n');
+  var csv=serializeCargoCSV(rows);
   var a=document.createElement('a');
   a.href='data:text/csv;charset=utf-8,﻿'+encodeURIComponent(csv);
   a.download='container_loading.csv'; a.click();
@@ -3172,22 +3236,22 @@ function doImport(){
     var r=new FileReader();
     r.onload=ev=>{
       try{
-        var lines=ev.target.result.split('\n').filter(l=>l.trim());
+        var lines=parseCargoCSV(ev.target.result);
         lines.shift();
-        var gmap={};
-        lines.forEach(line=>{
-          var p=line.split(',');
-          var gn=p[0],tp=p[1],nm=p[2],L=+p[3]||400,W=+p[4]||300,H=+p[5]||250,D=+p[6]||200,wt=+p[7]||1;
+        var gmap=Object.create(null), imported=[];
+        lines.forEach(p=>{
+          var gn=p[0],tp=p[1],nm=p[2],L=Number(p[3]),W=Number(p[4]),H=Number(p[5]),D=Number(p[6]),wt=p[7]===''?0:Number(p[7]);
           // new format: ...,Pieces,PcsPerCtn,Cartons,Color  |  old format: ...,Qty,Color
           var pieces,pcsPerCtn,col;
-          if(p.length>=12){ pieces=+p[8]||1; pcsPerCtn=+p[9]||1; col=(p[11]||'').trim(); }
-          else{ pieces=+p[8]||1; pcsPerCtn=1; col=(p[9]||'').trim(); }
-          pcsPerCtn=Math.max(1,pcsPerCtn); pieces=Math.max(1,pieces);
-          var qty=Math.max(1,Math.ceil(pieces/pcsPerCtn));
+          if(p.length>=12){ pieces=Number(p[8]); pcsPerCtn=Number(p[9]); col=(p[11]||'').trim(); }
+          else{ pieces=Number(p[8]); pcsPerCtn=1; col=(p[9]||'').trim(); }
+          var qty=Math.ceil(pieces/pcsPerCtn);
           if(!gn)return;
-          if(!gmap[gn]){gmap[gn]={id:Date.now()+Math.random(),name:gn,color:COLORS[colorIdx++%COLORS.length],items:[]};groups.push(gmap[gn]);}
+          if(!gmap[gn]){gmap[gn]={id:Date.now()+Math.random(),name:gn,color:COLORS[colorIdx++%COLORS.length],items:[]};imported.push(gmap[gn]);}
           gmap[gn].items.push({id:Date.now()+Math.random(),type:tp||'box',name:nm||'',L,W,H,D,weight:wt,pieces:pieces,pcsPerCtn:pcsPerCtn,qty:qty,color:col||COLORS[colorIdx++%COLORS.length],rotL:true,rotW:true,rotH:true,maxLayers:0,maxH2:0,maxWt:0,hexPack:false});
         });
+        validateCargoInputs(CONTAINERS[0],imported.reduce(function(a,g){return a.concat(g.items);},[]));
+        groups=groups.concat(imported);
         renderGroups();
         alert('นำเข้าสำเร็จ '+Object.keys(gmap).length+' กลุ่ม');
       }catch(ex){alert('ไม่สามารถนำเข้า: '+ex.message);}

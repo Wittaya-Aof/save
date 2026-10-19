@@ -1,3 +1,4 @@
+import { fullySupported } from './lib/packing-support.cjs';
 import { chromium } from 'playwright';
 // Read-only local fixture; never target the user's running port 3000.
 const packingFixtureURL = new URL('../container-loading-calculator.html', import.meta.url).href;
@@ -128,16 +129,8 @@ for (const R of out) {
   let inter = 0;
   for (let i = 0; i < blocks.length; i++) for (let j = i + 1; j < blocks.length; j++) if (ov3(blocks[i], blocks[j])) inter++;
   ck(inter === 0, `${inter} block pairs INTERSECT in 3D`);
-  // 3) no floating: supported by floor(0), a deck top, or another box
-  const deckTops = new Set(decks.map(d => d.z0 + d.H));
-  boxes.forEach((bx, i) => {
-    if (bx.z0 < 0.01) return;
-    if (deckTops.has(bx.z0)) return;
-    const sup = blocks.some(o => o !== bx && Math.abs(o.z0 + o.H - bx.z0) < 0.01
-      && Math.min(o.x0 + o.L, bx.x0 + bx.L) - Math.max(o.x0, bx.x0) > 0.01
-      && Math.min(o.y0 + o.W, bx.y0 + bx.W) - Math.max(o.y0, bx.y0) > 0.01);
-    ck(sup, `FLOATING box #${i} z0=${bx.z0}`);
-  });
+  // Every upper carton footprint must be covered by coplanar boxes/decks.
+  boxes.forEach((bx, i) => ck(fullySupported(bx, blocks), `UNSUPPORTED footprint #${i} z0=${bx.z0}`));
   // 4) carton count in blocks must equal stats.placed, per SKU
   const perColor = {};
   boxes.forEach(bx => { perColor[bx.color] = (perColor[bx.color] || 0) + (bx.nL || 1) * (bx.nW || 1) * (bx.nH || 1); });
