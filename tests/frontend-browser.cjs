@@ -13,7 +13,7 @@ const server=http.createServer(async(req,res)=>{
     else if(u.pathname==='/api/import-pos')j={ok:true,rows:[{id:123,company_id:2,company_code:'BTV',po_number:'FIXTURE-PO',supplier:'Fixture Supplier',currency:'THB',currency_rate:1,odoo_state:'purchase',amount_total:1000}]};
     else if(u.pathname==='/api/landed-cost')j={unavailable:true,reason:'Fixture'};
     else if(u.pathname==='/api/shipment-runs')j={ok:true,runs:[]};
-    else if(u.pathname==='/api/logistics-bills')j={ok:true,bills:[{id:7,bill:'BILL-KNOWN',partner:'Known supplier',amount:55,category:'freight'},{id:8,bill:'REFUND',partner:'Refund supplier',amount:-20,category:'freight'},{id:9,bill:'BILL-MISSING-FX',partner:'Foreign supplier',amount:null,origAmount:12,currency:'USD',fxRate:null,fxStatus:'missing'}]};
+    else if(u.pathname==='/api/logistics-bills')j={ok:true,bills:[{id:7,company_id:2,bill:'BILL-KNOWN',partner:'Known supplier',amount:55,category:'freight'},{id:8,company_id:2,bill:'REFUND',partner:'Refund supplier',amount:-20,category:'freight'},{id:9,company_id:2,bill:'BILL-MISSING-FX',partner:'Foreign supplier',amount:null,origAmount:12,currency:'USD',fxRate:null,fxStatus:'missing'}]};
     res.end(JSON.stringify(j));return;
   }
   const p=path.resolve(root,'.'+decodeURIComponent(u.pathname));if(!p.startsWith(root+path.sep)){res.writeHead(403);res.end();return;}
