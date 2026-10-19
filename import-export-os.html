@@ -1122,11 +1122,21 @@ class App extends Component {
     if(!target||!['freight','clearance','insurance','duty','vat','other'].includes(target.bucket))return;
     bucket=target.bucket;label=target.label;
     // preselect บิลที่เคยจับคู่ไว้กับช่องนี้
-    const sel={};((f._billsBy&&f._billsBy[bucket])||[]).forEach(b=>{sel[b.id]=b;});
+    const companyId=f.company==='BTV'?2:f.company==='KOB'?1:Number(f.companyId);
+    const sel={};((f._billsBy&&f._billsBy[bucket])||[]).forEach(b=>{sel[b.id]={...b,_selectionUnverified:Number(b.company_id||b.companyId)!==companyId};});
+    const hydrate=list=>{
+      const verified={};Object.values(sel).forEach(b=>{
+        const savedCompany=b.company_id||b.companyId;
+        const matches=(list||[]).filter(c=>String(c.id)===String(b.id)&&(c.kind||'bill')===(b.kind||'bill')&&Number(c.company_id||c.companyId)===companyId);
+        if((!savedCompany||Number(savedCompany)===companyId)&&matches.length===1){
+          const canonical=matches[0];verified[b.id]={...b,...canonical,category:b.category,sourceCategory:b.sourceCategory||canonical.category,_selectionUnverified:false};
+        }else verified[b.id]={...b,_selectionUnverified:!savedCompany||Number(savedCompany)!==companyId};
+      });return verified;
+    };
     this.setState({billPicker:true,billTarget:{bucket,label},billQuery:'',selBills:sel,billError:false});
     // cache แยกตามบริษัท — เดิมเช็คแค่ "มีลิสต์อยู่แล้วหรือยัง" ทำให้เปิด BTV ต่อจาก KOB
     // เห็นบิลของ KOB ค้างอยู่ (ผิดบริษัท)
-    if(this.state.billList&&this.state.billList.length&&this._billListCompany===f.company){return;}
+    if(this.state.billList&&this.state.billList.length&&this._billListCompany===f.company){this.setState({selBills:hydrate(this.state.billList),billLoading:false});return;}
     this.setState({billLoading:true,billList:[],billMeta:null});
     try{
       // limit=2000 — เพดานเดิม 300 ตัดบิลเก่าทิ้งเงียบๆ (วัดจริง: KOB 12 เดือนมี 736 รายการ เห็นแค่ 365
@@ -1137,7 +1147,7 @@ class App extends Component {
       const j=await r.json();
       if(!current())return;
       this._billListCompany=f.company;
-      this.setState({billList:(j&&j.bills)||[],billLoading:false,
+      this.setState({billList:(j&&j.bills)||[],selBills:hydrate((j&&j.bills)||[]),billLoading:false,
         billMeta:j?{total:j.total,fetched:j.fetched,truncated:!!j.truncated,months:j.months}:null});
     }catch(e){
       if(!current())return;
@@ -1152,13 +1162,14 @@ class App extends Component {
     if(!this.state.canWrite)return;
     const t=this.state.billTarget;if(!t||!['freight','clearance','insurance','duty','vat','other'].includes(t.bucket))return;
     const sel=Object.values(this.state.selBills||{});
+    if(sel.some(b=>b._selectionUnverified)){this.showToast('ยังยืนยันบิลเดิมไม่ได้ — ต้องตรงกับบิลต้นทาง ชนิด และบริษัทของ shipment กรุณาตรวจหรือยกเลิกเลือกรายการที่ยืนยันไม่ได้','error');return;}
     const f=this.state.editForm,companyId=f&&(f.company==='BTV'?2:f.company==='KOB'?1:Number(f.companyId));
     if(!f||sel.some(b=>Number(b.company_id||b.companyId)!==companyId)){this.showToast('บริษัทของบิลไม่ตรงกับ shipment — กรุณาเลือกใหม่','error');return;}
     if(sel.some(b=>b.fxStatus==='missing'||b.amount==null||!Number.isFinite(Number(b.amount)))){this.showToast('ขาดอัตราแลกเปลี่ยน — ยังนำยอดมาใช้ไม่ได้','error');return;}
     // ยอดที่ลงช่อง = ยอดรวมของบิลที่ผู้ใช้เลือก (ผู้ใช้เป็นคนตัดสินว่าบิลใบไหนเป็นค่าใช้จ่ายช่องไหน
     // ไม่ใช่ให้ระบบเดาจาก keyword ซึ่งเดิมกระจายยอดใบเดียวไปหลายช่องโดยที่ผู้ใช้ไม่เห็น)
     const total=sel.reduce((a,b)=>a+(b.amount||0),0);
-    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,company_id:b.company_id||b.companyId,category:t.bucket,sourceCategory:b.category}));
+    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,company_id:b.company_id||b.companyId,category:t.bucket,sourceCategory:b.sourceCategory||b.category}));
     this.setState(s=>({
       editForm:{...s.editForm,bills:[...(s.editForm.bills||[]).filter(b=>b.category!==t.bucket),...meta],[t.bucket]:Math.round(total),_billsBy:{...(s.editForm._billsBy||{}),[t.bucket]:meta}},
       billPicker:false,billTarget:null,
@@ -2668,7 +2679,7 @@ class App extends Component {
     const usedBy={};const ovAll=this._overrides||{};
     Object.keys(ovAll).forEach(k=>{if(k===curPo)return;((ovAll[k]&&ovAll[k].bills)||[]).forEach(b=>{if(b&&b.id!=null&&!usedBy[b.id])usedBy[b.id]=k;});});
     const sel=selBills||{};
-    const selArr=Object.values(sel);
+    const selArr=Object.values(sel),unverified=selArr.filter(b=>b._selectionUnverified);
     // ยอดที่จะลงช่อง = ยอดรวมของบิลที่เลือก (ไม่ใช่ยอดที่ระบบเดาแยกเป็น 5 หมวดแบบเดิม)
     const sumAll=selArr.reduce((a,b)=>a+(b.amount||0),0);
     return <>
@@ -2727,6 +2738,10 @@ class App extends Component {
             </div>;
           })}
         </div>
+        {unverified.length>0&&<div role="alert" style={{padding:'10px 22px',background:'var(--color-warn-soft)',color:'var(--color-warn-text)',fontSize:'12px'}}>
+          ยังยืนยันบิลเดิมไม่ได้ {unverified.length} รายการ — ไม่พบบิลต้นทางที่ตรงทั้งเลขอ้างอิง ชนิด และบริษัทในรายการที่โหลด ร่างเดิมยังอยู่
+          <button onClick={()=>this.setState(st=>({selBills:Object.fromEntries(Object.entries(st.selBills||{}).filter(([,b])=>!b._selectionUnverified))}))} style={{display:'block',marginTop:'6px',fontFamily:'inherit',cursor:'pointer'}}>ยกเลิกเลือกบิลที่ยืนยันไม่ได้</button>
+        </div>}
         <div style={{padding:'12px 22px 14px',borderTop:'1px solid var(--color-border)'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'10px',fontSize:'11px',color:'var(--color-text-tertiary)',marginBottom:'10px',flexWrap:'wrap'}}>
             <span style={{fontWeight:500}}>เลือก {selArr.length} รายการ</span>
@@ -2736,7 +2751,7 @@ class App extends Component {
           </div>
           <div style={{display:'flex',gap:'10px'}}>
             <button onClick={()=>this.closeBillPicker()} style={{flex:1,height:'42px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>ยกเลิก</button>
-            <button onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้รายการที่เลือก (฿{Math.round(sumAll).toLocaleString()})</button>
+            <button disabled={unverified.length>0||billLoading} onClick={()=>this.applySelectedBills()} style={{flex:2,height:'42px',border:0,borderRadius:'var(--radius-sm)',background:'var(--color-brand)',color:'var(--color-on-brand)',fontFamily:'inherit',fontSize:'13.5px',fontWeight:500,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'7px'}}><Ico name="check" size={16} sw={2.2}/>ใช้รายการที่เลือก (฿{Math.round(sumAll).toLocaleString()})</button>
           </div>
         </div>
       </div>
