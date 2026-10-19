@@ -1274,7 +1274,7 @@ class App extends Component {
   // ── Export Excel: รายการตาม filter ปัจจุบัน + สรุปต้นทุน ──
   exportExcel(tab){
     if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
-    const list=this.filtered(tab);
+    const list=this.state.layout==='operations'?LogisticsWorkspace.forView(this.workspaceRows(tab),{view:this.state.view,focus:this.state.opsFocus,from:this.state.opsFrom,to:this.state.opsTo}).map(r=>r.source):this.filtered(tab);
     if(!list.length){this.showToast('ไม่มีรายการให้ export','info');return;}
     const rows=this.buildExcelRows(list,tab);
     const ws=XLSX.utils.json_to_sheet(rows);
@@ -1483,7 +1483,7 @@ class App extends Component {
   workspacePage(rows){const size=50,total=rows.length,page=Math.min(Math.max(0,this.state.opsPage||0),Math.max(0,Math.ceil(total/size)-1));return {page,total,start:total?page*size+1:0,end:Math.min((page+1)*size,total),rows:rows.slice(page*size,(page+1)*size)};}
   renderWorkspacePager(rows,unit='รายการ'){
     const p=this.workspacePage(rows);
-    return <div className="workspace-footer"><span data-testid="workspace-count">แสดง {p.start}–{p.end} จาก {p.total} {unit} · ไม่ตัดรายการออกจากผลค้นหา</span><div style={{display:'flex',gap:6}}><button className="workspace-button" aria-label="หน้าก่อนหน้า" disabled={!p.page} onClick={()=>this.setState({opsPage:p.page-1})}>ก่อนหน้า</button><button className="workspace-button" aria-label="หน้าถัดไป" disabled={p.end>=p.total} onClick={()=>this.setState({opsPage:p.page+1})}>ถัดไป</button></div></div>;
+    return <div className="workspace-footer"><span data-testid="workspace-count">แสดง {p.start}–{p.end} จาก {p.total} {unit} · {unit==='เหตุการณ์'?'Excel รวมหนึ่งแถวต่อรายการในช่วงวันที่นี้':'Excel ครบทุกหน้าตามมุมมองและตัวกรองนี้'}</span><div style={{display:'flex',gap:6}}><button className="workspace-button" aria-label="หน้าก่อนหน้า" disabled={!p.page} onClick={()=>this.setState({opsPage:p.page-1})}>ก่อนหน้า</button><button className="workspace-button" aria-label="หน้าถัดไป" disabled={p.end>=p.total} onClick={()=>this.setState({opsPage:p.page+1})}>ถัดไป</button></div></div>;
   }
   renderWorkspaceHeader(tab){
     const all=this.workspaceRows(tab,'all'),assigned=all.filter(r=>r.shipmentId).length;
@@ -1505,7 +1505,7 @@ class App extends Component {
     </tr>;})}</tbody></table>{!rows.length&&<div className="workspace-empty">ไม่พบรายการตามตัวกรองนี้ · ลองเลือก “ทั้งหมด” หรือเปลี่ยนคำค้น</div>}</div>{this.renderWorkspacePager(rows)}</div>;
   }
   renderWorkspaceToday(tab){
-    const scoped=this.workspaceRows(tab),rows=this.state.opsFocus==='backlog'?scoped.filter(r=>r.attention):LogisticsWorkspace.select(scoped,'today'),p=this.workspacePage(rows);
+    const rows=LogisticsWorkspace.forView(this.workspaceRows(tab),{view:'today',focus:this.state.opsFocus}),p=this.workspacePage(rows);
     return <div className="workspace-cards" data-testid="workspace-today"><p className="workspace-muted" style={{margin:'0 0 13px'}}>เรื่องที่ต้องตามจากข้อมูลที่บันทึก ณ {fmtDate(LogisticsWorkspace.today())} · งานเกินกำหนดหรือเลย ETA เกิน 30 วันแยกไว้ที่ “ค้างสะสม” · ไม่มีการยืนยันแทนผู้ปฏิบัติงาน</p>{p.rows.map(r=><div className="workspace-task" key={r.id}><div><button className="workspace-open workspace-button" onClick={()=>this.setState({detailId:r.id})}>{r.shipmentId||r.source.poNo}</button><div className="workspace-muted">{r.poNumbers.join(' · ')} · {r.company}</div></div><div><div>{r.nextAction}</div><div className="workspace-muted">{r.transportLabel} · {r.source.party}</div></div><div className="workspace-muted">{r.owner}<br/>กำหนด {r.dueDate?fmtDate(r.dueDate):'ยังไม่ระบุ'} {r.overdue&&<span className="workspace-badge warn">เกินกำหนด</span>}</div></div>)}{!rows.length&&<div className="workspace-empty">ยังไม่พบงานเร่งด่วนตามตัวกรอง · รายการที่ไม่มีข้อมูลเอกสารหรือวันกำหนดยังต้องประเมินเพิ่มเติม</div>}{this.renderWorkspacePager(rows)}</div>;
   }
   renderWorkspaceSchedule(tab){

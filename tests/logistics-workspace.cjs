@@ -1,6 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {test}=require('node:test');
+const vm=require('node:vm');
 const W=require('../lib/logistics-workspace.js');
 const today='2026-10-19';
 const base={id:'i1',company:'KOB',poNo:'PO-A',_board:'import',stage:'etd',cur:'THB',amount:1000,rate:1,eta:'2026-10-22'};
@@ -57,4 +58,20 @@ test('historical paperwork is backlog unless a current explicit deadline makes i
 test('workspace helper has explicit static allowlist and stays in Docker context',()=>{
  const api=fs.readFileSync(path.join(__dirname,'../api-server.js'),'utf8');assert(api.includes("reqUrl === '/lib/logistics-workspace.js'"));
  assert(fs.readFileSync(path.join(__dirname,'../.dockerignore'),'utf8').includes('!lib/*.js'));
+});
+
+function exportedIds(models,view,focus='all',from=today,to='2026-10-22'){
+ const source=fs.readFileSync(path.join(__dirname,'../import-export-os.html'),'utf8'),start=source.indexOf('  exportExcel(tab){'),end=source.indexOf('\n  // ── รายงานสรุปต้นทุน',start);let exported;
+ const context=vm.createContext({Date,LogisticsWorkspace:W,window:{XLSX:true},XLSX:{utils:{json_to_sheet:rows=>(exported=rows,{}),book_new:()=>({}),book_append_sheet(){}},writeFile(){}}});
+ const app={state:{layout:'operations',view,opsFocus:focus,opsFrom:from,opsTo:to},filtered:()=>models.map(r=>r.source),workspaceRows:()=>models,buildExcelRows:rows=>rows.map(r=>({id:r.id})),showToast(){}};
+ vm.runInContext('({'+source.slice(start,end)+'})',context).exportExcel.call(app,'import');return exported?exported.map(r=>r.id):[];
+}
+test('actual daily Excel export contains all visible actionable rows but excludes backlog and non-actionable rows',()=>{
+ const actionable=describe({...base,id:'active',documentChecklist:{form_e:'pending'}}),old=describe({...base,id:'old',eta:'2026-01-01',documentChecklist:{form_e:'pending'}}),quiet=describe({...base,id:'quiet',stage:'received',eta:'2026-01-01'});
+ assert.deepEqual(exportedIds([actionable,old,quiet],'today'),['active']);assert.deepEqual(exportedIds([old],'today','backlog'),['old']);
+});
+test('actual schedule Excel export respects event range and deduplicates shipment IDs, independent of paging',()=>{
+ const a=describe({...base,id:'A',etd:today,eta:'2026-10-20'}),b=describe({...base,id:'B',eta:'2026-11-01'});
+ assert.deepEqual(exportedIds([a,b],'schedule'),['A']);assert.deepEqual(exportedIds([a,b],'schedule','all','2026-10-25','2026-10-20'),[]);
+ assert.deepEqual(exportedIds([a,b],'table'),['A','B']);
 });
