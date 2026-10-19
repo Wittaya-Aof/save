@@ -24,8 +24,14 @@
 
 ## Tasks
 
-- [ ] Add failing tests and implement readiness/freshness/key-expiry reporting and truthful warm-up logs.
-- [ ] Add local child supervisor with singleton ownership, bounded retry and health recovery; install a persistent logon/repeating Task Scheduler task and verify child restart.
-- [ ] Add root-owned VPS guardian timer with three failed probes/cooldown, release coordination, app/proxy-specific recovery, and no restart on Odoo/DNS-only failures. Test failure decisions and release exclusion.
+- [x] Add failing tests and implement readiness/freshness/key-expiry reporting and truthful warm-up logs.
+- [x] Add local child supervisor with singleton ownership, bounded retry and health recovery; install a persistent logon/repeating Task Scheduler task and verify child restart.
+- [x] Add root-owned VPS guardian timer with three failed probes/cooldown, release coordination, app/proxy-specific recovery, and no restart on Odoo/DNS-only failures. Test failure decisions and release exclusion.
 - [ ] Configure local private Odoo/account settings. Validate replacement key and expiry; deploy only after strict Odoo checks, or explicitly preserve a degraded status if upstream input remains invalid.
 - [ ] Run regression/CI, safe staging recovery drill, production read-only checks, and record verified startup/recovery evidence privately with a redacted user report.
+
+## Verification checkpoint
+
+All 22 isolated test groups pass. Real image persistence/entrypoint checks pass. Windows child and scheduled-supervisor recovery pass. Linux cross-process locking and staging recovery pass. A Linux process-close ordering race found during cross-platform testing was corrected and both platform tests pass. Public role login/logout and read-only tracking checks pass.
+
+The replacement credential is rejected by fresh Odoo authentication. The current account-security UI shows a key expiring the following morning. Production application-image promotion remains gated on a valid, appropriately dated credential; the host recovery service is already installed independently. Exact host paths, counts and execution records are retained only in ignored private notes.

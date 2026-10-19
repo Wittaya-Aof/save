@@ -20,17 +20,18 @@ async function startSupervisor({root=path.resolve(__dirname,'..'),intervalMs=300
  function save(){const tmp=stateFile+'.'+process.pid+'.tmp';fs.writeFileSync(tmp,JSON.stringify({...state,checkedAt:new Date().toISOString()}),{mode:0o600});fs.renameSync(tmp,stateFile);}
  function log(data){try{if(fs.existsSync(logFile)&&fs.statSync(logFile).size>2*1024*1024)fs.renameSync(logFile,logFile+'.1');fs.appendFileSync(logFile,data,{mode:0o600});}catch{}}
  function probe(){return httpProbe('http://127.0.0.1:'+port+'/api/alive',{timeoutMs});}
- async function terminate(){const owned=child;if(!owned)return;await new Promise(resolve=>{if(owned.exitCode!==null||owned.signalCode!==null)return resolve();const hard=setTimeout(()=>owned.kill('SIGKILL'),3000);owned.once('exit',()=>{clearTimeout(hard);resolve();});owned.kill('SIGTERM');});}
+ async function terminate(){const owned=child;if(!owned)return;await new Promise(resolve=>{const hard=setTimeout(()=>owned.kill('SIGKILL'),3000);owned.once('close',()=>{clearTimeout(hard);resolve();});if(owned.exitCode===null&&owned.signalCode===null)owned.kill('SIGTERM');});}
  function launch(){
   if(stopped)return;
   const id=crypto.randomUUID();state.instanceId=id;startedAt=Date.now();state.failures=0;state.status='starting';
   child=spawn(nodePath,[path.join(__dirname,'local-child.cjs'),path.join(root,'api-server.js')],{cwd:root,env:{...env,APP_INSTANCE_ID:id},windowsHide:true,stdio:['ignore','pipe','pipe','ipc']});
-  state.childPid=child.pid;child.stdout.on('data',log);child.stderr.on('data',log);
-  child.on('error',()=>{state.status='start-failed';save();});
-  child.once('close',()=>{child=null;state.childPid=null;state.status='exited';save();});save();
+  const owned=child;state.childPid=owned.pid;owned.stdout.on('data',log);owned.stderr.on('data',log);
+  owned.on('error',()=>{if(child===owned){state.status='start-failed';save();}});
+  owned.once('close',()=>{if(child===owned){child=null;state.childPid=null;state.status='exited';save();}});save();
  }
  async function tick(){if(busy||stopped)return;busy=true;try{
   const health=await probe();
+  if(stopped)return;
   if(!child){
    // A listener not owned by this supervisor must never be killed or displaced.
    if(health.reachable){state.status='port-in-use';save();return;}
