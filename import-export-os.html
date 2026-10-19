@@ -1169,11 +1169,15 @@ class App extends Component {
   async saveEdit(){
     if(!this.state.canWrite)return;
     const f=this.state.editForm;if(!f||this.state.savingEdit||!this.canEditPo(f.poNo))return;
+    const current=this.allShipments().find(s=>s.poNo===f.poNo);
+    if(current&&f.stage){
+      const order=(current._board==='export'?EXP_STAGES:IMP_STAGES).map(st=>st.key),floor=this.evidenceStage(current);
+      if(!order.includes(f.stage)||order.indexOf(f.stage)<order.indexOf(floor)){this.showToast('ยังไม่ได้บันทึก — สถานะต่ำกว่าหลักฐานรับ/ส่งของจาก Odoo กรุณาตรวจสถานะในร่าง','error');return;}
+    }
     this.setState({savingEdit:true});
     const num=v=>(v===''||v==null)?'':parseFloat(v)||0;
     // shipment ที่แยกเอง (_synthetic) ไม่มี PO จริงใน Odoo — มูลค่า/สกุลเงินต้องรับจากฟอร์มนี้โดยตรง
     // ของ PO จริง มูลค่ามาจาก Odoo เสมอ ไม่ให้ฟอร์มนี้ทับ (ไม่มีช่องแก้ในฟอร์มอยู่แล้ว ค่าจะเท่าเดิม)
-    const current=this.allShipments().find(s=>s.poNo===f.poNo);
     const stageManual=!!f._stageManual||(!!current&&current.stage!==f.stage);
     const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_stageManual:stageManual,type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',voyage:f.voyage||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',etsActualArrivalDate:f.etsActualArrivalDate||'',etsStatus:f.etsStatus||'',etsCheckedAt:f.etsCheckedAt||'',etsMatchedVoyage:f.etsMatchedVoyage||'',documentReceivedAt:f.documentReceivedAt||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),other:num(f.other),expectedCost:num(f.expectedCost),owner:f.owner||'',dueDate:f.dueDate||'',documentChecklist:f.documentChecklist||{},bills:Array.isArray(f.bills)?f.bills:[],_billsBy:f._billsBy||{},overReceipt:!!f.overReceipt,note:f.note||''};
     const payload={...this.withBase(o),_baseTs:f._baseTs!=null?f._baseTs:this.withBase(o)._baseTs};
