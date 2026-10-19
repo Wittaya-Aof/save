@@ -31,6 +31,11 @@ const { fixture } = require('./persistence-permissions.cjs');
     assert(saved._ts > 100); assert.match(saved._shipmentId, /^shp_[a-f0-9]{32}$/);
     assert.equal(saved.poRefs[0].poNumber, 'PO-FIXTURE');
     assert.equal((await f.request('/api/tracking/upsert', { po_so: 'PO-FIXTURE', _baseTs: 100, owner: 'Stale fixture' })).status, 409);
+    await page.goto(f.base+'/');await page.getByText('เชื่อมต่อ Odoo',{exact:true}).waitFor();
+    const lastSync=await page.getByText(/^ซิงก์สำเร็จล่าสุด /).textContent();
+    for(const board of ['import-pos','export-sos']){const payload=(await f.request('/api/'+board)).body;await page.route('**/api/'+board+'?force=1',route=>route.fulfill({json:{...payload,via:'snapshot',stale:false,as_of:'2026-10-16T06:58:00.000Z'}}));}
+    await page.getByRole('button',{name:'Sync Odoo',exact:true}).click();await page.getByText('ดึงข้อมูลล่าสุดไม่สำเร็จ',{exact:false}).waitFor();
+    assert.equal(await page.getByText(/^ซิงก์สำเร็จล่าสุด /).textContent(),lastSync);assert.equal(await page.getByText('เชื่อมต่อ Odoo',{exact:true}).count(),0);
     console.log('browser-real-api: passed (viewer denied, admin UI saves actual handler, canonical revision and PO/shipment links persist)');
   } finally { if (browser) await browser.close(); await f.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

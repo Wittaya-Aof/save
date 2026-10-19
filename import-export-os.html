@@ -640,7 +640,8 @@ class App extends Component {
       // กว่ามาโชว์จะโกหกว่าข้อมูลสดกว่าความจริงในกรณีที่บอร์ดหนึ่งดึงใหม่ได้แต่อีกบอร์ดยังเป็นชุดเก่า
       if(impOK){boardRows.import=imp.rows.map(r=>this.mapPo(r,'import'));rows.push(...boardRows.import);if(imp.stale)stale=true;if(imp.as_of)asOf=imp.as_of;}
       if(expOK){boardRows.export=exp.rows.map(r=>this.mapPo(r,'export'));rows.push(...boardRows.export);if(exp.stale)stale=true;if(exp.as_of&&(!asOf||exp.as_of<asOf))asOf=exp.as_of;}
-      return (impOK||expOK)?{rows,stale,asOf,incomplete}:null;
+      const live=[imp,exp].every(board=>board&&board.stale===false&&['api','direct','mcp'].includes(board.via));
+      return (impOK||expOK)?{rows,stale,asOf,incomplete,live}:null;
     }
     let res=null;
     try{ res=await fetchLive.call(this); }catch(e){}
@@ -648,7 +649,7 @@ class App extends Component {
     if(!res){ await new Promise(r=>setTimeout(r,1500)); try{ res=await fetchLive.call(this); }catch(e){} }
     // A save/delete acknowledged during this refresh is newer than its tracking read.
     if((this._mutationVersion||0)!==mutationVersion){this.setState({dataSource:'incomplete'});return;}
-    let base=res?res.rows:null, isLive=res?!res.stale:false;
+    let base=res?res.rows:null, isLive=!!(res&&res.live&&!res.stale&&!res.incomplete);
     this._asOf=res?res.asOf:null;
     // Tracking contains edited records, not the complete Odoo boards. During a
     // total board outage keep every previously loaded PO, then merge tracking below.
@@ -671,7 +672,9 @@ class App extends Component {
     this._overrides=overrides;
     this._boardRows=boardRows;
     base=this.applyOverrides(base);
-    this.setState({shipments:base,ambiguousPoNames,dataSource:ambiguousPoNames.length||(res&&res.incomplete)||trackingRows===null?'incomplete':isLive?'live':'fallback',lastSync:this.nowTime()});
+    const syncOK=isLive&&trackingRows!==null;
+    this.setState({shipments:base,ambiguousPoNames,dataSource:ambiguousPoNames.length||(res&&res.incomplete)||trackingRows===null?'incomplete':isLive?'live':'fallback',lastSync:syncOK?this.nowTime():this.state.lastSync});
+    if(this._forceSync&&!syncOK)this.showToast('ดึงข้อมูลล่าสุดไม่สำเร็จ — ยังแสดงข้อมูลชุดที่มีอยู่ กรุณาตรวจสถานะการเชื่อมต่อ Odoo','error');
   }
 
   strip(k){return(k||'').replace(/\s*\(\d+\)\s*$/,'').trim();}
@@ -1322,7 +1325,7 @@ class App extends Component {
         <span style={{width:'7px',height:'7px',borderRadius:'50%',background:dbConf.c,flexShrink:0}}/>
         <span style={{fontSize:'11.5px',fontWeight:500,color:'var(--color-chrome-text)'}}>{dbConf.t}{dataSource==='fallback'?' · คลิกลองใหม่':''}</span>
       </div>
-      {!isNarrow&&lastSync!=='—'&&<span style={{fontSize:'11.5px',color:'var(--color-chrome-muted)',whiteSpace:'nowrap'}}>ซิงค์ {lastSync}</span>}
+      {!isNarrow&&lastSync&&lastSync!=='—'&&<span style={{fontSize:'11.5px',color:'var(--color-chrome-muted)',whiteSpace:'nowrap'}}>ซิงก์สำเร็จล่าสุด {lastSync}</span>}
       <button onClick={()=>this.toggleTheme()} aria-label={this.state.theme==='dark'?'สลับเป็นโหมดสว่าง':'สลับเป็นโหมดมืด'} title={this.state.theme==='dark'?'สลับเป็นโหมดสว่าง':'สลับเป็นโหมดมืด'} style={{...iconBtn,color:'var(--color-chrome-muted)'}}>
         <Ico name={this.state.theme==='dark'?'sun':'moon'} size={16} sw={1.8}/>
       </button>

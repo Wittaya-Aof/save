@@ -21,6 +21,17 @@ function app(fetcher=async()=>({ok:true,status:200,json:async()=>({ok:true}),clo
   a.loadData=async()=>{a.reloaded=true;};a.nowTime=()=> 'now';a.loadVendors=()=>{};a.loadLanded=()=>{};a.canWrite=()=>a.state.canWrite===true;
   return a;
 }
+
+test('forced sync cannot report snapshot fallback as live or advance last successful sync',async()=>{
+ const a=app();a._forceSync=true;a.state.lastSync='previous-success';a.applyOverrides=x=>x;
+ a.loadData=vm.runInNewContext('({'+method('loadData')+'})',{fetchTimeout:async u=>({ok:true,json:async()=>u==='/api/tracking'?{ok:true,rows:[]}:{ok:true,rows:[],via:'snapshot',stale:false,as_of:new Date().toISOString()}}),Date,setTimeout}).loadData;
+ await a.loadData();assert.equal(a.state.dataSource,'fallback');assert.equal(a.state.lastSync,'previous-success');assert.equal(a.toast.kind,'error');assert.match(a.toast.msg,/ไม่สำเร็จ/);
+});
+test('successful sync requires both boards live and records success time',async()=>{
+ const a=app();a._forceSync=true;a.state.lastSync='previous-success';a.applyOverrides=x=>x;
+ a.loadData=vm.runInNewContext('({'+method('loadData')+'})',{fetchTimeout:async()=>({ok:true,json:async()=>({ok:true,rows:[],via:'api',stale:false,as_of:new Date().toISOString()})}),Date,setTimeout}).loadData;
+ await a.loadData();assert.equal(a.state.dataSource,'live');assert.equal(a.state.lastSync,'now');
+});
 test('ordinary edit submits the loaded revision and keeps form until JSON acknowledgement',async()=>{
   let body; const a=app(async(u,o)=>{body=JSON.parse(o.body);return {ok:true,json:async()=>({ok:false,error:'disk failed'}),clone(){return this;}};});
   await a.saveEdit();assert.equal(body._baseTs,100);assert.equal(a.state.editing,true);assert.ok(a.state.editForm);assert.equal(a.toast.kind,'error');assert.equal(a._overrides.PO1._ts,100);
