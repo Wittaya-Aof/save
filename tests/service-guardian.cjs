@@ -11,6 +11,12 @@ test('guardian recovers only its configured failed service, respects maintenance
  maintenance=true;healthy=false;state=await checkServices(config,state,deps,2000000);assert.equal(state.skipped,'maintenance');assert.equal(actions.length,1);
  maintenance=false;healthy=true;proxy=false;for(let n=0;n<3;n++)state=await checkServices(config,state,deps,2100000+n*60000);assert.equal(actions.at(-1),'fixture-proxy');
 });
+test('invalid direct application health is recoverable even when HTTP transport itself succeeded',async()=>{
+ const {checkServices}=require('../tools/service-guardian.cjs');const actions=[];let state={};
+ const deps={inspect:async()=>({running:true,ip:'127.0.0.1'}),probe:async()=>({ok:false,recoverable:false}),restart:async name=>actions.push(name),maintenance:()=>false};
+ for(let n=0;n<3;n++)state=await checkServices({appContainer:'fixture-app'},state,deps,1000000+n*60000);
+ assert.deepEqual(actions,['fixture-app']);
+});
 test('integration/DNS/TLS failures and unrelated containers do not trigger restarts',async()=>{
  const {checkServices}=require('../tools/service-guardian.cjs');const actions=[];let state={};
  const deps={inspect:async()=>({running:true,ip:'127.0.0.1'}),probe:async kind=>kind==='app'?{ok:true}:{ok:false,recoverable:false},restart:async n=>actions.push(n),maintenance:()=>false};

@@ -16,7 +16,9 @@ async function checkServices(config,state={},deps,now=Date.now()){
    state[kind].lastActionAt=now;try{await deps.restart(name);state[kind].status='restarted';}catch{state[kind].status='restart-failed';}
   }
  }
- await check('app',config.appContainer,live,!!app);
+ // The direct probe reaches the explicitly owned container, so invalid/500
+ // health responses are local failures. Proxy TLS/DNS errors stay separate.
+ await check('app',config.appContainer,{...live,recoverable:true},!!app);
  if(live.ok&&config.proxyContainer){const proxy=await deps.inspect(config.proxyContainer);const routed=proxy?.running?await deps.probe('proxy',proxy):{ok:false};await check('proxy',config.proxyContainer,routed,!!proxy);}
  return state;
 }
