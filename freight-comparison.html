@@ -344,6 +344,8 @@ let fxRates=null;     // {USD:33.34,...} จาก /api/fx-rates
 let pos=[];           // import-pos สำหรับเติมชื่อผู้ขาย
 let vendors=[];       // ชื่อ forwarder/ผู้ขายจาก Odoo
 let dirty=false;
+let editRevision=0;
+const pendingWrites=new Set();
 
 const uid=()=>'fq_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const num=v=>{const n=parseFloat(String(v??'').replace(/,/g,''));return isFinite(n)?n:null;};
@@ -357,7 +359,7 @@ function newQuote(type){
   return {
     id:uid(), type, createdAt:today, updatedAt:null, _baseUpdatedAt:null,
     head:{ref:'',party:'',category:'',group:'',qty:null,term:T.termOptions[0]==='EXW'&&type!=='export-sea'?'FOB':T.termOptions[0],
-          fx:fxRates?.USD?+fxRates.USD.toFixed(4):null, fxAsOf:fxRates?.USD_asOf||'', cbm:null,gw:null,vw:null,docRef:type.startsWith('import')?'SCM-IF-':''},
+          fx:fxRates?.USD&&!fxRates.companyId?+fxRates.USD.toFixed(4):null, fxAsOf:fxRates?.USD&&!fxRates.companyId?(fxRates.USD_asOf||''):'', cbm:null,gw:null,vw:null,docRef:type.startsWith('import')?'SCM-IF-':''},
     options:T.options.map(o=>({label:o.label,kind:o.kind,containers:1,cw:null,tiers:[]})),
     rows:T.sections.flatMap(s=>s.rows.map(r=>({id:uid(),tkey:s.name+'|'+r.desc,section:s.name,desc:r.desc,basis:r.basis,unit:r.unit,cur:r.cur,qty:r.qty,tpl:true,prices:T.options.map(()=>null)}))),
     taxFactor:0.20,
@@ -424,7 +426,12 @@ function normalizeQuote(q){
 // ─── คำนวณ (ตรงกับสูตรใน Excel) ─────────────────────────────────────────────
 // LCL: แถว CBM = CBM × ราคา · FCL: แถว CBM = จำนวนตู้ × ราคา (ในชีทจริงผู้ใช้กรอกทับสูตรเป็นต่อตู้อยู่แล้ว)
 // AIR: แถว KGS = น้ำหนักคิดเงินของคอลัมน์นั้น (default = max(GW,VW)) × ราคา · USD คูณอัตรา BOT
-function chargeableW(o){ if(o.cw!=null&&o.cw!=='')return +o.cw; const g=num(Q.head.gw)||0,v=num(Q.head.vw)||0; return Math.max(g,v)||null; }
+function chargeableW(o){
+  if(o.cw!=null&&o.cw!==''){ const cw=num(o.cw); return cw>0?cw:null; }
+  const g=num(Q.head.gw),v=num(Q.head.vw);
+  if((g!=null&&g<0)||(v!=null&&v<0))return null;
+  return Math.max(g||0,v||0)||null;
+}
 // ── ค่าระวางแบบขั้นบันได ────────────────────────────────────────────────────
 // ใบเสนอราคาจริงคิดค่าระวางเป็นช่วง เช่น Free 1-2.99 cbm · USD 10 ที่ 3-4.99 · USD 12 ที่ 5-7.99
 // ถ้ากรอกราคาเดียวแล้วชิปเม้นอยู่คนละช่วง ยอดจะผิดทันที และถ้าปริมาณ "เกินช่วงที่เขาเสนอ"
@@ -449,41 +456,43 @@ function tierRange(o){
 }
 
 function qtyFor(row,o){
-  if(row.basis==='cbm')return isFcl(o.kind)?(num(o.containers)||1):(num(Q.head.cbm)||null);
+  if(row.basis==='cbm'){ const q=isFcl(o.kind)?num(o.containers):num(Q.head.cbm); return q>0?q:null; }
   if(row.basis==='kgs')return chargeableW(o);
-  return num(row.qty)??1;
+  const q=num(row.qty)??1; return q>=0?q:null;
 }
-function amount(row,oi){
+// One effective rate feeds calculation, cell tooltips and Excel export.
+function effectivePrice(row,oi){
   const o=Q.options[oi];
-  const q=qtyFor(row,o);
-  let p;
   if(isFreightRow(row)&&hasTiers(o)){
-    const h=tierHit(o,q);
-    if(!h||h.out||h.noQty)return null;      // นอกช่วงที่เสนอราคา = ยังไม่มีราคา ไม่ใช่ 0
-    p=h.price;
-  } else p=num(row.prices[oi]);
-  if(p==null)return null;
-  if(q==null)return null;
-  const rate=row.cur==='USD'?(num(Q.head.fx)||0):1;
-  if(row.cur==='USD'&&!rate)return null;
-  return q*p*rate;
+    const h=tierHit(o,qtyFor(row,o));
+    return h&&!h.out&&!h.noQty?h.price:null;
+  }
+  return num(row.prices[oi]);
+}
+function chargePopulated(row,oi){ return num(row.prices[oi])!=null||(isFreightRow(row)&&hasTiers(Q.options[oi])); }
+function amount(row,oi){
+  const q=qtyFor(row,Q.options[oi]),p=effectivePrice(row,oi);
+  if(p==null||q==null)return null;
+  const rate=row.cur==='USD'?num(Q.head.fx):(row.cur==='THB'?1:null);
+  if(!(rate>0))return null;
+  const a=q*p*rate; return Number.isFinite(a)?a:null;
 }
 function totals(){
   return Q.options.map((o,oi)=>{
-    let sub=0,filled=0;
-    Q.rows.forEach(r=>{const a=amount(r,oi);if(a!=null){sub+=a;filled++;}});
-    const tax=sub*(num(Q.taxFactor)||0), total=sub+tax, qty=num(Q.head.qty);
-    return {sub,tax,total,filled,avg:qty?total/qty:null};
+    let sub=0,filled=0,unresolved=0;
+    Q.rows.forEach(r=>{const a=amount(r,oi);if(a!=null){sub+=a;filled++;}else if(chargePopulated(r,oi))unresolved++;});
+    const tax=sub*(num(Q.taxFactor)||0),total=sub+tax,qty=num(Q.head.qty);
+    return {sub:unresolved?null:sub,tax:unresolved?null:tax,total:unresolved?null:total,filled,unresolved,avg:!unresolved&&qty>0?total/qty:null};
   });
 }
-function bestIndex(t){ let bi=-1; t.forEach((x,i)=>{ if(x.filled>0&&(bi<0||x.total<t[bi].total))bi=i; }); return bi; }
-// ⚠ ยอดรวมต่ำสุดไม่ได้แปลว่าถูกที่สุดเสมอไป — ถ้าคอลัมน์นั้นกรอกราคาน้อยรายการกว่าคอลัมน์อื่น
-// ยอดมันย่อมต่ำกว่าโดยอัตโนมัติ (ค่าที่ยังไม่กรอก = ไม่นับ ไม่ใช่ = 0) การชูป้ายเขียวตรงนั้นคือ
-// การชี้นำให้เลือกเจ้าที่ "ยังเสนอราคาไม่ครบ" ซึ่งอันตรายกับการตัดสินใจจริง จึงต้องเตือนให้เห็น
+function bestIndex(t){ let bi=-1; t.forEach((x,i)=>{ if(!x.unresolved&&x.total!=null&&x.filled>0&&(bi<0||x.total<t[bi].total))bi=i; }); return bi; }
+// Populated charges without a calculable value invalidate the comparison, rather
+// than making a provider with omitted costs look cheaper.
 function cmpMeta(t){
   const maxFilled=t.reduce((m,x)=>Math.max(m,x.filled),0);
-  const best=bestIndex(t);
-  return {maxFilled,best,fair:best<0||t[best].filled>=maxFilled};
+  const incomplete=t.some(x=>x.unresolved>0);
+  const best=incomplete?-1:bestIndex(t);
+  return {maxFilled,best,fair:!incomplete&&(best<0||t[best].filled>=maxFilled)};
 }
 function bestTag(fair){
   return fair
@@ -513,7 +522,11 @@ function renderHead(){
     field('วันที่จัดทำ', `<input type="date" data-p="createdAt" value="${esc(Q.createdAt)}">`),
     field('รหัสใบเปรียบเทียบ', `<input value="${esc(Q.id)}" readonly style="color:var(--color-text-muted);font-family:var(--font-mono);font-size:12px">`),
   ].join('');
-  $('btnFx').onclick=async()=>{await loadFx(true); if(fxRates?.USD){Q.head.fx=+fxRates.USD.toFixed(4);Q.head.fxAsOf=fxRates.USD_asOf;touch();renderAll();toast('อัตรา USD '+Q.head.fx+' ('+Q.head.fxAsOf+')');}};
+  $('btnFx').onclick=async()=>{
+    const quote=Q;await loadFx(true);if(Q!==quote)return;
+    if(fxRates?.USD){Q.head.fx=+fxRates.USD.toFixed(4);Q.head.fxAsOf=fxRates.USD_asOf;touch();renderAll();toast('อัตรา USD '+Q.head.fx+' ('+Q.head.fxAsOf+')');}
+    else toast('ไม่พบอัตรา USD ที่ตรงกับบริษัทของใบนี้ — กรุณาตรวจบริษัทและกรอกอัตราแลกเปลี่ยนที่ถูกต้อง',true);
+  };
 }
 
 function renderTable(){
@@ -550,7 +563,7 @@ function renderTable(){
     Q.options.forEach((o,oi)=>{
       const a=amount(r,oi), q=qtyFor(r,o);
       const fr=isFreightRow(r), th=fr?tierHit(o,q):null;
-      const used=(th&&th.price!=null)?th.price:num(r.prices[oi]);
+      const used=effectivePrice(r,oi);
       const tip=a!=null?`${fmt(q,r.basis==='cbm'&&!isFcl(o.kind)?3:2)} × ${fmt(used)}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:'';
       let cell;
       if(fr&&hasTiers(o)){
@@ -581,6 +594,12 @@ function compareWarnings(){
   const t=totals(), M=cmpMeta(t), best=M.best, out=[];
   const nameOf=(o,i)=>String(o.label||'').trim()||('ตัวเลือก '+(i+1));
   if(best>=0&&!M.fair)out.push(`ยอดต่ำสุดยังเทียบกันตรงๆ ไม่ได้ — "${nameOf(Q.options[best],best)}" กรอกราคาไว้ ${t[best].filled} รายการ ขณะที่คอลัมน์ที่ครบที่สุดกรอก ${M.maxFilled} รายการ ยอดจึงต่ำกว่าโดยอัตโนมัติเพราะรายการที่ยังไม่กรอกไม่ถูกนับ ไม่ใช่เพราะไม่มีค่าใช้จ่าย — ขอราคาให้ครบทุกช่องก่อนตัดสินใจ · ถ้าช่องที่ว่างคือรายการที่ไม่มีค่าใช้จ่ายจริงในตัวเลือกนี้ ข้ามคำเตือนนี้ได้`);
+  (Q.pdfImportWarnings||[]).forEach(w=>out.push(w));
+  Q.options.forEach((o,i)=>{
+    if(!t[i].unresolved)return;
+    const names=Q.rows.filter(r=>chargePopulated(r,i)&&amount(r,i)==null).map(r=>r.desc).join(', ');
+    out.push(nameOf(o,i)+' ยังคำนวณไม่ได้ '+t[i].unresolved+' รายการ — ตรวจอัตราแลกเปลี่ยนที่มากกว่า 0, ปริมาณ และราคาตามช่วง: '+names+'; ยังแนะนำผู้ให้บริการที่ถูกที่สุดไม่ได้');
+  });
   const fRow=Q.rows.find(isFreightRow);
   if(fRow)Q.options.forEach((o,i)=>{
     if(!hasTiers(o))return;
@@ -600,10 +619,10 @@ function renderSummary(){
   }).join('');
   $('summary').innerHTML=Q.options.map((o,i)=>{
     const short=t[i].filled>0&&t[i].filled<M.maxFilled?M.maxFilled-t[i].filled:0;
-    const gap=i===best&&nFilledOpt>1?Math.min(...t.filter((x,j)=>j!==i&&x.filled).map(x=>x.total))-t[i].total:null;
-    return `<div class="sum ${i===best?(M.fair?'best':'warn'):''}">
+    const gap=M.fair&&i===best&&nFilledOpt>1?Math.min(...t.filter((x,j)=>j!==i&&x.filled).map(x=>x.total))-t[i].total:null;
+    return `<div class="sum ${t[i].unresolved?'warn':i===best?(M.fair?'best':'warn'):''}">
     <div class="t"><span>${esc(o.label)||'ตัวเลือก '+(i+1)}</span><span>${KIND_LABEL[o.kind]||''}${isFcl(o.kind)?' × '+(num(o.containers)||1)+' ตู้':''}</span></div>
-    <div class="v">${t[i].filled?fmt(t[i].total,0)+' <span style="font-size:12px;font-weight:400">THB</span>':'<span class="muted">ยังไม่กรอกราคา</span>'}</div>
+    <div class="v">${t[i].unresolved?'<span class="muted">ยังคำนวณไม่ได้</span>':t[i].filled?fmt(t[i].total,0)+' <span style="font-size:12px;font-weight:400">THB</span>':'<span class="muted">ยังไม่กรอกราคา</span>'}</div>
     <div class="s">${t[i].filled&&t[i].avg!=null?fmt(t[i].avg,4)+' THB / unit':''}${gap!=null?` · ประหยัดกว่าถัดไป ${fmt(gap,0)} THB`:''}</div>
     ${short?`<div class="s" style="color:var(--color-warn-text)">กรอกน้อยกว่าคอลัมน์ที่ครบที่สุด ${short} รายการ</div>`:''}
   </div>`;}).join('');
@@ -621,8 +640,8 @@ function renderToolbar(){
       return `<option value="${esc(q.id)}" ${q.id===Q.id?'selected':''}>${esc(q.head?.ref||'(ไม่มีเลขอ้างอิง)')} · ${esc(q.head?.party||'')} · ${tl} · ${esc((q.updatedAt||q.createdAt||'').slice(0,10))}</option>`;}).join('');
   if(!saved.some(q=>q.id===Q.id))sel.value='';
   $('btnSave').hidden=!canWrite; $('btnDel').hidden=!canWrite; $('btnReadPdf').hidden=!canWrite;
-  $('btnSave').disabled=!canWrite; $('btnReadPdf').disabled=!canWrite;
-  $('btnDel').disabled=!canWrite||!saved.some(q=>q.id===Q.id);
+  $('btnSave').disabled=!canWrite||pendingWrites.has(Q.id); $('btnReadPdf').disabled=!canWrite;
+  $('btnDel').disabled=!canWrite||pendingWrites.has(Q.id)||!saved.some(q=>q.id===Q.id);
   $('status').textContent=dirty?'● ยังไม่บันทึก':(Q.updatedAt?'บันทึกล่าสุด '+Q.updatedAt.replace('T',' ').slice(0,16):'ใบใหม่ (ยังไม่บันทึก)');
 }
 function renderAll(){ renderToolbar(); renderHead(); renderTable(); renderSummary();
@@ -637,7 +656,7 @@ function setPath(path,val){
   for(let i=0;i<parts.length-1;i++){ o=o[parts[i]]; if(o==null||typeof o!=='object')return false; }
   o[parts[parts.length-1]]=val; return true;
 }
-function touch(){ dirty=true; try{localStorage.setItem(DRAFT_KEY,JSON.stringify(Q));}catch(e){} }
+function touch(){ editRevision++; dirty=true; try{localStorage.setItem(DRAFT_KEY,JSON.stringify(Q));}catch(e){} }
 
 document.addEventListener('input',e=>{
   const p=e.target.dataset.p; if(!p)return;
@@ -686,7 +705,7 @@ function updateAmountsInPlace(){
     Q.options.forEach((o,oi)=>{ const a=amount(r,oi); if(!cells[oi])return; cells[oi].textContent=fmt(a);
       // tooltip แสดงวิธีคิด (จำนวน × ราคา × เรต) ต้องอัปเดตตามด้วย ไม่งั้นค้างค่าเดิมตั้งแต่ตอน render
       const q=qtyFor(r,o);
-      cells[oi].title=a!=null?`${fmt(q,r.basis==='cbm'&&!isFcl(o.kind)?3:2)} × ${fmt(num(r.prices[oi]))}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:''; }); });
+      cells[oi].title=a!=null?`${fmt(q,r.basis==='cbm'&&!isFcl(o.kind)?3:2)} × ${fmt(effectivePrice(r,oi))}${r.cur==='USD'?' × '+fmt(num(Q.head.fx),4):''}`:''; }); });
   const t=totals(), M=cmpMeta(t), best=M.best;
   const foot=document.querySelectorAll('#tbl tfoot tr');
   const setRow=(tr,vals,d)=>{ if(!tr)return; const c=tr.querySelectorAll('td.amt'); vals.forEach((v,i)=>{ if(c[i]){c[i].textContent=fmt(v,d); c[i].classList.toggle('best',i===best&&v!=null&&M.fair);} }); };
@@ -741,20 +760,52 @@ async function api(path,opts){ const r=await fetch(path,{headers:{'Content-Type'
 async function loadSaved(){ try{ const j=await api('/api/freight-quotes'); saved=j.rows||[]; }catch(e){ saved=[]; toast('โหลดรายการที่บันทึกไม่ได้: '+e.message,true); } renderToolbar(); }
 async function saveQuote(){
   if(!canWrite){toast('สิทธิ์ดูข้อมูล — คำนวณและส่งออกได้',true);return;}
+  if(pendingWrites.has(Q.id))return;
   const T=TEMPLATES[Q.type];
   if(!Q.head.ref){ toast('กรอก '+T.refLabel+' ก่อนบันทึก',true); document.querySelector('[data-p="head.ref"]')?.focus(); return; }
-  try{ const j=await api('/api/freight-quotes/upsert',{method:'POST',body:JSON.stringify({...Q,_baseUpdatedAt:Q.updatedAt||null})}); Q.updatedAt=j.row.updatedAt; dirty=false; try{localStorage.removeItem(DRAFT_KEY);}catch(e){} await loadSaved(); toast('บันทึกแล้ว · '+Q.head.ref); }
-  catch(e){ toast('บันทึกไม่สำเร็จ: '+e.message,true); }
+  const quote=Q,revision=editRevision,submitted=JSON.parse(JSON.stringify({...Q,_baseUpdatedAt:Q.updatedAt||null}));
+  pendingWrites.add(quote.id);renderToolbar();
+  try{
+    const j=await api('/api/freight-quotes/upsert',{method:'POST',body:JSON.stringify(submitted)});
+    if(Q===quote&&Q.id===submitted.id){
+      // Rebase this quote only; newer edits remain dirty and recoverable.
+      Q.updatedAt=j.row.updatedAt;Q._baseUpdatedAt=j.row.updatedAt;
+      if(editRevision===revision){dirty=false;try{localStorage.removeItem(DRAFT_KEY);}catch(e){}}
+      else touch();
+    }
+    await loadSaved();toast('บันทึกแล้ว · '+submitted.head.ref);
+  }catch(e){toast('บันทึกไม่สำเร็จ: '+e.message,true);}
+  finally{pendingWrites.delete(quote.id);renderToolbar();}
 }
 async function deleteQuote(){
-  if(!canWrite)return;
-  if(!saved.some(q=>q.id===Q.id))return;
+  if(!canWrite||pendingWrites.has(Q.id)||!saved.some(q=>q.id===Q.id))return;
   if(!confirm('ลบใบเปรียบเทียบ "'+(Q.head.ref||Q.id)+'" ออกจาก server?'))return;
-  try{ await api('/api/freight-quotes/delete',{method:'POST',body:JSON.stringify({id:Q.id,_baseUpdatedAt:Q.updatedAt||null})}); await loadSaved(); Q=newQuote(Q.type); dirty=false; renderAll(); toast('ลบแล้ว'); }
-  catch(e){ toast('ลบไม่สำเร็จ: '+e.message,true); }
+  const quote=Q,revision=editRevision,id=Q.id,base=Q.updatedAt||null;
+  pendingWrites.add(id);renderToolbar();
+  try{
+    await api('/api/freight-quotes/delete',{method:'POST',body:JSON.stringify({id,_baseUpdatedAt:base})});
+    if(Q===quote&&Q.id===id){
+      if(editRevision===revision){Q=newQuote(Q.type);dirty=false;try{localStorage.removeItem(DRAFT_KEY);}catch(e){}}
+      else {Q.updatedAt=null;Q._baseUpdatedAt=null;touch();}
+      renderAll();
+    }
+    await loadSaved();toast('ลบแล้ว'+(Q===quote?' — เก็บการแก้ไขที่ยังไม่บันทึกไว้ในใบปัจจุบัน':''));
+  }catch(e){toast('ลบไม่สำเร็จ: '+e.message,true);}
+  finally{pendingWrites.delete(id);renderToolbar();}
 }
 async function loadFx(force){
-  try{ const j=await api('/api/fx-rates'+(force?'?force=1':'')); fxRates={}; (j.rows||[]).forEach(r=>{fxRates[r.currency]=r.thb_per_unit; fxRates[r.currency+'_asOf']=String(r.as_of||'').slice(0,10);}); }
+  // Older quotes have no company scope. Only a genuinely global rate can be
+  // filled automatically in that case; never use whichever company row is last.
+  const companyId=num(Q?.head?.companyId??Q?.head?.company_id??Q?.companyId??Q?.company_id);
+  try{
+    const j=await api('/api/fx-rates'+(force?'?force=1':''));fxRates={companyId};
+    const rows=(j.rows||[]).filter(r=>num(r.thb_per_unit)>0);
+    for(const currency of new Set(rows.map(r=>r.currency))){
+      const global=rows.find(r=>r.currency===currency&&r.company_id==null);
+      const row=(companyId!=null?rows.find(r=>r.currency===currency&&num(r.company_id)===companyId):null)||global;
+      if(row){fxRates[currency]=num(row.thb_per_unit);fxRates[currency+'_asOf']=String(row.as_of||'').slice(0,10);}
+    }
+  }
   catch(e){ fxRates=null; }
 }
 // ตัวเลือกใน datalist มีเพดานไว้กันหน้าหน่วง แต่ถ้าตัดจริงต้องบอก ไม่ใช่ตัดเงียบ
@@ -801,7 +852,7 @@ function exportXlsx(){
   Q.rows.forEach(r=>{
     if(r.section!==cur){cur=r.section;aoa.push([cur]);}
     n++; const line=[n,r.desc,r.basis==='flat'?(r.qty??1):(r.basis==='cbm'?'CBM':'KGS'),r.unit,r.cur];
-    Q.options.forEach((o,oi)=>{const p=num(r.prices[oi]),a=amount(r,oi);line.push(p==null?'':p,a==null?'':+a.toFixed(2));});
+    Q.options.forEach((o,oi)=>{const p=effectivePrice(r,oi),a=amount(r,oi);line.push(p==null?'':p,a==null?'':+a.toFixed(2));});
     aoa.push(line);
   });
   const foot=(label,vals)=>{const l=[label,'','','',''];vals.forEach(v=>l.push('',v==null?'':+v.toFixed(2)));aoa.push(l);};
@@ -827,16 +878,16 @@ function openModal(title,bodyHtml,footHtml){
   $('mTitle').textContent=title; $('mBody').innerHTML=bodyHtml; $('mFoot').innerHTML=footHtml||'';
   $('mask').hidden=false;
 }
-function closeModal(){ $('mask').hidden=true; $('mBody').innerHTML=''; $('mFoot').innerHTML=''; $('mBody').oninput=null; $('mBody').onclick=null; }
+function closeModal(){ tierDraft=null; $('mask').hidden=true; $('mBody').innerHTML=''; $('mFoot').innerHTML=''; $('mBody').oninput=null; $('mBody').onclick=null; }
 $('mClose').onclick=closeModal;
 $('mask').addEventListener('mousedown',e=>{ if(e.target===$('mask'))closeModal(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('mask').hidden)closeModal(); });
 
 // ─── ตัวแก้ขั้นบันไดค่าระวางของคอลัมน์หนึ่ง ─────────────────────────────────
-let tierOi=-1;
+let tierOi=-1,tierDraft=null,tierQuote=null,tierOption=null;
 function tierUnitLabel(){ const r=Q.rows.find(isFreightRow); return r&&r.basis==='kgs'?'กก.':'ลบ.ม. (CBM)'; }
 function renderTierRows(){
-  const o=Q.options[tierOi]; const ts=o.tiers||[];
+  const ts=tierDraft||[];
   return `<div class="tiergrid">
     <div class="h">ตั้งแต่ (${tierUnitLabel()})</div><div class="h">ถึง</div><div class="h">ราคาต่อหน่วย</div><div></div>
     ${ts.map((t,i)=>`<input type="number" step="any" data-t="${i}.min" value="${t.min??''}" placeholder="ไม่จำกัด">
@@ -850,25 +901,28 @@ function renderTierRows(){
   ขั้นบันไดใช้กับแถวค่าระวางหลักเท่านั้น (${esc((Q.rows.find(isFreightRow)||{}).desc||'')}) แถวอื่นกรอกราคาตรง ๆ</p>`;
 }
 function openTierEditor(oi){
-  tierOi=oi; const o=Q.options[oi];
-  if(!Array.isArray(o.tiers))o.tiers=[];
-  if(!o.tiers.length)o.tiers.push({min:null,max:null,price:null});
+  tierOi=oi; const o=Q.options[oi];tierQuote=Q;tierOption=o;
+  tierDraft=JSON.parse(JSON.stringify(o.tiers||[]));
+  if(!tierDraft.length)tierDraft.push({min:null,max:null,price:null});
   openModal('ขั้นบันไดค่าระวาง — '+(o.label||'ตัวเลือก '+(oi+1)), renderTierRows(),
     `<button class="btn btn-danger btn-sm" id="tClear">ลบขั้นบันไดทั้งหมด</button><div class="spacer"></div>
      <button class="btn btn-outline" id="tCancel">ปิด</button><button class="btn btn-primary" id="tOk">ใช้ค่านี้</button>`);
   wireTierEditor();
 }
 function wireTierEditor(){
-  const o=Q.options[tierOi];
-  $('mBody').oninput=e=>{ const k=e.target.dataset.t; if(!k)return;
-    const [i,f]=k.split('.'); o.tiers[+i][f]=e.target.value===''?null:num(e.target.value); };
-  $('mBody').onclick=e=>{ const b=e.target.closest('button'); if(!b)return;
-    if(b.id==='tAdd'){ o.tiers.push({min:null,max:null,price:null}); $('mBody').innerHTML=renderTierRows(); wireTierEditor(); }
-    else if(b.dataset.trem!=null){ o.tiers.splice(+b.dataset.trem,1); $('mBody').innerHTML=renderTierRows(); wireTierEditor(); } };
-  $('tClear').onclick=()=>{ o.tiers=[]; closeModal(); touch(); refreshCalc(); toast('ลบขั้นบันไดแล้ว — กลับไปกรอกราคาตรง ๆ'); };
+  $('mBody').oninput=e=>{ const k=e.target.dataset.t; if(!k||!tierDraft)return;
+    const [i,f]=k.split('.');if(tierDraft[+i])tierDraft[+i][f]=e.target.value===''?null:num(e.target.value); };
+  $('mBody').onclick=e=>{ const b=e.target.closest('button'); if(!b||!tierDraft)return;
+    if(b.id==='tAdd'){ tierDraft.push({min:null,max:null,price:null}); $('mBody').innerHTML=renderTierRows(); wireTierEditor(); }
+    else if(b.dataset.trem!=null){ tierDraft.splice(+b.dataset.trem,1); $('mBody').innerHTML=renderTierRows(); wireTierEditor(); } };
+  $('tClear').onclick=()=>{ tierDraft=[];$('mBody').innerHTML=renderTierRows();wireTierEditor(); };
   $('tCancel').onclick=closeModal;
-  $('tOk').onclick=()=>{ o.tiers=(o.tiers||[]).filter(t=>num(t.min)!=null||num(t.max)!=null||num(t.price)!=null);
-    closeModal(); touch(); refreshCalc(); toast(o.tiers.length?'ตั้งขั้นบันได '+o.tiers.length+' ขั้น':'ไม่มีขั้นบันได'); };
+  $('tOk').onclick=()=>{
+    if(Q!==tierQuote||Q.options[tierOi]!==tierOption){closeModal();return;}
+    tierOption.tiers=(tierDraft||[]).filter(t=>num(t.min)!=null||num(t.max)!=null||num(t.price)!=null);
+    const count=tierOption.tiers.length;
+    closeModal();touch();refreshCalc();toast(count?'ตั้งขั้นบันได '+count+' ขั้น':'ไม่มีขั้นบันได — กลับไปกรอกราคาตรง ๆ');
+  };
 }
 
 // ─── อ่านใบเสนอราคา PDF ─────────────────────────────────────────────────────
@@ -956,30 +1010,41 @@ function openPreview(){
   $('pvCol').onchange=e=>{ pvCol=+e.target.value; openPreview(); };   // เปลี่ยนคอลัมน์ → คัดบรรทัดใหม่ตามชนิดตู้
 }
 function applyPdf(mapped,tiers,flatFreight){
-  const oi=pvCol;
+  const oi=pvCol,o=Q.options[oi],fr=Q.rows.find(isFreightRow);
   const picks=[...$('mBody').querySelectorAll('[data-pv]')].filter(c=>c.checked).map(c=>+c.dataset.pv);
-  const byDesc=new Map(); Q.rows.forEach((r,i)=>{ if(!byDesc.has(r.desc))byDesc.set(r.desc,i); });
-  let filled=0, skipped=0;
+  const byDesc=new Map();Q.rows.forEach((r,i)=>{if(!byDesc.has(r.desc))byDesc.set(r.desc,i);});
+  let filled=0,skipped=0;const rejected=[];
+  const compatible=(currency,value,row,label)=>{
+    const cur=String(currency||'').trim().toUpperCase();
+    if(cur===row.cur||(!cur&&num(value)===0))return true;
+    rejected.push('ไม่ได้เติม '+label+' จาก '+pdfName+' — สกุลเงิน '+(cur||'ไม่ระบุ')+' ไม่ตรงกับแถว '+row.cur+'; กรุณาตรวจและกรอกด้วยสกุลเงินของแถว');return false;
+  };
+  const freightOccupied=()=>hasTiers(o)||(fr&&num(fr.prices[oi])!=null);
+  const fill=(row,value)=>{row.prices[oi]=num(value);if(!row.src||typeof row.src!=='object')row.src={};row.src[oi]=pdfName;filled++;};
   picks.forEach(i=>{
-    const l=mapped[i], ri=byDesc.get(l.mappedTo); if(ri==null)return;
-    const r=Q.rows[ri];
-    if(num(r.prices[oi])!=null){ skipped++; return; }        // ห้ามทับของที่คนกรอกไว้
-    r.prices[oi]=l.amount;
-    if(!r.src||typeof r.src!=='object')r.src={};
-    r.src[oi]=pdfName; filled++;
+    const l=mapped[i],ri=l&&byDesc.get(l.mappedTo);if(ri==null)return;
+    const row=Q.rows[ri];
+    if(num(row.prices[oi])!=null||(isFreightRow(row)&&freightOccupied())){skipped++;return;}
+    if(compatible(l.currency,l.amount,row,l.sourceLabel||row.desc))fill(row,l.amount);
   });
-  if(tiers.length&&$('pvTiers')&&$('pvTiers').checked){
-    Q.options[oi].tiers=tiers.map(t=>({min:num(t.min),max:num(t.max),price:num(t.price)}));
+  if(tiers.length&&$('pvTiers')&&$('pvTiers').checked&&fr){
+    if(freightOccupied())skipped++;
+    else {
+      // Reject a schedule atomically if currencies differ; never reinterpret
+      // one tier or alter any other provider's rates to fit the import.
+      const fits=tiers.map(t=>compatible(t.currency,t.price,fr,fr.desc+' (ขั้นบันได)'));
+      if(fits.every(Boolean)){o.tiers=tiers.map(t=>({min:num(t.min),max:num(t.max),price:num(t.price)}));filled++;}
+    }
   }
-  if(flatFreight&&$('pvFlat')&&$('pvFlat').checked){
-    const fr=Q.rows.find(isFreightRow);
-    if(fr&&num(fr.prices[oi])==null){ fr.prices[oi]=num(flatFreight.price); if(!fr.src||typeof fr.src!=='object')fr.src={}; fr.src[oi]=pdfName; filled++; }
-    else if(fr) skipped++;
+  if(flatFreight&&$('pvFlat')&&$('pvFlat').checked&&fr){
+    if(freightOccupied())skipped++;
+    else if(compatible(flatFreight.currency,flatFreight.price,fr,fr.desc))fill(fr,flatFreight.price);
   }
-  if(!String(Q.options[oi].label||'').trim()&&pdfData.forwarder)
-    Q.options[oi].label=String(pdfData.forwarder).replace(/\s*(CO\.?,?\s*LTD\.?|LIMITED|COMPANY)\.?.*$/i,'').trim().slice(0,40);
-  closeModal(); touch(); renderAll();
-  toast(`เติม ${filled} รายการลง "${Q.options[oi].label||'ตัวเลือก '+(oi+1)}"`+(skipped?` · ข้าม ${skipped} ช่องที่มีค่าอยู่แล้ว`:'')+' — ตรวจก่อนใช้');
+  if(!String(o.label||'').trim()&&pdfData.forwarder)o.label=String(pdfData.forwarder).replace(/\s*(CO\.?,?\s*LTD\.?|LIMITED|COMPANY)\.?.*$/i,'').trim().slice(0,40);
+  // Keep rejected input visible on the page and in exported warnings.
+  Q.pdfImportWarnings=[...new Set([...(Q.pdfImportWarnings||[]),...rejected])];
+  closeModal();touch();renderAll();
+  toast('เติม '+filled+' รายการลง "'+(o.label||'ตัวเลือก '+(oi+1))+'"'+(skipped?' · ข้าม '+skipped+' ช่องที่มีค่าอยู่แล้ว':'')+(rejected.length?' · ไม่เติม '+rejected.length+' รายการเพราะสกุลเงินไม่ตรง — ดูคำเตือนใต้ตาราง':'')+' — ตรวจก่อนใช้',rejected.length>0);
 }
 $('btnReadPdf').onclick=()=>$('pdfInput').click();
 $('pdfInput').onchange=e=>{ readPdf(e.target.files[0]); e.target.value=''; };

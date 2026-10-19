@@ -121,13 +121,14 @@ const check = (name, pass, detail) => results.push({ name, pass: !!pass, detail 
       col0Touched: [...document.querySelectorAll('input.price[data-p$=".prices.0"]')].filter(e => e.value !== '').length,
       ofVal: v(`rows.${fRow}.prices.1`)?.value, ofMarked: v(`rows.${fRow}.prices.1`)?.classList.contains('frompdf'),
       tierLink1: document.querySelector('#tbl tbody [data-tier="1"]')?.textContent.trim(),
+      currencyWarnings: document.querySelector('#cmpWarn').textContent,
     };
   }, { thc, cfs, fRow });
   check('ช่องที่คนกรอกไว้ (THC=999) ไม่ถูกทับ และไม่ถูกทำเครื่องหมาย', after.thcKept === '999' && !after.thcMarked, JSON.stringify({ kept: after.thcKept, marked: after.thcMarked }));
   check('ช่องว่างถูกเติม Cleaning Fee = 300 (ราคา 20\'GP) พร้อมเครื่องหมาย + tooltip ชื่อไฟล์',
     after.cfsVal === '300' && after.cfsMarked && /KYOEI/.test(after.cfsTitle), JSON.stringify({ val: after.cfsVal, title: after.cfsTitle.slice(0, 40) }));
-  check('คอลัมน์ FCL: ค่าระวางต่อตู้ 250 ลงแถวค่าระวางหลักเป็นราคาตรง ๆ ไม่ใช่ขั้นบันได CBM',
-    after.ofVal === '250' && after.ofMarked && after.tierLink1 === '+ ขั้นบันได', JSON.stringify({ of: after.ofVal, tierLink: after.tierLink1 }));
+  check('คอลัมน์ FCL: ไม่ตีความ THB 250 เป็น USD และแสดงคำเตือนสกุลเงินให้ตรวจ',
+    after.ofVal === '' && !after.ofMarked && after.tierLink1 === '+ ขั้นบันได' && /THB.*USD/.test(after.currencyWarnings), JSON.stringify({ of: after.ofVal, warnings: after.currencyWarnings }));
   check('เติมเฉพาะคอลัมน์ที่เลือก (คอลัมน์ 2) ไม่ไหลไปคอลัมน์อื่น',
     after.markedCols.length === 1 && after.markedCols[0] === '1' && after.col0Touched === 0, JSON.stringify(after.markedCols) + ' · col0=' + after.col0Touched);
   check('ชื่อคอลัมน์ว่าง → เติมชื่อ forwarder จากเอกสาร (ตัด Co., Ltd.)', /^KYOEI GLOBAL LOGISTICS/.test(after.label) && !/LTD/i.test(after.label), after.label);
