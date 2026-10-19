@@ -30,7 +30,7 @@ Module._load = function(name, ...rest) {
   if (name.endsWith('/odoo-services.cjs')) return { createOdooServices: () => ({
     vendors: async () => ({ rows: [{ id: 3, name: 'FIXTURE' }], total: 1 }),
     vendorScorecard: async () => [], glReconciliation: async () => [],
-    fxRates: async () => [{ currency: 'USD', rate: 0.025, as_of: '2026-10-01' }],
+    fxRates: async () => [{ currency: 'USD', company_id: 1, rate: 0.025, as_of: '2026-10-01' }, { currency: 'USD', company_id: 2, rate: 0.02, as_of: '2026-10-01' }],
     logisticsBills: async () => ({ billRows: [], poRows: [], billTotal: 0, poTotal: 0 }),
   }) };
   return original.call(this, name, ...rest);
@@ -71,7 +71,7 @@ Module._load = function(name, ...rest) {
     assert.equal((await get('/api/vendor-scorecard')).count, 0);
     assert.equal((await get('/api/gl-reconciliation')).count, 0);
     assert.equal((await get('/api/logistics-bills')).via, 'api');
-    assert.equal((await get('/api/fx-rates')).rows[0].thb_per_unit, 40);
+    assert.deepEqual((await get('/api/fx-rates')).rows.map(r => [r.company_id, r.currency, r.thb_per_unit]), [[1, 'USD', 40], [2, 'USD', 50]]);
     assert.equal((await get('/api/ping')).api, true);
     assert(!logs.includes('FORBIDDEN_DIRECT_QUERY'), 'API mode must never query PostgreSQL');
     console.log('odoo-source-routing: passed (fresh source, force, supporting routes, no PostgreSQL calls)');
