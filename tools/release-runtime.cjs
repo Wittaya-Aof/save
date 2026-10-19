@@ -43,7 +43,8 @@ function executeRelease(config, { run = runDocker } = {}) {
   const docker = args => run('docker', args, { cwd: plan.sourceDir, env });
   const productionBase = ['compose', '--project-name', plan.productionProject, '-f', path.join(plan.sourceDir, 'docker-compose.hostinger.yml')];
   const stagingBase = ['compose', '--project-name', plan.stagingProject, '-f', path.join(plan.sourceDir, 'docker-compose.staging.yml')];
-  let previousImage, frozen = false, backupPath;
+  let previousImage, frozen = false, backupPath, keepLease = false;
+  const leaseFile=path.join(plan.stateDir,'maintenance.json');
   function composeWith(override) { return [...productionBase, '-f', path.join(releaseDir, override)]; }
   function audit(record) {
     const file = path.join(plan.stateDir, 'history.jsonl');
@@ -63,6 +64,7 @@ function executeRelease(config, { run = runDocker } = {}) {
     docker([...stagingBase, 'up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '120']);
     docker([...stagingBase, 'exec', '-T', 'app', 'node', '/app/tools/verify-staging.cjs']);
     // Compose stop must finish before the read-only backup container sees production data.
+    fs.writeFileSync(leaseFile,JSON.stringify({releaseId,expiresAt:Date.now()+20*60000}),{mode:0o600});
     frozen = true;
     docker([...productionBase, 'stop', 'app']);
     const backupResult = docker(['run', '--rm', '--network', 'none', '--user', '1000:1000',
@@ -92,18 +94,19 @@ function executeRelease(config, { run = runDocker } = {}) {
       try {
         docker([...composeWith('rollback-override.json'), 'up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '120']);
         status = 'rolled-back';
-      } catch { status = 'rollback-failed'; }
+      } catch { status = 'rollback-failed'; keepLease=true; }
     }
     try { audit({ status }); } catch { /* Preserve original operational failure. */ }
     throw new Error(status === 'rolled-back' ? 'Release failed; rolled back previous image, data untouched: ' + cause.message : 'Release ' + status + ': ' + cause.message);
-  } finally { fs.rmSync(lockDir, { recursive: true }); }
+  } finally { if(!keepLease)fs.rmSync(leaseFile,{force:true});fs.rmSync(lockDir, { recursive: true }); }
 }
 if (require.main === module) {
   try {
     const [action, configFile, ...rest] = process.argv.slice(2);
     if (!['plan', 'deploy'].includes(action) || !configFile || rest.length) throw new Error('Usage: release-runtime.cjs plan|deploy PRIVATE_CONFIG.json');
     const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-    console.log(JSON.stringify(action === 'plan' ? planRelease(config) : executeRelease(config), null, 2));
+    const plan=planRelease(config);
+    if(action==='plan'||!require('../lib/operation-lock.cjs').withOperationLock(plan.stateDir,__filename,[action,configFile]))console.log(JSON.stringify(action === 'plan' ? plan : executeRelease(config), null, 2));
   } catch (e) { console.error(e.message); process.exitCode = 1; }
 }
 module.exports = { planRelease, executeRelease };

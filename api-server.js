@@ -28,6 +28,9 @@ const accessLib = require('./lib/authorization.cjs');
 const webSessions = require('./lib/web-sessions.cjs');
 const browserSessions = webSessions.createSessionStore();
 const loginLimiter = webSessions.createLoginLimiter();
+const availability = require('./lib/availability.cjs');
+const integrationErrors = {}, integrationFailedAt = {};
+const instanceId = process.env.APP_INSTANCE_ID || crypto.randomUUID();
 function sessionProof(identity) {
   return crypto.createHash('sha256').update(JSON.stringify([identity.user, USERS.required,
     USERS.store.users?.[identity.user] || null, process.env.APP_USER, process.env.APP_PASSWORD,
@@ -632,9 +635,12 @@ async function liveOrSnapshot(key, sql, force) {
     const rows = await cachedQuery(key, sql, force);
     snapshot[key] = rows;
     snapshot._ts[key] = new Date(cache.ts[key] || Date.now()).toISOString();
+    if((cache.ts[key]||Date.now()) >= (integrationFailedAt[key]||0))delete integrationErrors[key];
     saveSnapshot();
     return { rows, stale: false, as_of: snapshot._ts[key], via: API_MODE ? 'api' : 'direct' };
   } catch (e) {
+    integrationErrors[key] = /authentication/i.test(e.message) ? 'AUTHENTICATION_REJECTED' : /timeout/i.test(e.message) ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_READ_FAILED';
+    integrationFailedAt[key] = Date.now();
     if (!API_MODE && MCP_URL && MCP_TOKEN && (key === 'import' || key === 'export') && (force || Date.now() >= mcpNextTry[key])) {
       mcpNextTry[key] = Date.now() + MCP_RETRY_INTERVAL;
       try {
@@ -644,6 +650,7 @@ async function liveOrSnapshot(key, sql, force) {
         // เมื่อ mcpFetch ไม่ throw (แปลว่า query ผ่านจริง) ไม่ว่าจะได้กี่แถว
         snapshot[key] = rows;
         snapshot._ts[key] = new Date().toISOString();
+        delete integrationErrors[key];
         saveSnapshot();
         console.log('[MCP] ดึง ' + key + ' ผ่าน bridge สำเร็จ —', rows.length, 'แถว (direct หลุด:', e.message + ')');
         return { rows, stale: false, as_of: snapshot._ts[key], via: 'mcp' };
@@ -1419,6 +1426,11 @@ const server = http.createServer(async (req, res) => {
     if (reqUrl === '/api/me' && method === 'GET') {
       jsonOk(res, { ok: true, ...req.auth, ...(session?{session:true,expiresAt:session.expiresAt,idleMs:session.idleMs}:{session:false}) }); return;
     }
+    if(reqUrl === '/api/ready' && method === 'GET'){
+      const report=availability.integrationReadiness({timestamps:snapshot._ts,errors:integrationErrors,keyExpiresAt:process.env.ODOO_API_KEY_EXPIRES_AT});
+      res.writeHead(report.ready?200:503,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...SECURITY_HEADERS});
+      res.end(JSON.stringify({ok:report.ready,service:'import-export-control-cloud',...report}));return;
+    }
     if (reqUrl === '/api/worklist' && method === 'GET') {
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
       jsonOk(res, { ok: true, ...buildWorklist(loadTracking(), today) }); return;
@@ -1947,7 +1959,7 @@ const server = http.createServer(async (req, res) => {
     // Lightweight liveness probe — does NOT touch the DB. Used by watchdog
     // health checks so a slow/unreachable database never triggers a restart.
     if (reqUrl === '/api/alive' && method === 'GET') {
-      jsonOk(res, { ok: true, ts: new Date().toISOString() });
+      jsonOk(res, { ok: true, service:'import-export-control-cloud', instanceId, pid:process.pid, ts: new Date().toISOString() });
       return;
     }
 
@@ -2564,8 +2576,9 @@ server.listen(PORT, HOST, () => {
         liveOrSnapshot('import', SQL_IMPORT, true),
         liveOrSnapshot('export', SQL_EXPORT, true),
       ]);
-      console.log('[' + label + '] snapshot สำเร็จ (import:' + imp.via + ' export:' + exp.via + ')', new Date().toISOString());
-      return true;
+      const live=imp.via!=='snapshot'&&exp.via!=='snapshot'&&!imp.stale&&!exp.stale;
+      console.log('[' + label + '] '+(live?'live data ready':'DEGRADED: using saved data, not a live Odoo success')+' (import:' + imp.via + ' export:' + exp.via + ')', new Date().toISOString());
+      return live;
     } catch (e) { console.log('[' + label + '] ล้มเหลวทั้ง direct และ MCP — เสิร์ฟ snapshot เดิม:', e.message); return false; }
   };
   // รอข้อมูลพร้อมก่อน ไม่งั้นรอบแรกจะเช็คจากลิสต์ว่างเปล่า — แล้วส่งสรุปรายสัปดาห์ถ้าถึงรอบ (ครั้งแรก = ยืนยันระบบพร้อม)

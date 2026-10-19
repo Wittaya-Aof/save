@@ -20,7 +20,7 @@ async function checkReply(body, expectSuccess, expectedRows) {
   let saved = 0;
   const snapshot = { import: [{ fixture: 'retained-on-error' }], _ts: { import: '2000-01-01T00:00:00.000Z' } };
   const context = vm.createContext({
-    Buffer, Date, Math, JSON, API_MODE: false,
+    Buffer, Date, Math, JSON, API_MODE: false, integrationErrors:{},integrationFailedAt:{},
     console: { log() {}, error() {} },
     mcpRpc: async () => ({ status: 200, sid: 'fixture', body }),
     mcpWrap: () => 'fixture SQL, never executed', MCP_PAGE: 120, MCP_NCOLS: 24,
@@ -35,9 +35,11 @@ async function checkReply(body, expectSuccess, expectedRows) {
     assert.equal(result.via, 'mcp');
     assert.deepEqual(JSON.parse(JSON.stringify(result.rows)), expectedRows);
     assert.equal(saved, 1);
+    assert.equal(context.integrationErrors.import,undefined,'successful bridge clears failed direct readiness');
   } else {
     assert.equal(result.via, 'snapshot', 'MCP errors must retain snapshot provenance');
     assert.equal(saved, 0, 'MCP errors must never overwrite the saved snapshot');
+    assert.equal(context.integrationErrors.import,'UPSTREAM_READ_FAILED');
     assert.deepEqual(snapshot.import, [{ fixture: 'retained-on-error' }]);
     assert.equal(snapshot._ts.import, '2000-01-01T00:00:00.000Z', 'Error must not refresh snapshot timestamp');
   }
