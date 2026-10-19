@@ -37,6 +37,16 @@ if(legacy){
     console.log('PASS real browser missing FX suppresses recommendation and incomplete exported total');
     await fill('head.fx',33);let release=fixture.hold();const firstRequest=page.waitForRequest('**/api/freight-quotes/upsert');await page.click('#btnSave');await firstRequest;
     await fill('head.party','EDIT WHILE SAVING');release();await page.waitForFunction(()=>!pendingWrites.size);assert.equal(await page.evaluate(()=>dirty),true);assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('kobFreightDraft')).head.party),'EDIT WHILE SAVING');
+    const activeId=await page.evaluate(()=>Q.id),oldBase=await page.evaluate(()=>Q.updatedAt);
+    release=fixture.hold();const reopeningSave=page.waitForRequest('**/api/freight-quotes/upsert');await page.click('#btnSave');await reopeningSave;
+    await page.selectOption('#savedSel',activeId);await fill('head.party','EDIT AFTER RESELECT SAVE');release();await page.waitForFunction(()=>!pendingWrites.size);
+    const reselectedSave=await page.evaluate(()=>({base:Q.updatedAt,party:Q.head.party,dirty,draft:JSON.parse(localStorage.getItem('kobFreightDraft'))}));
+    assert.notEqual(reselectedSave.base,oldBase);assert.equal(reselectedSave.party,'EDIT AFTER RESELECT SAVE');assert.equal(reselectedSave.dirty,true);assert.equal(reselectedSave.draft.updatedAt,reselectedSave.base);
+    release=fixture.hold();const reopeningDelete=page.waitForRequest('**/api/freight-quotes/delete');await page.click('#btnDel');await reopeningDelete;
+    await page.selectOption('#savedSel',activeId);await fill('head.party','EDIT AFTER RESELECT DELETE');release();await page.waitForFunction(()=>!pendingWrites.size);
+    const reselectedDelete=await page.evaluate(()=>({id:Q.id,base:Q.updatedAt,party:Q.head.party,dirty,draft:JSON.parse(localStorage.getItem('kobFreightDraft'))}));
+    assert.equal(reselectedDelete.id,activeId);assert.equal(reselectedDelete.base,null);assert.equal(reselectedDelete.party,'EDIT AFTER RESELECT DELETE');assert.equal(reselectedDelete.dirty,true);assert.equal(reselectedDelete.draft.updatedAt,null);
+    console.log('PASS real browser selecting pending same quote preserves edits with acknowledged save/delete base');
     release=fixture.hold();const request=page.waitForRequest('**/api/freight-quotes/upsert');await page.click('#btnSave');await request;await page.click('#btnNew');await fill('head.ref','FIXTURE-B');release();await page.waitForFunction(()=>!pendingWrites.size);
     assert.equal(await page.evaluate(()=>Q.head.ref),'FIXTURE-B');assert.equal(await page.evaluate(()=>Q.updatedAt),null);assert.equal(await page.evaluate(()=>dirty),true);
     console.log('PASS real browser late save keeps subsequent edits and switched quote recovery draft');

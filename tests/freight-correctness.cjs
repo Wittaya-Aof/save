@@ -19,7 +19,7 @@ function importPdf(h,lines=[],tiers=[],flat=null){
   h.run("pdfData={};pdfName='fixture.pdf';applyPdf(lines,tiers,flat)");
 }
 function pending(h,kind='save'){
-  let release;h.c.fetch=async()=>new Promise(resolve=>{release=()=>resolve({ok:true,json:async()=>({ok:true,row:{id:h.run('Q.id'),updatedAt:'2026-10-19T00:00:01.000Z'}})});});
+  let release;h.c.fetch=async(_url,opts)=>{const submitted=JSON.parse(opts.body);return new Promise(resolve=>{release=()=>resolve({ok:true,json:async()=>({ok:true,row:{id:submitted.id,updatedAt:'2026-10-19T00:00:01.000Z'}})});});};
   h.run('loadSaved=async()=>{};saved=[JSON.parse(JSON.stringify(Q))];');
   const promise=h.run(kind==='save'?'saveQuote()':'deleteQuote()');
   return {promise,release:()=>release()};
@@ -69,6 +69,19 @@ test('F2 delete acknowledgement cannot discard later edits',async()=>{
 test('F2 delete acknowledgement leaves switched quote untouched',async()=>{
   const h=fresh(),p=pending(h,'delete');h.run("Q=newQuote('import-air');Q.head.ref='FIXTURE-B';touch()");const draft=h.memory.get('kobFreightDraft');p.release();await p.promise;
   assert.equal(h.run('Q.head.ref'),'FIXTURE-B');assert.equal(h.run('dirty'),true);assert.equal(h.memory.get('kobFreightDraft'),draft);
+});
+for(const kind of ['save','delete'])test('F2 reopening the same saved ID during '+kind+' cannot strand later edits on a stale revision',async()=>{
+  const h=fresh();h.run("Q.updatedAt='old';Q._baseUpdatedAt='old';touch()");const id=h.run('Q.id'),p=pending(h,kind);
+  h.get('savedSel').onchange({target:{value:id}});h.run("Q.head.party='EDIT AFTER SELECTOR';touch()");p.release();await p.promise;
+  assert.equal(h.run('Q.id'),id);assert.equal(h.run('dirty'),true);assert.equal(h.run('Q.head.party'),'EDIT AFTER SELECTOR');
+  const draft=JSON.parse(h.memory.get('kobFreightDraft')),base=kind==='save'?'2026-10-19T00:00:01.000Z':null;
+  assert.equal(h.run('Q.updatedAt'),base);assert.equal(h.run('Q._baseUpdatedAt'),base);assert.equal(draft.updatedAt,base);assert.equal(draft._baseUpdatedAt,base);
+});
+for(const kind of ['save','delete'])test('F2 pending '+kind+' ID cannot reopen over another active quote',async()=>{
+  const h=fresh();h.run("Q.updatedAt='old';touch()");const id=h.run('Q.id'),p=pending(h,kind);
+  h.run("Q=newQuote('import-air');Q.head.ref='FIXTURE-B';touch()");const other=h.run('Q.id'),draft=h.memory.get('kobFreightDraft');
+  h.get('savedSel').onchange({target:{value:id}});assert.equal(h.run('Q.id'),other);assert.equal(h.memory.get('kobFreightDraft'),draft);assert.match(h.get('toast').textContent,/รอ/);
+  p.release();await p.promise;assert.equal(h.run('Q.id'),other);assert.equal(h.run('dirty'),true);assert.equal(h.memory.get('kobFreightDraft'),draft);
 });
 for(const dismiss of ['button','close','escape','backdrop'])test('F3 tier '+dismiss+' discards draft without changing quote amount or dirty state',()=>{
   const h=fresh();h.run('Q.options[0].tiers=[{min:0,max:10,price:10}];dirty=false;openTierEditor(0)');h.get('mBody').oninput({target:{dataset:{t:'0.price'},value:'99'}});

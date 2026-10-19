@@ -1065,7 +1065,15 @@ $('btnDel').onclick=deleteQuote;
 $('btnXlsx').onclick=exportXlsx;
 $('btnPrint').onclick=()=>window.print();
 $('btnAddOpt').onclick=()=>{ if(Q.options.length>=6){toast('สูงสุด 6 คอลัมน์',true);return;} const air=Q.type==='import-air'; Q.options.push({label:'',kind:air?'air':'lcl',containers:1,cw:null}); Q.rows.forEach(r=>r.prices.push(null)); touch(); renderAll(); };
-$('savedSel').onchange=e=>{ const id=e.target.value; if(!id)return; const q=saved.find(x=>x.id===id); if(!q)return; if(dirty&&!confirm('ใบปัจจุบันยังไม่บันทึก เปิดใบอื่นแทน?')){renderToolbar();return;} Q=normalizeQuote(JSON.parse(JSON.stringify(q))); dirty=false; renderAll(); };
+$('savedSel').onchange=e=>{
+  const id=e.target.value;if(!id)return;
+  // Reopening a pending ID would clone the pre-acknowledgement revision and
+  // detach later edits from the request's active edit session.
+  if(pendingWrites.has(id)){renderToolbar();toast('กรุณารอการบันทึกหรือลบใบนี้ให้เสร็จก่อนเปิดอีกครั้ง',true);return;}
+  const q=saved.find(x=>x.id===id);if(!q)return;
+  if(dirty&&!confirm('ใบปัจจุบันยังไม่บันทึก เปิดใบอื่นแทน?')){renderToolbar();return;}
+  Q=normalizeQuote(JSON.parse(JSON.stringify(q)));dirty=false;renderAll();
+};
 document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveQuote();} });
 
 (async function init(){

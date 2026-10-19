@@ -4,7 +4,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'../..');
 function fixtureRouter(){
-  let quotes=[];let pending=null;
+  let quotes=[];let pending=null;let revision=0;
   const fixture=JSON.parse(fs.readFileSync(path.join(root,'tests/fixtures/kyoei-extract.json'),'utf8'));
   async function route(requestRoute){
     const request=requestRoute.request(),url=new URL(request.url());
@@ -19,7 +19,7 @@ function fixtureRouter(){
     if(url.pathname==='/api/freight-extract')return json({ok:true,filename:'fixture.pdf',data:fixture});
     if(url.pathname==='/api/freight-quotes/upsert'){
       const q=request.postDataJSON();if(pending)await pending.promise;
-      q.updatedAt='2026-10-19T00:00:01.000Z';quotes=quotes.filter(x=>x.id!==q.id).concat(q);return json({ok:true,row:q});
+      q.updatedAt=new Date(Date.parse('2026-10-19T00:00:00.000Z')+(++revision)*1000).toISOString();quotes=quotes.filter(x=>x.id!==q.id).concat(q);return json({ok:true,row:q});
     }
     if(url.pathname==='/api/freight-quotes/delete'){
       const q=request.postDataJSON();if(pending)await pending.promise;quotes=quotes.filter(x=>x.id!==q.id);return json({ok:true});
