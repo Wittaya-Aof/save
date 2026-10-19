@@ -45,6 +45,15 @@ test('presentation does not mutate frozen row or nested operational data',()=>{
  const row=Object.freeze({...base,poRefs:Object.freeze([Object.freeze({poNumber:'PO-A'})]),documentChecklist:Object.freeze({form_e:'pending'})});
  const r=describe(row);W.select([r],'attention');W.schedule([r],'2026-10-19','2026-10-30');assert.equal(row.documentChecklist.form_e,'pending');
 });
+test('near arrivals and confirmed transport missing ETA appear in daily work',()=>{
+ assert.equal(describe(base).attention,true);
+ const r=describe({...base,eta:'',etd:'2026-10-18'});assert.equal(r.attention,true);assert.match(r.nextAction,/วันถึง/);
+});
+test('historical paperwork is backlog unless a current explicit deadline makes it active',()=>{
+ const old={...base,stage:'received',actualDate:'2026-01-01',eta:'2026-01-01',documentChecklist:{form_e:'pending'}};
+ assert.equal(describe(old).backlog,true);assert.equal(W.select([describe(old)],'today').length,0);
+ assert.equal(describe({...old,dueDate:today}).backlog,false);
+});
 test('workspace helper has explicit static allowlist and stays in Docker context',()=>{
  const api=fs.readFileSync(path.join(__dirname,'../api-server.js'),'utf8');assert(api.includes("reqUrl === '/lib/logistics-workspace.js'"));
  assert(fs.readFileSync(path.join(__dirname,'../.dockerignore'),'utf8').includes('!lib/*.js'));
