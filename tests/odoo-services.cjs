@@ -137,9 +137,9 @@ test('logistics keeps SQL ILIKE wildcard search and calendar-month timestamp bou
   assert.equal((await services.logisticsBills({ months: 8, q: 'absent' })).billTotal, 0);
 });
 
-test('FX keeps latest future-rate policy and exposes the selected company context', async () => {
+test('FX uses only effective rates and expands global defaults into each company', async () => {
   const rows = await createOdooServices(fixture({ 'res.currency.rate': [ { id: 1, company_id: false, currency_id: [1, 'USD'], rate: 0.025, name: '2026-01-01' }, { id: 2, company_id: [2, 'BTV'], currency_id: [1, 'USD'], rate: 0.03, name: '2027-01-01' }, { id: 3, company_id: false, currency_id: [2, 'THB'], rate: 1, name: '2026-10-01' } ] }), { now }).fxRates();
-  assert.deepEqual(rows, [{ currency: 'THB', rate: 1, as_of: '2026-10-01', company_id: null }, { currency: 'USD', rate: 0.03, as_of: '2027-01-01', company_id: 2 }]);
+  assert.deepEqual(rows, [{ currency: 'THB', rate: 1, as_of: '2026-10-01', company_id: 1 }, { currency: 'THB', rate: 1, as_of: '2026-10-01', company_id: 2 }, { currency: 'USD', rate: 0.025, as_of: '2026-01-01', company_id: 1 }, { currency: 'USD', rate: 0.025, as_of: '2026-01-01', company_id: 2 }]);
 });
 
 test('required unreadable financial fields fail instead of returning guessed data', async () => {
@@ -185,7 +185,21 @@ test('FX excludes other-company rates even when the client can read them', async
     { id: 2, company_id: [2, 'BTV'], currency_id: [1, 'USD'], rate: 0.03, name: '2026-10-01' },
     { id: 3, company_id: [3, 'Other'], currency_id: [1, 'USD'], rate: 99, name: '2027-01-01' },
   ] }), { now }).fxRates();
-  assert.deepEqual(rows, [{ currency: 'USD', rate: 0.03, as_of: '2026-10-01', company_id: 2 }]);
+  assert.deepEqual(rows, [{ currency: 'USD', rate: 0.025, as_of: '2026-01-01', company_id: 1 }, { currency: 'USD', rate: 0.03, as_of: '2026-10-01', company_id: 2 }]);
+});
+
+test('FX prefers company-specific effective rates over newer shared rates and resolves same-date ties', async () => {
+  const rows = await createOdooServices(fixture({ 'res.currency.rate': [
+    { id: 1, company_id: [1, 'KOB'], currency_id: [1, 'USD'], rate: 0.02, name: '2026-10-01' },
+    { id: 2, company_id: false, currency_id: [1, 'USD'], rate: 0.04, name: '2026-10-16' },
+    { id: 3, company_id: [1, 'KOB'], currency_id: [1, 'USD'], rate: 0.025, name: '2026-10-01' },
+    { id: 4, company_id: [2, 'BTV'], currency_id: [1, 'USD'], rate: 0.05, name: '2026-10-17' },
+    { id: 5, company_id: false, currency_id: [2, 'THB'], rate: 1, name: '2026-10-17' },
+  ] }), { now }).fxRates();
+  assert.deepEqual(rows, [
+    { currency: 'USD', rate: 0.025, as_of: '2026-10-01', company_id: 1 },
+    { currency: 'USD', rate: 0.04, as_of: '2026-10-16', company_id: 2 },
+  ]);
 });
 
 test('logistics raw rows retain company identity for same-name bill and PO reconciliation', async () => {

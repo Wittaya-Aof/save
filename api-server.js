@@ -2421,15 +2421,22 @@ const server = http.createServer(async (req, res) => {
     if (reqUrl === '/api/fx-rates' && method === 'GET') {
       try {
         const rows = await cachedQuery('fx-rates', `
-          SELECT DISTINCT ON (c.name)
+          SELECT
             c.name::text  AS currency,
-            r.rate, r.company_id,
-            r.name::text  AS as_of
-          FROM res_currency_rate r
-          JOIN res_currency c ON c.id = r.currency_id
-          WHERE r.company_id IS NULL OR r.company_id IN (1, 2)
-          ORDER BY c.name, r.name DESC
-        `, false, { orderCols: 'r.currency AS _ord', maxRows: 500 });
+            chosen.rate, target.company_id,
+            chosen.name::text  AS as_of
+          FROM res_currency c
+          CROSS JOIN (VALUES (1), (2)) AS target(company_id)
+          JOIN LATERAL (
+            SELECT r.rate, r.name FROM res_currency_rate r
+            WHERE r.currency_id = c.id
+              AND (r.company_id = target.company_id OR r.company_id IS NULL)
+              AND r.name <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date
+            ORDER BY (r.company_id = target.company_id) DESC NULLS LAST, r.name DESC, r.id DESC
+            LIMIT 1
+          ) chosen ON TRUE
+          ORDER BY c.name, target.company_id
+        `, false, { orderCols: "r.company_id::text || '|' || r.currency AS _ord", maxRows: 500 });
         // Odoo เก็บ rate = จำนวนหน่วยเงินนั้นต่อ 1 บาท → thb_per_unit = 1/rate
         const out = rows.map(r => {
           const rate = parseFloat(r.rate) || 0;

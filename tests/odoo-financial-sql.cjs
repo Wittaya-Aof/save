@@ -2,6 +2,18 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { IMPORT_INNER, EXPORT_INNER } = require('../odoo-queries.js');
+const fs = require('node:fs');
+const path = require('node:path');
+
+test('FX SQL selects an effective company-scoped rate with a shared fallback', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../api-server.js'), 'utf8');
+  const query = source.slice(source.indexOf("if (reqUrl === '/api/fx-rates'"), source.indexOf('// ── Static Files'));
+  assert.match(query, /VALUES\s*\(1\),\s*\(2\)/);
+  assert.match(query, /r\.company_id = target\.company_id OR r\.company_id IS NULL/);
+  assert.match(query, /r\.name <=.*CURRENT_TIMESTAMP.*UTC/);
+  assert.match(query, /ORDER BY \(r\.company_id = target\.company_id\) DESC NULLS LAST, r\.name DESC, r\.id DESC/);
+  assert.match(query, /target\.company_id/);
+});
 
 // These are emitted PostgreSQL query contracts, not database execution tests.
 // The companion adapter fixtures exercise the equivalent monetary behavior.

@@ -34,6 +34,21 @@ test('same-name expense PO in another company is not suppressed', () => {
     [{ id: 2, company_id: 2, po_number: 'PO1', amount_total: 20, currency: 'THB' }]);
   assert.equal(rows.length, 2);
 });
+
+test('consolidated bill replaces each exact referenced PO without doubling estimates', () => {
+  const rows = classify([{ ...base, invoice_origin: ' PO-A, PO-B, PO-A ', amount_total: 100, lines: [] }],
+    [{ id: 1, company_id: 1, po_number: 'PO-A', amount_total: 40, currency: 'THB' },
+     { id: 2, company_id: 1, po_number: 'PO-B', amount_total: 60, currency: 'THB' }]);
+  assert.equal(rows.length, 1); assert.equal(rows[0].amount, 100);
+});
+
+test('consolidated reference matching is exact and scoped even when the bill FX is missing', () => {
+  const orders = ['PO1', 'PO10', 'PO100'].map((po_number, i) => ({ id: i + 1, company_id: 1, po_number, amount_total: 10, currency: 'THB' }));
+  orders.push({ ...orders[0], id: 4, company_id: 2 });
+  const rows = classify([{ ...base, ref: 'PO1, PO100', currency: 'USD', amount_total: 100, rate_thb: null, lines: [] }], orders);
+  assert.deepEqual(rows.map(r => r.id), [1, 'po_2', 'po_4']);
+  assert.equal(rows[0].amount, null);
+});
 test('rounding categories reconciles exactly at currency precision', () => {
   const r = classify([{ ...base, amount_total: 100.01, lines: [{ name: 'Freight', amount: 33.333 }, { name: 'Insurance', amount: 33.333 }, { name: 'Customs Clearance', amount: 33.333 }] }])[0];
   assert(Math.abs(sum(r) - r.amount) < 1e-8); assert.equal(r.amount, 100.01);
