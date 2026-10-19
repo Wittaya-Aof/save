@@ -12,8 +12,8 @@ function method(name) {
 }
 function app(fetcher=async()=>({ok:true,status:200,json:async()=>({ok:true}),clone(){return this;}})) {
   const globals={fetch:fetcher,fetchTimeout:fetcher,Date,console,setTimeout:()=>0,clearTimeout(){},stageMeta:()=>({label:'received'}),IMP_STAGES:[{key:'po'},{key:'received'}],EXP_STAGES:[],normType:x=>x};
-  const names=['isAmbiguousPo','canEditPo','withBase','persistTracking','workflowFields','hitConflict','saveEdit','setStageFor','quickCloseAlert','openBillPicker','toggleBill','applySelectedBills','loadData','startEdit','mapPo','mapSynthetic','applyOne','loadPoLines','splitShipment','submitCreate','openDeleteDialog','confirmDelete'];
-  const a=vm.runInNewContext('({'+names.map(method).join(',\n')+'})',globals);
+  const names=['reconcileAllocations','strip','sameScope','trackingMatch','evidenceStage','isAmbiguousPo','canEditPo','withBase','persistTracking','workflowFields','hitConflict','saveEdit','setStageFor','quickCloseAlert','openBillPicker','toggleBill','applySelectedBills','loadData','startEdit','mapPo','mapSynthetic','applyOne','loadPoLines','splitShipment','submitCreate','openDeleteDialog','confirmDelete'];
+  vm.createContext(globals);vm.runInContext(source.slice(source.indexOf('function costSum('),source.indexOf('// สรุปผล Transit Time')),globals);const a=vm.runInContext('({'+names.map(method).join(',\n')+'})',globals);
   a.state={canWrite:true,shipments:[{id:'i1',poNo:'PO1',_board:'import',stage:'po',_ts:100}],editForm:{board:'import',poNo:'PO1',freight:55,bills:[]},editing:true};
   a._overrides={PO1:{po_so:'PO1',_ts:100}}; a._fx={}; a._poLinesCache={};
   a.setState=function(update,cb){Object.assign(this.state,typeof update==='function'?update(this.state):update);if(cb)cb();};
@@ -45,8 +45,8 @@ test('tracking delete submits the revision loaded when its dialog opened',async(
 test('stale delete reloads data and retains the record and pending dialog',async()=>{const a=app(async()=>({ok:false,status:409,json:async()=>({ok:false,conflicts:[{reason:'changed'}]}),clone(){return this;}}));a.openDeleteDialog('PO1');await a.confirmDelete();assert.equal(a.reloaded,true);assert.equal(a.state.shipments.length,1);assert.equal(a.state.deleteDialog.busy,false);});
 test('failed create retains its form and never adds an unsaved board card',async()=>{const a=app(async()=>({ok:true,json:async()=>({ok:false,error:'disk failed'}),clone(){return this;}}));a.state.form={poNo:'NEW',board:'import',cur:'THB'};a.state.creating=true;a.fxRate=()=>1;await a.submitCreate();assert.equal(a.state.creating,true);assert.equal(a.state.form.poNo,'NEW');assert.equal(a.state.shipments.length,1);assert.equal(a._overrides.NEW,undefined);});
 test('bill retry preserves freight target and selection persists category',async()=>{
-  const a=app(async()=>({ok:true,json:async()=>({bills:[{id:7,amount:55}]})}));a.state.billTarget={bucket:'freight',label:'Freight'};
-  await a.openBillPicker();assert.equal(a.state.billTarget.bucket,'freight');a.state.selBills={7:{id:7,amount:55}};a.applySelectedBills();
+  const a=app(async()=>({ok:true,json:async()=>({bills:[{id:7,company_id:1,amount:55}]})}));a.state.editForm.company='KOB';a.state.billTarget={bucket:'freight',label:'Freight'};
+  await a.openBillPicker();assert.equal(a.state.billTarget.bucket,'freight');a.state.selBills={7:{id:7,company_id:1,amount:55}};a.applySelectedBills();
   assert.equal(a.state.editForm.freight,55);assert.equal(a.state.editForm.bills[0].id,7);assert.equal(a.state.editForm.bills[0].category,'freight');
 });
 test('unknown THB bill cannot be selected or imported as zero',()=>{const a=app();const b={id:7,amount:null,origAmount:55,currency:'USD',fxStatus:'missing'};a.state.selBills={};a.toggleBill(b);assert.equal(Object.keys(a.state.selBills).length,0);a.state.billTarget={bucket:'freight',label:'Freight'};a.state.selBills={7:b};a.applySelectedBills();assert.equal(a.state.editForm.freight,55);assert.equal(a.toast.kind,'error');});
@@ -110,6 +110,7 @@ test('PO detail request retains company and Odoo record scope',async()=>{let url
 test('mapping retains shipment workflow and source identity',()=>{const a=app();const s=a.mapSynthetic({po_so:'PO1',_shipmentId:'S1',owner:'Owner',dueDate:'2026-10-20',poRefs:[{poNumber:'PO1',companyId:1,odooOrderId:3}],documentChecklist:{tisi_permit:'pending'}});assert.equal(s._shipmentId,'S1');assert.equal(s.owner,'Owner');assert.equal(s.poRefs[0].odooOrderId,3);assert.equal(s.documentChecklist.tisi_permit,'pending');});
 const freight=fs.readFileSync(require('node:path').join(__dirname,'../freight-comparison.html'),'utf8');
 function freightMethods(context){
+  Object.assign(context,{pendingWrites:new Set(),editRevision:0,renderToolbar(){}});
   const names=['api','saveQuote','deleteQuote'];
   const code=names.map(name=>{const start=freight.indexOf('async function '+name+'(');const tail=freight.slice(start);const next=/\n(?:async )?function /.exec(tail.slice(1));return tail.slice(0,next.index+1);}).join('\n');
   vm.createContext(context);vm.runInContext(code,context);return context;

@@ -36,6 +36,13 @@ const { fixture } = require('./persistence-permissions.cjs');
     for(const board of ['import-pos','export-sos']){const payload=(await f.request('/api/'+board)).body;await page.route('**/api/'+board+'?force=1',route=>route.fulfill({json:{...payload,via:'snapshot',stale:false,as_of:'2026-10-16T06:58:00.000Z'}}));}
     await page.getByRole('button',{name:'Sync Odoo',exact:true}).click();await page.getByText('ดึงข้อมูลล่าสุดไม่สำเร็จ',{exact:false}).waitFor();
     assert.equal(await page.getByText(/^ซิงก์สำเร็จล่าสุด /).textContent(),lastSync);assert.equal(await page.getByText('เชื่อมต่อ Odoo',{exact:true}).count(),0);
+    // An isolated missing-FX row must not render a complete dashboard total.
+    await page.route('**/api/import-pos',route=>route.fulfill({json:{ok:true,via:'api',stale:false,rows:[{id:991,company_id:1,company_code:'KOB',po_number:'PO-MISSING-FX',currency:'USD',currency_rate:0,amount_total:50,date_order:'2026-10-01',odoo_state:'purchase'}]}}));
+    await page.route('**/api/tracking',route=>route.fulfill({json:{ok:true,rows:[]}}));
+    await page.goto(f.base+'/');await page.getByText('PO-MISSING-FX',{exact:true}).first().waitFor();
+    await page.getByRole('button',{name:'Dashboard',exact:true}).click();
+    assert.match(await page.locator('body').innerText(),/มูลค่ายังไม่ครบ/);
+    assert.equal(await page.getByText('0 : 0 บาท',{exact:true}).count(),0,'unknown quarter is not a numeric zero pair');
     console.log('browser-real-api: passed (viewer denied, admin UI saves actual handler, canonical revision and PO/shipment links persist)');
   } finally { if (browser) await browser.close(); await f.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

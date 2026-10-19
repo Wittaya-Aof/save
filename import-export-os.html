@@ -297,12 +297,12 @@ function fmtDate(d){
   if(p.length<3||!p[1]) return '—';
   return parseInt(p[2])+' '+MONTHS[parseInt(p[1])-1]+' '+(parseInt(p[0])+543-2500);
 }
-function fmtBaht(v){return '฿'+Math.round(v||0).toLocaleString('en-US');}
+function fmtBaht(v){return v==null||!Number.isFinite(v)?'ยังไม่ครบ / ตรวจ FX':'฿'+Math.round(v).toLocaleString('en-US');}
 function fmtAmt(v,cur){
   const sym={CNY:'¥',USD:'$',THB:'฿',SGD:'S$'}[cur]||'';
   return sym+Math.round(v||0).toLocaleString('en-US');
 }
-function rateGuess(cur){return ({CNY:4.77,USD:33.3,SGD:25.4,THB:1})[cur]||1;}
+function rateGuess(cur){return cur==='THB'?1:null;}
 // สีประจำสกุลเงิน — ใช้ที่แผง FX exposure ใน Dashboard เท่านั้น (ไม่ผูกกับ palette อื่นในไฟล์)
 function curColor(cur){return ({CNY:'var(--color-brand)',USD:'#0891b2',SGD:'#0ea5e9',THB:'var(--color-success)'})[cur]||'#94a3b8';}
 // fetch ที่มี timeout จริง — เดิม fetch() ไม่มี timeout ในตัว ถ้าเครือข่ายไป Odoo ค้าง
@@ -369,7 +369,10 @@ function billCatSty(c){const m=({freight:{bg:'var(--color-brand-soft)',fg:'var(-
 // ต้นทุนนำเข้ารวมของ shipment (ไม่รวมมูลค่าสินค้า)
 function costSum(s){return (s.freight||0)+(s.clearance||0)+(s.insurance||0)+(s.duty||0)+(s.vat||0)+(s.other||0);}
 // ต้นทุนรวมแปลงเป็นบาท (มูลค่าสินค้า + ต้นทุนนำเข้า) — ใช้ทั้งตารางต้นทุนและ Dashboard
-function totalCostThb(s){return (s.amount||0)*(s.rate||0)+costSum(s);}
+function goodsThb(s){if(s._allocationStatus&&s._allocationStatus!=='ok')return null;const amount=Number(s.amount),rate=Number(s.rate);return s.amount!=null&&Number.isFinite(amount)&&amount>=0&&s.rate!=null&&Number.isFinite(rate)&&rate>0?amount*rate:null;}
+function addMoney(a,b){return a==null||b==null?null:a+b;}
+function sumMoney(list,value=totalCostThb){return list.reduce((a,s)=>addMoney(a,value(s)),0);}
+function totalCostThb(s){return addMoney(goodsThb(s),costSum(s));}
 // สรุปผล Transit Time เทียบ KPI สำหรับ import + sea freight เท่านั้น (ตรงกับที่มีมาตรฐานอ้างอิง)
 // onTime/late นับเฉพาะรายการที่มี ETD + วันที่รับจริง + มีมาตรฐานให้เทียบ (findPortKpi เจอ)
 function transitStats(list){
@@ -616,8 +619,8 @@ class App extends Component {
     // (อีกหลายวิ) ก่อนจะรู้ผล — ให้เวลามากกว่าโหลดปกติ กัน timeout ฝั่ง client ตัดก่อนได้คำตอบจริง
     // แล้วดีดไปโชว์ fallback ข้อมูลเก่าทั้งที่ server หาข้อมูลสดเจอจริงๆ (แค่ช้ากว่าที่ client รอ)
     const grab=async u=>{const r=await fetchTimeout(u,{headers:{Accept:'application/json'}},this._forceSync?35000:15000);if(!r.ok)throw 0;return r.json();};
-    // อัตราแลกเปลี่ยนล่าสุดจาก Odoo (ใช้ตอนสร้างรายการใหม่ — fallback เป็นค่า default ถ้าโหลดไม่ได้)
-    if(!this._fx){try{const fx=await grab('/api/fx-rates');if(fx&&fx.ok){const m={};(fx.rows||[]).forEach(r=>{m[r.currency]=r.thb_per_unit;});this._fx=m;}}catch(e){}}
+    // อัตราแลกเปลี่ยนจาก Odoo แยกบริษัท; ถ้าโหลดไม่ได้ให้คงสถานะไม่ทราบ
+    if(!this._fx||this._forceSync){this._fx={};try{const fx=await grab('/api/fx-rates');if(fx&&fx.ok){const m={};(fx.rows||[]).forEach(r=>{const co=Number(r.company_id),v=Number(r.thb_per_unit);if([1,2].includes(co)&&Number.isFinite(v)&&v>0){(m[co]||(m[co]={}))[r.currency]={rate:v,asOf:r.as_of||null};}});this._fx=m;}}catch(e){}}
     const boardRows={...(this._boardRows||{})};
     let overrides={...(this._overrides||{})},trackingRows=null,ambiguousPoNames=this.state.ambiguousPoNames||[];
     try{const j=await grab('/api/tracking');if(j&&j.ok&&Array.isArray(j.rows)){
@@ -668,6 +671,9 @@ class App extends Component {
       }
       return;
     }
+    const sourceScopes=new Map();
+    base.forEach(r=>{const k=r.poNo;if(!sourceScopes.has(k))sourceScopes.set(k,new Set());sourceScopes.get(k).add(String(r.companyId||r.company||'unknown')+'|'+r._board);});
+    ambiguousPoNames=[...new Set([...ambiguousPoNames,...[...sourceScopes].filter(([,v])=>v.size>1).map(([k])=>k)])];
     this._ambiguousPoNames=ambiguousPoNames;
     this._overrides=overrides;
     this._boardRows=boardRows;
@@ -678,54 +684,64 @@ class App extends Component {
   }
 
   strip(k){return(k||'').replace(/\s*\(\d+\)\s*$/,'').trim();}
+  sameScope(a,b){
+    const co=r=>r.companyId||r.company_id||(r.company==='KOB'?1:r.company==='BTV'?2:r.company||null);
+    const board=r=>r._board||r.board||'import';
+    const ca=co(a),cb=co(b);if(ca!=null&&cb!=null&&String(ca)!==String(cb))return false;
+    return board(a)===board(b);
+  }
+  trackingMatch(s,o){
+    if(!o||!this.sameScope(s,o))return false;
+    if((s.companyId||s.company)&&!(o.companyId||o.company_id||o.company)&&this.isAmbiguousPo(s.poNo))return false;
+    const ref=(o.poRefs||[]).find(r=>(r.poNumber||r.po_number)===this.strip(s.poNo));
+    const order=o.odooOrderId||(ref&&ref.odooOrderId);
+    return !order||!s.odooOrderId||String(order)===String(s.odooOrderId);
+  }
+  evidenceStage(s){
+    if(s._receiptStatus==='full')return s._board==='export'?'arrived':'received';
+    if(s._receiptStatus==='partial')return s._board==='export'?'shipped':'customs';
+    return s._board==='export'?'draft':'po';
+  }
+  reconcileAllocations(rows){
+    const out=rows.map(r=>({...r}));
+    out.filter(r=>!r._synthetic).forEach(base=>{
+      const lots=out.filter(r=>r._synthetic&&r._splitBase&&this.strip(r._splitBase)===this.strip(base.poNo)&&this.trackingMatch(base,r));
+      if(!lots.length){if(base._poOriginalAmount!=null){base.amount=base._poOriginalAmount;delete base._allocationStatus;}return;}
+      const original=base._poOriginalAmount??base.amount;
+      base._poOriginalAmount=original;base._poOriginalCurrency=base.cur;base._poOriginalRate=base.rate;
+      base.amount=original;delete base._allocationStatus;lots.forEach(l=>delete l._allocationStatus);
+      const full=goodsThb(base),allocated=sumMoney(lots,goodsThb);
+      const status=full==null||allocated==null?'missing-fx':allocated>full+0.005?'overallocated':'ok';
+      [base,...lots].forEach(r=>{r._allocationStatus=status;r._poOriginalAmount=original;r._poOriginalCurrency=base.cur;r._poOriginalRate=base.rate;});
+      if(status==='ok')base.amount=Math.max(0,(full-allocated)/base.rate);
+    });
+    return out;
+  }
   applyOverrides(rows){
-    const ov=this._overrides;if(!ov||!Object.keys(ov).length)return rows;
-    // idx เป็น fallback แบบ fuzzy-match สำหรับ override/plan เก่าที่คีย์มี " (2)" ต่อท้ายเพราะข้อมูลต้นทางเดิมเป็นแบบนั้น
-    // (ดู strip()) — ต้องข้าม override ที่เป็น _synthetic (shipment ที่แยกเอง) ไม่งั้น PO จริงที่ยังไม่มี
-    // override ของตัวเองจะดันไปจับคู่กับ override ของ "PO (2)" (ตัวแยก) แทน ทำให้มูลค่า/สกุลเงินของ PO จริงเพี้ยน
-    const idx={};Object.keys(ov).forEach(k=>{if(ov[k]._synthetic)return;const n=this.strip(k);if(!idx[n])idx[n]=ov[k];});
-    const merged=rows.map(s=>{const o=ov[s.poNo]||idx[this.strip(s.poNo)];return o?this.applyOne(s,o):s;});
-    // shipment ย่อยที่แยกออกจาก PO เดิม (ไม่มี PO จริงคู่กันใน Odoo) — ไม่ merge ทับ ต้องเพิ่มเป็นรายการใหม่ต่างหาก
-    // สถานะรับของอ้างจาก "PO ต้นฉบับ" (_splitBase): Odoo บอก full = ทุกล็อตของ PO นั้นเข้าคลังแล้ว
-    // การ์ดแยกก็ต้องเป็น received ด้วย — เดิมการ์ดแยกใช้ stage ที่เก็บไว้ตายตัว ไม่มีวันขยับเอง
-    // (เจอจริง: การ์ดแยกค้าง 'po' ทั้งที่ ETA ผ่านมาเป็นปีและของเข้าคลังครบแล้ว)
-    const baseIdx={};rows.forEach(r=>{const n=this.strip(r.poNo);if(!baseIdx[n])baseIdx[n]=r;});
-    const extra=Object.keys(ov).filter(k=>ov[k]._synthetic&&!rows.some(s=>s.poNo===k)).map(k=>{
-      const ns=this.mapSynthetic(ov[k]);
-      const b=baseIdx[this.strip(ns._splitBase||ns.poNo)];
-      // เช่นเดียวกับ applyOne: สถานะที่ derive จาก PO ฐานเป็น "พื้น" ไม่ใช่ "เพดาน"
-      // การ์ดแยกที่คนตั้งไว้ไกลกว่าแล้ว (เช่นงวดนี้ของเข้าคลังแล้ว แต่งวดอื่นยังไม่มา = PO ยัง partial)
-      // ต้องไม่ถูกดึงถอยกลับมาที่ "พิธีการศุลกากร"
-      const rs=b&&b._receiptStatus;
-      // การ์ดแยกใช้วันถึงของ "งวดตัวเอง" เทียบกับใบรับของล่าสุดของ PO ฐาน
-      // (เคสจริง KOBPO2604-08431: ขาอากาศ 5 งวด ETD 4-23 ก.ค. · ใบรับของ done ถึง 29 ก.ค.
-      //  → ทั้ง 5 งวดเข้าคลังแล้ว ส่วนขาเรือ ETA 7 ส.ค. ยังไม่มีใบรับของ จึงยังไม่ใช่ received)
-      if(b&&b._lastReceipt)ns._lastReceipt=b._lastReceipt;   // ให้การ์ดแยกคำนวณ lead time ได้ด้วย
-      const gotIt=rs==='partial'&&ns._board!=='export'
-        &&this._receivedByEvidence(this._arrivalOf(ns),b&&b._lastReceipt);
-      const floor=rs==='full'?(ns._board==='export'?'arrived':'received')
-                 :gotIt?'received'
-                 :rs==='partial'?(ns._board==='export'?'shipped':'customs'):null;
-      if(floor){
-        const order=(ns._board==='export'?EXP_STAGES:IMP_STAGES).map(x=>x.key);
-        if(order.indexOf(floor)>order.indexOf(ns.stage))ns.stage=floor;
-      }
+    const ov=this._overrides||{},values=Object.values(ov);
+    const merged=rows.map(s=>{const exact=values.find(o=>(o.po_so||o.poNo)===s.poNo&&this.trackingMatch(s,o));
+      const legacy=exact||values.find(o=>!o._synthetic&&this.strip(o.po_so||o.poNo)===this.strip(s.poNo)&&this.trackingMatch(s,o));
+      return legacy?this.applyOne(s,legacy):{...s};});
+    const extra=values.filter(o=>o._synthetic&&!rows.some(s=>s.poNo===(o.po_so||o.poNo)&&this.sameScope(s,o))).map(o=>{
+      const ns=this.mapSynthetic(o),b=rows.find(r=>!r._synthetic&&this.strip(r.poNo)===this.strip(ns._splitBase||ns.poNo)&&this.trackingMatch(r,o));
+      if(b){ns._receiptStatus=b._receiptStatus;const order=(ns._board==='export'?EXP_STAGES:IMP_STAGES).map(x=>x.key),floor=this.evidenceStage(ns);if(order.indexOf(floor)>order.indexOf(ns.stage))ns.stage=floor;}
       return ns;
     });
-    return merged.concat(extra);
+    return this.reconcileAllocations(merged.concat(extra));
   }
-  // สร้าง shipment object เต็มจาก override ที่เป็นรายการสังเคราะห์ (แยก shipment/สร้างใหม่)
-  // แยกจาก mapTracking() เพราะ field ที่ใช้ต่างกัน (cur/amount/rate ตรงตัว ไม่ใช่ convention rate กลับด้านแบบ Odoo)
+
   workflowFields(o){
     const bills=Array.isArray(o.bills)?o.bills:[];
     const by={...(o._billsBy||{})};bills.forEach(b=>{if(b.category&&!by[b.category])by[b.category]=bills.filter(x=>x.category===b.category);});
     return {_ts:o._ts!=null?o._ts:0,_shipmentId:o._shipmentId||'',poRefs:Array.isArray(o.poRefs)?o.poRefs:[],owner:o.owner||((o._board||'import')==='import'?'Wittaya Sawangphol':''),dueDate:o.dueDate||'',documentChecklist:{...(o.documentChecklist||{})},_billsBy:by};
   }
   mapSynthetic(o){
-    return {...this.workflowFields(o),companyId:o.companyId||(o.company==='BTV'?2:1),odooOrderId:o.odooOrderId||null,_board:o._board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage:o.stage||(o._board==='export'?'draft':'po'),cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:parseFloat(o.rate)||1,origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),etsActualArrivalDate:(o.etsActualArrivalDate||'').slice(0,10),etsStatus:o.etsStatus||'',etsCheckedAt:o.etsCheckedAt||'',etsMatchedVoyage:o.etsMatchedVoyage||'',documentReceivedAt:o.documentReceivedAt||'',actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',voyage:o.voyage||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,other:parseFloat(o.other)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_stageManual:!!o._stageManual,_synthetic:true};
+    const board=o._board==='export'?'export':'import',raw=board==='import'?({booking:'etd',transit:'etd'}[o.stage]||o.stage):o.stage;
+    const stage=(board==='export'?EXP_STAGES:IMP_STAGES).some(st=>st.key===raw)?raw:(board==='export'?'draft':'po');
+    return {...this.workflowFields(o),companyId:o.companyId||(o.company==='BTV'?2:1),odooOrderId:o.odooOrderId||null,_board:board,id:o.id||('t_'+(o.po_so||Math.random())),poNo:o.po_so,company:o.company||'KOB',party:o.party||'—',type:normType(o.type||o._board),mode:o.mode||'sea',seaType:o.seaType||'',containerQty:parseFloat(o.containerQty)||0,courierCo:o.courierCo||'',stage,cur:o.cur||'THB',amount:parseFloat(o.amount)||0,rate:(o.cur||'THB')==='THB'?1:(Number.isFinite(Number(o.rate))&&Number(o.rate)>0?Number(o.rate):null),origin:o.origin||'',dest:o.dest||(o._board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:(o.etd||'').slice(0,10),eta:(o.eta||'').slice(0,10),etsActualArrivalDate:(o.etsActualArrivalDate||'').slice(0,10),etsStatus:o.etsStatus||'',etsCheckedAt:o.etsCheckedAt||'',etsMatchedVoyage:o.etsMatchedVoyage||'',documentReceivedAt:o.documentReceivedAt||'',actualDate:(o.actualDate||'').slice(0,10),bl:o.bl||o.bl_awb||'',container:o.container||'',vessel:o.vessel||'',voyage:o.voyage||'',forwarder:o.forwarder||'',freight:parseFloat(o.freight)||0,clearance:parseFloat(o.clearance)||0,insurance:parseFloat(o.insurance)||0,duty:parseFloat(o.duty)||0,vat:parseFloat(o.vat)||0,other:parseFloat(o.other)||0,expectedCost:parseFloat(o.expectedCost)||0,overReceipt:!!o.overReceipt,note:o.note||'',bills:Array.isArray(o.bills)?o.bills:[],_splitBase:o._splitBase||'',_stageManual:!!o._stageManual,_synthetic:true};
   }
   applyOne(s,o){
-    if(this.isAmbiguousPo(s.poNo))return {...s};
+    if(!this.trackingMatch(s,o))return {...s};
     const m={...s,...this.workflowFields({...s,...o})};
     ['origin','dest','portOfLoading','portOfDischarge','bl','container','vessel','voyage','forwarder','etd','eta','etsActualArrivalDate','etsStatus','etsCheckedAt','etsMatchedVoyage','documentReceivedAt','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null)m[k]=o[k];});
     if(o._stageManual!=null)m._stageManual=!!o._stageManual;
@@ -739,28 +755,17 @@ class App extends Component {
     if(o._synthetic){
       if(o.cur)m.cur=o.cur;
       if(o.amount!=null)m.amount=parseFloat(o.amount)||0;
-      if(o.rate!=null)m.rate=parseFloat(o.rate)||m.rate;
+      m.rate=(m.cur||'THB')==='THB'?1:(Number.isFinite(Number(o.rate))&&Number(o.rate)>0?Number(o.rate):null);
       m._synthetic=true; if(o._splitBase)m._splitBase=o._splitBase;
     }
     if(o.overReceipt!=null)m.overReceipt=!!o.overReceipt;
     if(Array.isArray(o.bills))m.bills=o.bills;
-    // ETA จริงจากเอกสาร/ETS แม่นกว่า date_planned ของ Odoo — พอ merge เข้ามาแล้วต้องคิดสถานะใหม่
-    // (deriveImportStage คิดตอนยังไม่มี override จึงใช้ date_planned ซึ่งเป็นแค่วันที่วางแผนไว้)
-    if(m._board!=='export'&&s._receiptStatus==='partial'
-       &&this._receivedByEvidence(this._arrivalOf(m),s._lastReceipt)) m.stage='received';
-    if(o.stage){
-      // Odoo ยืนยันการรับ/ส่งของแล้ว → สถานะจาก Odoo ชนะ override เสมอ กันการ์ดค้างสถานะเก่า
-      // (เดิม guard เฉพาะ terminal=full — เคส partial ยังถูก override เก่าดึงถอยหลังได้
-      //  เจอจริง 2026-08-12: การ์ดค้าง booking/transit ทั้งที่ Odoo บอกรับของแล้วบางส่วน)
-      // สถานะจาก Odoo เป็น "พื้น" ไม่ใช่ "เพดาน" — เอาอันที่ก้าวหน้ากว่าเสมอ
-      // เดิม rs='partial' ทิ้ง override ทั้งดุ้น ซึ่งกันการ์ดถอยหลังได้จริง แต่ก็ทำให้ "เดินหน้า" ไม่ได้ด้วย:
-      // PO ที่แบ่งส่งหลายชิปเม้น Odoo จะเป็น partial จนกว่าจะรับครบทุกงวด → ทุกการ์ดในตระกูลค้างที่
-      // "พิธีการศุลกากร" แล้วกดเป็น "รับเข้าคลัง" เองก็ไม่ติด (เจอจริง 2026-08-13: 7 PO ที่ ETA ผ่านมา
-      // 6-155 วัน — AOF ถามเองว่าทำไมของถึงไทยแล้วยังไม่ขึ้นรับเข้าคลัง)
-      // ใช้ลำดับขั้นเทียบแทน: Odoo ดันขึ้นได้ คนดันขึ้นต่อได้ แต่ไม่มีใครดึงถอยหลังกว่าหลักฐานของ Odoo
-      const order=(s._board==='export'?EXP_STAGES:IMP_STAGES).map(x=>x.key);
-      const rank=k=>{const i=order.indexOf(k);return i<0?-1:i;};
-      if(rank(o.stage)>rank(s.stage)){m.stage=o.stage;m._stageManual=true;}
+    const order=(s._board==='export'?EXP_STAGES:IMP_STAGES).map(x=>x.key);
+    const floor=this.evidenceStage(s);
+    const requested=s._board==='export'?o.stage:({booking:'etd',transit:'etd'}[o.stage]||o.stage);
+    if(requested&&order.includes(requested)){
+      m.stage=order.indexOf(requested)>=order.indexOf(floor)?requested:floor;
+      m._stageManual=!!o._stageManual||order.indexOf(requested)>order.indexOf(floor);
     }
     m._edited=true; return m;
   }
@@ -776,38 +781,13 @@ class App extends Component {
     const d=new Date(parseInt(p[0],10),parseInt(p[1],10)-1,parseInt(p[2],10));
     return isNaN(d)?null:d;
   }
-  // ตีความสถานะเริ่มต้นจากข้อมูลที่ Odoo ให้มาเท่านั้น (receipt/delivery_status → odoo_state → วันกำหนด) —
-  // สถานะที่ผู้ใช้ปรับเองจะถูก applyOverrides() ทับทีหลังอยู่แล้ว (ดู applyOne)
-  // เดิมโค้ดตรงนี้อ่านค่า etd/eta/atd/bl_awb/forwarder จาก "import plan" ที่ดึงมาจาก /api/import-plan
-  // แต่ endpoint นั้นไม่มีอยู่ใน api-server.js (ตอบ 404 ทุกครั้ง — ยืนยันแล้ว) จึงไม่เคยมีค่าให้ใช้เลย
-  // สาขาเงื่อนไขทั้งหมดที่พึ่ง plan เป็น dead code — ตัดทิ้งพร้อม applyPlan/planFor และ fetch ที่ 404
-  // ทุก 3 นาที (พฤติกรรมที่เห็นบนหน้าจอไม่เปลี่ยน เพราะเส้นทางเหล่านั้นไม่เคยถูกเดินอยู่แล้ว)
-  // วันที่ของขึ้นฝั่งไทยของ shipment ใบนี้ — ทางเรือใช้ ETA ตรงๆ · ทางอากาศมักไม่มี ETA
-  // (ETS ของกรมศุลฯ ค้นได้เฉพาะเรือ) จึงใช้ ETD แทน เพราะบินถึงภายใน 1-2 วัน
-  _arrivalOf(r){ return (r.eta||'').slice(0,10) || (r.etd||'').slice(0,10) || ''; }
-  // ของงวดนี้เข้าคลังแล้วหรือยัง — ตัดสินจากหลักฐานใน Odoo ไม่ใช่การเดาจากวันที่อย่างเดียว
-  // receipt_status เป็นค่ารวมทั้ง PO บอกไม่ได้ว่างวดไหนเข้าแล้ว แต่ last_receipt_date บอกได้ว่า
-  // "ใบรับของที่ทำเสร็จล่าสุดคือวันไหน" → ถ้าของงวดนี้ถึงไทยก่อนหรือพร้อมวันนั้น แปลว่าถูกรับไปแล้ว
-  // ถ้าถึงหลังจากนั้น = ยังไม่มีใบรับของสำหรับงวดนี้ ต้องไม่โชว์ว่ารับเข้าคลังแล้ว (ห้ามเดาเกินหลักฐาน)
-  _receivedByEvidence(arrival,lastReceipt){
-    if(!arrival||!lastReceipt)return false;
-    return arrival.slice(0,10)<=lastReceipt.slice(0,10);
-  }
+  // Dates are schedules. Only actual Odoo receipt status advances the initial import stage.
   deriveImportStage(r){
-    const rs=r.receipt_status,os=r.odoo_state;
-    if(rs==='full')return 'received';
-    // รับบางส่วน: PO ที่แบ่งส่งหลายงวดจะค้าง partial จนงวดสุดท้ายมาถึง — งวดที่เข้าคลังไปแล้ว
-    // ต้องขึ้น "รับเข้าคลัง" ไม่ใช่ค้างที่พิธีการยกทั้งตระกูล (เคสจริง KOBPO2604-08431:
-    // ขาอากาศ 5 งวดมีใบรับของครบตั้งแต่ ก.ค. แต่บอร์ดยังโชว์พิธีการเพราะขาเรือยังไม่มา)
-    if(rs==='partial'){
-      const arrival=(r.date_planned||'').slice(0,10);
-      return this._receivedByEvidence(arrival,r.last_receipt_date)?'received':'customs';
-    }
-    if(os==='draft'||os==='sent')return 'po';
-    const today=this._today(),planned=this._dt(r.date_planned);
-    if(planned){const days=Math.round((planned-today)/86400000);if(days<=0)return 'arrived';if(days<=10)return 'transit';if(days<=30)return 'booking';}
+    if(r.receipt_status==='full')return 'received';
+    if(r.receipt_status==='partial')return 'customs';
     return 'po';
   }
+
   deriveExportStage(r){
     const ds=r.delivery_status,os=r.odoo_state;
     if(ds==='full')return 'arrived';
@@ -827,7 +807,7 @@ class App extends Component {
     // ดึง goods_category มาอยู่แล้ว (r.goods_category) แค่ไม่เคยถูกอ่านใช้ ทำให้ทุก import PO ถูกจัดเป็น
     // 'oversea' หมดโดยไม่สนใจหมวดจริง — ปุ่มกรอง Packaging/Finished ในหน้า Import Board เลยกรองไม่ได้ผลจริง
     const catType=r.goods_category==='Packaging'?'pk':r.goods_category==='Finished Goods'?'fg':'oversea';
-    return {...this.workflowFields({...r,_board:board}),companyId:r.company_id||r.companyId||((r.company_code||r.company)==='BTV'?2:1),odooOrderId:r.id||null,_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',partyId:r.partner_id||null,type:normType(catType),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:rate>0?1/rate:1,origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
+    return {...this.workflowFields({...r,_board:board}),companyId:r.company_id||r.companyId||((r.company_code||r.company)==='BTV'?2:1),odooOrderId:r.id||null,_board:board,id:board[0]+(r.id||''),poNo:r.po_number||r.so_number||('#'+r.id),company:r.company_code||'KOB',party:r.supplier||r.customer||'—',partyId:r.partner_id||null,type:normType(catType),mode:'sea',seaType:'',containerQty:0,courierCo:'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total)||0,rate:(r.currency||'THB')==='THB'?1:(Number.isFinite(rate)&&rate>0?1/rate:null),origin:r.origin||'',dest:board==='export'?(r.country_code||'ต่างประเทศ'):'LAEM CHABANG, THAILAND',etd:'',eta:(r.date_planned||'').slice(0,10),orderDate:(r.date_order||'').slice(0,10),actualDate:'',bl:'',container:'',vessel:'',forwarder:'',freight:0,clearance:0,insurance:0,duty:0,vat:0,
       _odooState:r.odoo_state||'',_receiptStatus:r.receipt_status||r.delivery_status||'',
       _lastReceipt:(r.last_receipt_date||'').slice(0,10)};
   }
@@ -838,18 +818,19 @@ class App extends Component {
     const wf=(r.state&&r.state!=='draft')?r.state:r.odoo_state;
     const stageMap=board==='export'?{draft:'draft',sent:'draft',order_confirmed:'packing',production:'packing',packing:'packing',booking_confirmed:'booking',etd:'shipped',sale:'shipped',eta_arrived:'arrived',closed:'arrived',done:'arrived'}:{draft:'po',purchase:'po',sent:'po',booking_confirmed:'etd',etd:'etd',atd:'etd',transit:'etd',eta:'arrived',ata:'arrived',customs_clearance:'customs',duty_payment:'customs',goods_received:'received',done:'received'};
     const legacyStage={booking:'etd',transit:'etd',customs:'customs',received:'received'}[r.stage]||r.stage;
-    const stage=legacyStage||stageMap[wf]||(board==='export'?'draft':'po');
+    const proposed=legacyStage||stageMap[wf];
+    const stage=(board==='export'?EXP_STAGES:IMP_STAGES).some(st=>st.key===proposed)?proposed:(board==='export'?'draft':'po');
     const rawRate=parseFloat(r.rate)||0;
     // records ที่ถูกสร้าง/แก้ผ่านแอป (setStageFor/saveEdit/splitShipment/submitCreate) เขียน rate เป็นหน่วย
     // "บาทต่อ 1 หน่วยเงินตรา" ตรงตัวอยู่แล้ว (ผ่าน mapPo แปลงมาแล้วรอบนึง) — ต่างจาก record ที่ seed มาจาก
     // Odoo ดิบๆ ซึ่ง rate เป็น "หน่วยเงินตราต่อ 1 บาท" (ต้อง 1/rate) เดิม mapTracking กลับด้านให้เสมอโดยไม่ดู
     // ที่มา ทำให้ record ที่เคยแก้ผ่านแอปแล้วมาเจอ path fallback นี้ (Odoo+snapshot ล่มพร้อมกัน) ค่าบาทเพี้ยน
     // ผิดกำลังสอง (~1000 เท่า) — เช็ค _rateIsThb ที่ผู้เขียนแต่ละจุดใส่ไว้แล้วก่อนตัดสินใจว่าต้องกลับด้านไหม
-    const rate=r._rateIsThb?(rawRate>0?rawRate:1):(rawRate>0?1/rawRate:1);
+    const rate=(r.cur||r.currency||'THB')==='THB'?1:(Number.isFinite(rawRate)&&rawRate>0?(r._rateIsThb?rawRate:1/rawRate):null);
     // id ต้องไม่มีวันเป็น undefined — record ที่บันทึกผ่านฟอร์มแก้ไข/สร้างในแอปไม่มี r.id/r.odoo_id
     // (มีแค่ po_so) ถ้าปล่อยเป็น undefined หลาย record จะชนกัน ทำให้คลิกแล้วเปิดผิด PO
     const id=r.id||r.odoo_id||('t_'+(r.po_so||Math.random()));
-    return {...this.workflowFields({...r,_board:board}),companyId:r.companyId||(r.company==='BTV'?2:1),odooOrderId:r.odooOrderId||null,_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.currency||'THB',amount:parseFloat(r.amount_total??r.amount)||0,rate,origin:r.origin||r.portOfLoading||'',dest:r.dest||r.portOfDischarge||'LAEM CHABANG, THAILAND',portOfLoading:r.portOfLoading||r.origin||'',portOfDischarge:r.portOfDischarge||r.dest||'',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),etsActualArrivalDate:(r.etsActualArrivalDate||'').slice(0,10),etsStatus:r.etsStatus||'',etsCheckedAt:r.etsCheckedAt||'',etsMatchedVoyage:r.etsMatchedVoyage||'',documentReceivedAt:r.documentReceivedAt||'',actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:r.vessel||'',voyage:r.voyage||'',forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,other:parseFloat(r.other)||0,_stageManual:!!r._stageManual,_fallback:true};
+    return {...this.workflowFields({...r,_board:board}),companyId:r.companyId||(r.company==='BTV'?2:1),odooOrderId:r.odooOrderId||null,_board:board,id,poNo:r.po_so||r.odoo_id||r.id,company:r.company||'KOB',party:r.party||'—',type:normType(r.import_type),mode:r.mode||'sea',seaType:r.seaType||'',containerQty:parseFloat(r.containerQty)||0,courierCo:r.courierCo||'',stage,cur:r.cur||r.currency||'THB',amount:parseFloat(r._poOriginalAmount??r.amount_total??r.amount)||0,_poOriginalAmount:r._poOriginalAmount,_poOriginalCurrency:r._poOriginalCurrency,_poOriginalRate:r._poOriginalRate,rate,origin:r.origin||r.portOfLoading||'',dest:r.dest||r.portOfDischarge||'LAEM CHABANG, THAILAND',portOfLoading:r.portOfLoading||r.origin||'',portOfDischarge:r.portOfDischarge||r.dest||'',etd:(r.etd||'').slice(0,10),eta:(r.eta||'').slice(0,10),etsActualArrivalDate:(r.etsActualArrivalDate||'').slice(0,10),etsStatus:r.etsStatus||'',etsCheckedAt:r.etsCheckedAt||'',etsMatchedVoyage:r.etsMatchedVoyage||'',documentReceivedAt:r.documentReceivedAt||'',actualDate:(r.actualDate||'').slice(0,10),bl:r.bl_awb||'',container:r.container||'',vessel:r.vessel||'',voyage:r.voyage||'',forwarder:r.forwarder||'',freight:parseFloat(r.freight_thb||r.freight||0)||0,clearance:parseFloat(r.clearance)||0,insurance:parseFloat(r.insurance)||0,duty:parseFloat(r.duty)||0,vat:parseFloat(r.vat)||0,other:parseFloat(r.other)||0,_stageManual:!!r._stageManual,_fallback:true};
   }
 
   allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
@@ -872,7 +853,7 @@ class App extends Component {
   async submitCreate(){
     if(!this.state.canWrite||this.state.saving)return;
     const f=this.state.form;if(!this.canEditPo(f.poNo))return;this.setState({saving:true});
-    const rate=this.fxRate(f.cur);
+    const rate=this.fxRate(f.cur,f.company);
     const id='t_'+(f.poNo||('new_'+Date.now()));
     const ns={_board:f.board,id,poNo:f.poNo||'(รายการใหม่)',company:f.company,party:f.party||'—',type:f.type,mode:f.mode,seaType:f.seaType||'',containerQty:parseFloat(f.containerQty)||0,courierCo:f.courierCo||'',stage:f.board==='export'?'draft':'po',cur:f.cur,amount:parseFloat(f.amount)||0,rate,origin:f.origin||'',dest:f.dest||(f.board==='export'?'ต่างประเทศ':'LAEM CHABANG, THAILAND'),etd:f.etd||'',eta:f.eta||'',actualDate:f.actualDate||'',bl:f.bl||'',container:f.container||'',vessel:[f.vessel,f.voyage].filter(Boolean).join(' / '),forwarder:f.forwarder||'',freight:parseFloat(f.freight)||0,clearance:parseFloat(f.clearance)||0,insurance:parseFloat(f.insurance)||0,duty:parseFloat(f.duty)||0,vat:parseFloat(f.vat)||0,other:parseFloat(f.other)||0,expectedCost:parseFloat(f.expectedCost)||0,_synthetic:true};
     const ov={...this._overrides};
@@ -895,11 +876,11 @@ class App extends Component {
     this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();this.loadLanded();
   }
   cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
-  setEdit(k,v){this.setState(s=>({editForm:{...s.editForm,[k]:v}}));}
+  setEdit(k,v){this.setState(s=>({editForm:{...s.editForm,[k]:v,...(k==='company'&&s.editForm._synthetic?{rate:this.fxRate(s.editForm.cur,v)}:{})}}));}
   // เปลี่ยนสกุลเงินของ shipment ที่แยกเอง ต้องคำนวณ rate ใหม่เสมอ (เหมือน submitCreate ทำตอนสร้าง) —
   // เดิม setEdit('cur',...) เปลี่ยนแค่ cur แต่ rate เก่ายังค้างอยู่ ทำให้ totalCostThb คำนวณผิดทันทีที่บันทึก
   // (เช่น เปลี่ยนจาก CNY เป็น USD แต่ rate ยังเป็นอัตรา CNY เดิม มูลค่าบาทจะเพี้ยนหลายเท่าโดยไม่มีอะไรเตือน)
-  setEditCurrency(cur){this.setState(s=>({editForm:{...s.editForm,cur,rate:this.fxRate(cur)}}));}
+  setEditCurrency(cur){this.setState(s=>({editForm:{...s.editForm,cur,rate:this.fxRate(cur,s.editForm.company)}}));}
   // ติ๊ก Over-receipt = ของถึงโกดังจริงแล้ว → ปิดงานทันที (ไม่ต้องไล่ผ่าน booking/customs)
   // ปลดติ๊ก = ไม่บังคับสถานะคืน ให้ผู้ใช้เลือกเอง เพราะไม่รู้ว่าที่ถูกต้องคือขั้นไหน
   toggleOverReceipt(checked){
@@ -923,11 +904,14 @@ class App extends Component {
   async setStageFor(s,newStage){
     if(!this.canEditPo(s.poNo))return;
     const stages=s._board==='export'?EXP_STAGES:IMP_STAGES;
+    const order=stages.map(st=>st.key),floor=this.evidenceStage(s);
+    if(!order.includes(newStage))return;
+    if(order.indexOf(newStage)<order.indexOf(floor)){this.showToast('ยังย้ายย้อนหลังไม่ได้ — มีหลักฐานรับ/ส่งของจาก Odoo แล้ว','error');return;}
     const terminal=stages[stages.length-1].key===newStage;
     // overReceipt = "รับของเกินสั่ง" คนละความหมายกับ "ลากมาลงคอลัมน์สุดท้ายแล้ว" — ห้ามตั้งเป็น true อัตโนมัติ
     // (บั๊กเดิม copy-paste มาจาก actualDate ด้านล่าง ทำให้ลากการ์ดปกติไปคอลัมน์สุดท้ายแล้วขึ้นป้าย "เกิน" ผิดๆ)
     // ต้องใส่ _synthetic/_splitBase ต่อให้ตรงกับของเดิมเสมอ ไม่งั้น shipment ที่แยกเอง/สร้างเองจะหลุดสถานะนั้นไปตอนลาก
-    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_stageManual:true,type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',etsActualArrivalDate:s.etsActualArrivalDate||'',etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:s.documentReceivedAt||'',actualDate:s.actualDate||(terminal?new Date().toISOString().slice(0,10):''),freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,other:s.other||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
+    const o={po_so:s.poNo,_board:s._board,_edited:true,_rateIsThb:true,_stageManual:true,type:s.type,company:s.company,party:s.party,cur:s.cur,amount:s.amount,rate:s.rate,stage:newStage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||0,courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',bl_awb:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:s.etd||'',eta:s.eta||'',etsActualArrivalDate:s.etsActualArrivalDate||'',etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:s.documentReceivedAt||'',actualDate:terminal?(s.actualDate||new Date().toISOString().slice(0,10)):'',freight:s.freight||0,clearance:s.clearance||0,insurance:s.insurance||0,duty:s.duty||0,vat:s.vat||0,other:s.other||0,bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
     const payload={...this.withBase(o),_baseTs:s._ts!=null?s._ts:0};
     try{const saved=await this.persistTracking(payload);this.setState({shipments:this.allShipments().map(x=>x.poNo===s.poNo?this.applyOne(x,saved||o):x)});this.showToast('ย้าย '+s.poNo+' → '+stageMeta(s._board,newStage).label,'success');}
     catch(e){this.showToast('ยังไม่ได้บันทึก: '+e.message,'error');}
@@ -937,7 +921,10 @@ class App extends Component {
   canEditPo(poNo){return this.state.canWrite===true&&!this.isAmbiguousPo(poNo);}
   withBase(o){
     const prev=this._overrides&&this._overrides[o.po_so];
-    const copy={...o,_baseTs:prev&&prev._ts!=null?prev._ts:0};delete copy._ts;return copy;
+    const source=this.allShipments().find(r=>r.poNo===o.po_so&&this.sameScope(r,o));
+    const copy={...o,_baseTs:prev&&prev._ts!=null?prev._ts:0};
+    if(source){copy.companyId=source.companyId;copy.odooOrderId=source.odooOrderId;if(!copy.poRefs&&source.poRefs)copy.poRefs=source.poRefs;if(!source._synthetic&&source._poOriginalAmount!=null){copy.amount=source._poOriginalAmount;copy._poOriginalAmount=source._poOriginalAmount;copy._poOriginalCurrency=source._poOriginalCurrency;copy._poOriginalRate=source._poOriginalRate;}}
+    delete copy._ts;return copy;
   }
   async loadPermissions(){
     try{const r=await fetchTimeout('/api/me',{headers:{Accept:'application/json'}},15000);const j=await r.json();this.setState({canWrite:!!(r.ok&&j.ok&&j.canWrite===true),role:j.role||'viewer'});}catch(e){this.setState({canWrite:false,role:'viewer'});}
@@ -969,8 +956,10 @@ class App extends Component {
     if(!this.state.canWrite)return;
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s||!this.canEditPo(s.poNo))return;
     const base=this.strip(s._splitBase||s.poNo);
-    const siblings=this.allShipments().filter(x=>this.strip(x._splitBase||x.poNo)===base);
-    const n=siblings.length+1;
+    const siblings=this.allShipments().filter(x=>this.strip(x._splitBase||x.poNo)===base&&this.sameScope(x,s));
+    const used=new Set([...this.allShipments().map(x=>x.poNo),...Object.keys(this._overrides||{})]);
+    let n=Math.max(1,...siblings.map(x=>{const m=/\((\d+)\)\s*$/.exec(x.poNo);return m?Number(m[1]):1;}))+1;
+    while(used.has(base+' ('+n+')'))n++;
     const poNo=base+' ('+n+')';
     const id='t_'+poNo;
     const p=pre||{};
@@ -996,7 +985,7 @@ class App extends Component {
       if(!res.ok||!j.ok){this.setState({deleteDialog:{...d,busy:false,error:j.error||('HTTP '+res.status)}});return;}
       this._mutationVersion=(this._mutationVersion||0)+1;
       const ov={...this._overrides};delete ov[d.poNo];this._overrides=ov;
-      const rows=this.allShipments().filter(s=>s.poNo!==d.poNo);
+      const rows=this.reconcileAllocations(this.allShipments().filter(s=>s.poNo!==d.poNo));
       const closeDetail=this.state.detailId&&rows.every(r=>r.id!==this.state.detailId);
       this.setState({shipments:rows,deleteDialog:null,detailId:closeDetail?null:this.state.detailId,editing:false,editForm:null});
       this.showToast('ลบ '+d.poNo+' แล้ว','success');
@@ -1127,6 +1116,8 @@ class App extends Component {
   async openBillPicker(bucket,label){
     if(!this.state.canWrite)return;
     const f=this.state.editForm;if(!f)return;
+    const requestId=this._billRequestId=(this._billRequestId||0)+1;
+    const current=()=>requestId===this._billRequestId&&this.state.billPicker&&this.state.editForm===f;
     const target=bucket?{bucket,label}:this.state.billTarget;
     if(!target||!['freight','clearance','insurance','duty','vat','other'].includes(target.bucket))return;
     bucket=target.bucket;label=target.label;
@@ -1136,7 +1127,7 @@ class App extends Component {
     // cache แยกตามบริษัท — เดิมเช็คแค่ "มีลิสต์อยู่แล้วหรือยัง" ทำให้เปิด BTV ต่อจาก KOB
     // เห็นบิลของ KOB ค้างอยู่ (ผิดบริษัท)
     if(this.state.billList&&this.state.billList.length&&this._billListCompany===f.company){return;}
-    this.setState({billLoading:true});
+    this.setState({billLoading:true,billList:[],billMeta:null});
     try{
       // limit=2000 — เพดานเดิม 300 ตัดบิลเก่าทิ้งเงียบๆ (วัดจริง: KOB 12 เดือนมี 736 รายการ เห็นแค่ 365
       // และเก่าสุดขยับจาก 2025-08-14 มาเป็น 2025-09-19) ทำให้ค้นหาบิลเก่าไม่เจอเลยเพราะกรองฝั่งเบราว์เซอร์
@@ -1144,26 +1135,30 @@ class App extends Component {
       const r=await fetchTimeout('/api/logistics-bills?company='+encodeURIComponent(f.company)+'&months=12&limit=2000',{headers:{Accept:'application/json'}},20000);
       if(!r.ok)throw new Error('HTTP '+r.status);
       const j=await r.json();
+      if(!current())return;
       this._billListCompany=f.company;
       this.setState({billList:(j&&j.bills)||[],billLoading:false,
         billMeta:j?{total:j.total,fetched:j.fetched,truncated:!!j.truncated,months:j.months}:null});
     }catch(e){
+      if(!current())return;
       this.setState({billList:[],billLoading:false,billError:true,billMeta:null});
       this.showToast(e.name==='AbortError'?'เชื่อมต่อ Odoo ไม่ทันเวลา — ลองใหม่อีกครั้ง':'โหลดรายการบิลไม่สำเร็จ','error');
     }
   }
-  closeBillPicker(){this.setState({billPicker:false,billTarget:null});}
+  closeBillPicker(){this._billRequestId=(this._billRequestId||0)+1;this.setState({billPicker:false,billTarget:null,billLoading:false});}
   toggleBill(b){if(!this.state.canWrite)return;if(b.fxStatus==='missing'||b.amount==null||!Number.isFinite(Number(b.amount))){this.showToast('ขาดอัตราแลกเปลี่ยน — ยังเลือกบิลนี้ไม่ได้','error');return;}this.setState(s=>{const sel={...s.selBills};if(sel[b.id])delete sel[b.id];else sel[b.id]=b;return {selBills:sel};});}
   // ใช้บิลที่เลือก: รวม freight/duty/vat เติมลงช่อง + จำการจับคู่ไว้
   applySelectedBills(){
     if(!this.state.canWrite)return;
     const t=this.state.billTarget;if(!t||!['freight','clearance','insurance','duty','vat','other'].includes(t.bucket))return;
     const sel=Object.values(this.state.selBills||{});
+    const f=this.state.editForm,companyId=f&&(f.company==='BTV'?2:f.company==='KOB'?1:Number(f.companyId));
+    if(!f||sel.some(b=>Number(b.company_id||b.companyId)!==companyId)){this.showToast('บริษัทของบิลไม่ตรงกับ shipment — กรุณาเลือกใหม่','error');return;}
     if(sel.some(b=>b.fxStatus==='missing'||b.amount==null||!Number.isFinite(Number(b.amount)))){this.showToast('ขาดอัตราแลกเปลี่ยน — ยังนำยอดมาใช้ไม่ได้','error');return;}
     // ยอดที่ลงช่อง = ยอดรวมของบิลที่ผู้ใช้เลือก (ผู้ใช้เป็นคนตัดสินว่าบิลใบไหนเป็นค่าใช้จ่ายช่องไหน
     // ไม่ใช่ให้ระบบเดาจาก keyword ซึ่งเดิมกระจายยอดใบเดียวไปหลายช่องโดยที่ผู้ใช้ไม่เห็น)
     const total=sel.reduce((a,b)=>a+(b.amount||0),0);
-    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,category:t.bucket,sourceCategory:b.category}));
+    const meta=sel.map(b=>({id:b.id,kind:b.kind||'bill',bill:b.bill,partner:b.partner,amount:b.amount,company_id:b.company_id||b.companyId,category:t.bucket,sourceCategory:b.category}));
     this.setState(s=>({
       editForm:{...s.editForm,bills:[...(s.editForm.bills||[]).filter(b=>b.category!==t.bucket),...meta],[t.bucket]:Math.round(total),_billsBy:{...(s.editForm._billsBy||{}),[t.bucket]:meta}},
       billPicker:false,billTarget:null,
@@ -1185,7 +1180,7 @@ class App extends Component {
     try{
       const saved=await this.persistTracking(payload);
       const rows=this.allShipments().map(s=>s.poNo===f.poNo?this.applyOne(s,saved||o):s);
-      this.setState({shipments:rows,editing:false,editForm:null,costSrc:''});
+      this.setState({shipments:this.reconcileAllocations(rows),editing:false,editForm:null,costSrc:''});
       this.showToast('บันทึก PO '+f.poNo+' สำเร็จ','success');
     }catch(e){this.showToast('ยังไม่ได้บันทึก: '+e.message,'error');}
     finally{this.setState({savingEdit:false});}
@@ -1193,10 +1188,12 @@ class App extends Component {
 
   sync(){if(this.state.syncing)return;this.setState({syncing:true});this._forceSync=true;const prep=this.state.canWrite?fetch('/api/cache/clear',{method:'POST'}).catch(()=>{}):Promise.resolve();return prep.then(()=>this.loadData()).finally(()=>{this._forceSync=false;this.setState({syncing:false});});}
 
-  fxRate(cur){const v=this._fx&&this._fx[cur];return (v&&v>0)?v:rateGuess(cur);}
+  fxRate(cur,company){
+    if(cur==='THB')return 1;
+    const co=company==='KOB'?1:company==='BTV'?2:Number(company),entry=this._fx&&this._fx[co]&&this._fx[co][cur];
+    return entry&&Number.isFinite(entry.rate)&&entry.rate>0?entry.rate:null;
+  }
 
-  // แปลง shipment list → แถว Excel — ใช้ร่วมกันทั้งปุ่ม export ต่อบอร์ด (exportExcel) และ
-  // รายงานสรุปสำหรับบัญชี (exportAccountingReport) กันสองที่คำนวณคอลัมน์ไม่ตรงกัน
   buildExcelRows(list,tab){
     return list.map(s=>{
       const ti=transitInfo(s);
@@ -1204,10 +1201,12 @@ class App extends Component {
       'PO/SO':s.poNo,'บริษัท':s.company,'ผู้ขาย/ลูกค้า':s.party,
       'ประเภท':typeMeta(s.type).label,'สถานะ':stageMeta(tab,s.stage).label,
       'Ship Mode':shipModeLabel(s),'สกุลเงิน':s.cur,'มูลค่าสินค้า':s.amount,
-      'มูลค่าสินค้า (฿)':Math.round(s.amount*s.rate),'ค่าขนส่ง (฿)':s.freight||0,
+      'มูลค่าสินค้า (฿)':goodsThb(s)==null?null:Math.round(goodsThb(s)),'ค่าขนส่ง (฿)':s.freight||0,
       'ค่าเดินพิธีการ (฿)':s.clearance||0,'ค่าประกันภัย (฿)':s.insurance||0,
       'อากร (฿)':s.duty||0,'VAT (฿)':s.vat||0,
-      'ต้นทุนรวม (฿)':Math.round(s.amount*s.rate+costSum(s)),
+      'ต้นทุนรวม (฿)':totalCostThb(s)==null?null:Math.round(totalCostThb(s)),
+      'สถานะมูลค่า':s._allocationStatus&&s._allocationStatus!=='ok'?'ตรวจการจัดสรรมูลค่า / FX: '+s._allocationStatus:goodsThb(s)==null?'ขาด FX':'ครบ',
+      'ยอด PO ต้นฉบับ':s._poOriginalAmount??'',
       'ต้นทาง':s.origin,'ปลายทาง':s.dest,'BL/AWB':s.bl,
       'ตู้':s.container,'เรือ/เที่ยว':s.vessel,'Forwarder':s.forwarder,
       'ETD':s.etd,'ETA (ประมาณ)':s.eta,'วันที่รับจริง/ถึงจริง':s.actualDate||'',
@@ -1238,8 +1237,9 @@ class App extends Component {
     const expRows=this.buildExcelRows(this.allShipments().filter(s=>s._board==='export'),'export');
     const qSummary=qRows.map(r=>({
       'ไตรมาส':r.label,
-      'Import ต้นทุนรวม (฿)':Math.round(r.imp),'Import จำนวนรายการ':r.impN,'Import เฉลี่ยต่อออเดอร์ (฿)':Math.round(r.impAvg),
-      'Export ต้นทุนรวม (฿)':Math.round(r.exp),'Export จำนวนรายการ':r.expN,'Export เฉลี่ยต่อออเดอร์ (฿)':Math.round(r.expAvg),
+      'Import ต้นทุนรวม (฿)':r.imp==null?null:Math.round(r.imp),'Import จำนวนรายการ':r.impN,'Import เฉลี่ยต่อออเดอร์ (฿)':r.impAvg==null?null:Math.round(r.impAvg),
+      'Export ต้นทุนรวม (฿)':r.exp==null?null:Math.round(r.exp),'Export จำนวนรายการ':r.expN,'Export เฉลี่ยต่อออเดอร์ (฿)':r.expAvg==null?null:Math.round(r.expAvg),
+      'สถานะมูลค่า':r.imp==null||r.exp==null?'มูลค่ายังไม่ครบ / ตรวจ FX และยอดจัดสรร':'ครบ',
     }));
     const wb=XLSX.utils.book_new();
     if(qSummary.length){
@@ -1522,11 +1522,11 @@ class App extends Component {
       {rows.map(r=>(
         <div key={r.label} style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0,minWidth:'74px'}}>
           <div style={{display:'flex',alignItems:'flex-end',gap:'5px',height:'140px'}}>
-            <div title={'Import: '+fmtTip(r[aKey])} style={{width:'18px',height:Math.max(2,r[aKey]/max*140)+'px',background:'var(--color-brand)',borderRadius:'4px 4px 0 0'}}/>
-            <div title={'Export: '+fmtTip(r[bKey])} style={{width:'18px',height:Math.max(2,r[bKey]/max*140)+'px',background:'#0891b2',borderRadius:'4px 4px 0 0'}}/>
+            <div title={'Import: '+fmtTip(r[aKey])} style={{width:'18px',height:(r[aKey]==null?0:Math.max(2,r[aKey]/max*140))+'px',background:'var(--color-brand)',borderRadius:'4px 4px 0 0'}}/>
+            <div title={'Export: '+fmtTip(r[bKey])} style={{width:'18px',height:(r[bKey]==null?0:Math.max(2,r[bKey]/max*140))+'px',background:'#0891b2',borderRadius:'4px 4px 0 0'}}/>
           </div>
           <div style={{fontSize:'11px',fontWeight:500,color:'var(--color-text)',marginTop:'8px',whiteSpace:'nowrap'}}>{r.label}</div>
-          <div style={{fontSize:'10px',color:'var(--color-text-muted)',marginTop:'3px',whiteSpace:'nowrap',textAlign:'center'}}>{fmtPair(r[aKey],r[bKey])}</div>
+          <div style={{fontSize:'10px',color:'var(--color-text-muted)',marginTop:'3px',whiteSpace:'nowrap',textAlign:'center'}}>{r[aKey]==null||r[bKey]==null?'มูลค่ายังไม่ครบ / ตรวจ FX':fmtPair(r[aKey],r[bKey])}</div>
         </div>
       ))}
     </div>;
@@ -1535,10 +1535,11 @@ class App extends Component {
   renderDashboard(){
     const {isNarrow}=this.state;
     const impAll=this.imports(),expAll=this.exports();
-    const impVal=impAll.reduce((a,s)=>a+s.amount*s.rate,0),expVal=expAll.reduce((a,s)=>a+s.amount*s.rate,0);
-    // กำลังขนส่ง = เฉพาะสถานะที่ของยังเคลื่อนที่จริง (booking/transit) — arrived/customs คือของถึงท่า/อยู่พิธีการแล้ว ไม่ใช่ "กำลังขนส่ง"
+    const impVal=sumMoney(impAll,goodsThb),expVal=sumMoney(expAll,goodsThb);
+    const unresolved=[...impAll,...expAll].filter(s=>goodsThb(s)==null);
+    // กำลังขนส่ง = สถานะ ETD ที่ยืนยันจากข้อมูล shipment — arrived/customs คือของถึงท่า/อยู่พิธีการแล้ว ไม่ใช่ "กำลังขนส่ง"
     // รอดำเนินการ = customs (รอเคลียร์พิธีการ) หรือ po (ยังไม่ได้ book) — ไม่ทับซ้อนกับ activeImp ด้านบนแล้ว
-    const activeImp=impAll.filter(s=>['booking','transit'].includes(s.stage)).length;
+    const activeImp=impAll.filter(s=>['etd'].includes(s.stage)).length;
     const pendingImp=impAll.filter(s=>s.stage==='customs'||s.stage==='po').length;
     const kpis=[
       {icon:'down',value:impAll.length,label:'Import ทั้งหมด',sub:fmtBaht(impVal)+' มูลค่ารวม'},
@@ -1556,7 +1557,7 @@ class App extends Component {
     const costSrc=costAll.slice(0,7);
     // แถว "รวมทั้งหมด" ต้องรวมจาก costAll (ทุกรายการที่มีต้นทุน) ไม่ใช่ costSrc (7 แถวที่โชว์)
     // ไม่งั้นยอดรวมจะโกหกเมื่อมีรายการมากกว่า 7 — โชว์แค่บางแถวได้ แต่ยอดรวมต้องจริงเสมอ
-    const tg=costAll.reduce((a,s)=>a+s.amount*s.rate,0),tf=costAll.reduce((a,s)=>a+(s.freight||0)+(s.clearance||0)+(s.insurance||0),0),tt=costAll.reduce((a,s)=>a+(s.duty||0)+(s.vat||0),0);
+    const tg=sumMoney(costAll,goodsThb),tf=costAll.reduce((a,s)=>a+(s.freight||0)+(s.clearance||0)+(s.insurance||0),0),tt=costAll.reduce((a,s)=>a+(s.duty||0)+(s.vat||0),0);
 
     // ── สรุป Transit Time เทียบ KPI (import + sea freight) ──
     const tstat=transitStats(impAll);
@@ -1586,7 +1587,7 @@ class App extends Component {
       list.forEach(s=>{
         const k=s.partyId!=null?('id:'+s.partyId):('name:'+(s.party||'—'));
         const e=map[k]=map[k]||{party:s.party||'—',partyId:s.partyId!=null?s.partyId:null,value:0,count:0};
-        e.value+=totalCostThb(s);e.count+=1;
+        e.value=addMoney(e.value,totalCostThb(s));e.count+=1;
       });
       return Object.values(map).sort((a,b)=>b.value-a.value).slice(0,10);
     };
@@ -1598,7 +1599,7 @@ class App extends Component {
     const companySplit=[{label:'Import',list:impAll},{label:'Export',list:expAll}].map(c=>{
       const kobList=c.list.filter(s=>s.company==='KOB'),btvList=c.list.filter(s=>s.company==='BTV');
       return {label:c.label,kob:kobList.length,btv:btvList.length,
-        kobVal:kobList.reduce((a,s)=>a+totalCostThb(s),0),btvVal:btvList.reduce((a,s)=>a+totalCostThb(s),0)};
+        kobVal:sumMoney(kobList),btvVal:sumMoney(btvList)};
     });
 
     // ── สัดส่วนสกุลเงินก่อนแปลงเป็นบาท (FX exposure) — จงใจไม่แปลงเป็นบาทตรงนี้ เพื่อดูยอดค้าง/ยอดรับตามสกุลเงินต้นฉบับจริง
@@ -1626,19 +1627,19 @@ class App extends Component {
     const missingCost=impAll.filter(s=>s.stage==='received'&&costSum(s)===0);
     // เกินงบที่คาดการณ์ไว้เกิน 10% — ใช้ได้เฉพาะ shipment ที่กรอก expectedCost ไว้แล้วเท่านั้น (ผู้ใช้กรอกเอง
     // เพราะ Odoo ไม่มีประวัติราคาที่เสนอ/ประเมินไว้ก่อนหน้าให้ดึงมาใช้อัตโนมัติ)
-    const overBudget=[...impAll,...expAll].filter(s=>s.expectedCost>0&&(totalCostThb(s)-s.expectedCost)/s.expectedCost>0.1);
+    const overBudget=[...impAll,...expAll].filter(s=>s.expectedCost>0&&totalCostThb(s)!=null&&(totalCostThb(s)-s.expectedCost)/s.expectedCost>0.1);
 
     // ── สัดส่วนต้นทุนตามปี: Import vs Export ──
     const yearMap={};
-    impAll.forEach(s=>{const y=yearOf(s);if(y==null)return;(yearMap[y]=yearMap[y]||{imp:0,exp:0}).imp+=totalCostThb(s);});
-    expAll.forEach(s=>{const y=yearOf(s);if(y==null)return;(yearMap[y]=yearMap[y]||{imp:0,exp:0}).exp+=totalCostThb(s);});
+    impAll.forEach(s=>{const y=yearOf(s);if(y==null)return;const e=yearMap[y]=yearMap[y]||{imp:0,exp:0};e.imp=addMoney(e.imp,totalCostThb(s));});
+    expAll.forEach(s=>{const y=yearOf(s);if(y==null)return;const e=yearMap[y]=yearMap[y]||{imp:0,exp:0};e.exp=addMoney(e.exp,totalCostThb(s));});
     // label = ค.ศ. นำ + (พ.ศ. ตามหลัง) เช่น "2025 (พ.ศ. 2568)" — เดิมเอาเลข พ.ศ. แบบสั้น (68/69)
     // ไปแสดงเป็นตัวเลขนำหน้าโดยไม่ตั้งใจ ทำให้อ่านสับสนว่าเป็นปีอะไร
     const nowYear=new Date().getFullYear();
     // ตัดปีที่ยังไม่เริ่ม (อนาคตล้วนๆ เช่น PO ที่ตั้งวันที่ล่วงหน้าข้ามปี) ออกจากกราฟเทรนด์ — ไม่ใช่ข้อมูลจริงที่เกิดขึ้นแล้ว
     const yearRows=Object.keys(yearMap).map(Number).filter(y=>y<=nowYear).sort((a,b)=>a-b).map(y=>{
-      const v=yearMap[y],tot=v.imp+v.exp||1;
-      return {year:y,label:y+' (พ.ศ. '+(y+543)+')',imp:v.imp,exp:v.exp,tot:v.imp+v.exp,impPct:v.imp/tot*100,expPct:v.exp/tot*100};
+      const v=yearMap[y],tot=addMoney(v.imp,v.exp);
+      return {year:y,label:y+' (พ.ศ. '+(y+543)+')',imp:v.imp,exp:v.exp,tot,impPct:tot?((v.imp||0)/tot*100):0,expPct:tot?((v.exp||0)/tot*100):0};
     });
     // เดิมเช็คแค่ตำแหน่งแถวสุดท้าย ถ้ามีข้อมูลปีถัดไปแทรกมา (เช่น PO ล่วงหน้า) แถวปีปัจจุบันจะไม่ใช่แถวสุดท้ายแล้ว
     // ทำให้ป้ายเตือนไม่ขึ้นทั้งที่ควรขึ้น — เช็คจากปีจริงแทนตำแหน่ง
@@ -1647,7 +1648,7 @@ class App extends Component {
     // ── เทียบต้นทุนตามไตรมาส (1 ปี = 3 ไตรมาส: Q1 ม.ค.-เม.ย., Q2 พ.ค.-ส.ค., Q3 ก.ย.-ธ.ค.) ──
     const qMap={};
     // เก็บทั้งค่าใช้จ่าย (imp/exp) และจำนวน shipment (impN/expN) ต่อไตรมาสในรอบเดียว
-    const addQ=(s,costField,countField)=>{const q=quarterOf(s);if(!q)return;const e=qMap[q.key]=qMap[q.key]||{y:q.y,q:q.q,label:q.label,imp:0,exp:0,impN:0,expN:0};e[costField]+=totalCostThb(s);e[countField]+=1;};
+    const addQ=(s,costField,countField)=>{const q=quarterOf(s);if(!q)return;const e=qMap[q.key]=qMap[q.key]||{y:q.y,q:q.q,label:q.label,imp:0,exp:0,impN:0,expN:0};e[costField]=addMoney(e[costField],totalCostThb(s));e[countField]+=1;};
     impAll.forEach(s=>addQ(s,'imp','impN')); expAll.forEach(s=>addQ(s,'exp','expN'));
     const nowQ=quarterOf({etd:new Date().toISOString().slice(0,10)});
     // ตัดไตรมาสที่ยังไม่เริ่ม (อนาคตล้วนๆ) ออกจากกราฟเทรนด์ ด้วยเหตุผลเดียวกับปี — PO ล่วงหน้าไม่ใช่เทรนด์จริง
@@ -1657,13 +1658,14 @@ class App extends Component {
     const qMax=Math.max(1,...qRows.map(r=>Math.max(r.imp,r.exp)));
     const qMaxN=Math.max(1,...qRows.map(r=>Math.max(r.impN,r.expN)));
     // มูลค่าเฉลี่ยต่อออเดอร์ต่อไตรมาส = ต้นทุนรวม (imp/exp) หารด้วยจำนวน shipment (impN/expN) ของไตรมาสนั้น
-    qRows.forEach(r=>{r.impAvg=r.impN>0?r.imp/r.impN:0;r.expAvg=r.expN>0?r.exp/r.expN:0;});
+    qRows.forEach(r=>{r.impAvg=r.imp==null?null:r.impN>0?r.imp/r.impN:0;r.expAvg=r.exp==null?null:r.expN>0?r.exp/r.expN:0;});
     const qAvgMax=Math.max(1,...qRows.map(r=>Math.max(r.impAvg,r.expAvg)));
     // หาแถวไตรมาสปัจจุบันจากค่าปี/ไตรมาสจริง (ไม่ใช่ตำแหน่งแถวสุดท้าย) เพื่อติดป้าย "ยังไม่ครบช่วงเวลา" ให้ถูกแถวเสมอ
     const qCurrentRow=nowQ?qRows.find(r=>r.y===nowQ.y&&r.q===nowQ.q):null;
     const qLatestPartial=!!qCurrentRow;
     return <div style={{flex:1,overflowY:'auto',padding:'22px'}}>
       <div style={{maxWidth:'1240px',margin:'0 auto',display:'flex',flexDirection:'column',gap:'18px'}}>
+        {unresolved.length>0&&<div role="alert" style={{padding:'12px 16px',background:'var(--color-warn-soft)',color:'var(--color-warn-text)',borderRadius:'var(--radius)'}}>มูลค่ายังไม่ครบ {unresolved.length} รายการ — ขาด FX หรือยอดจัดสรรเกิน PO ต้นฉบับ ตรวจรายการก่อนใช้ยอดสรุปและรายงานบัญชี</div>}
         <div style={{display:'grid',gridTemplateColumns:isNarrow?'repeat(2,1fr)':'repeat(4,1fr)',gap:isNarrow?'12px':'16px'}}>
           {/* การ์ด KPI: ป้ายชื่อบนสุด ตัวเลขใหญ่รองลงมา — ไม่มีแถบสีหัวการ์ด/ไอคอนสีจัดแล้ว
               เพราะทั้งสี่การ์ดคือตัวเลขประเภทเดียวกัน สีที่ต่างกันไม่ได้ให้ข้อมูลเพิ่ม */}
@@ -1802,7 +1804,7 @@ class App extends Component {
             <div style={{fontSize:'18px',fontFamily:'var(--font-display)',fontWeight:500,letterSpacing:'-.02em',color:'var(--color-text)'}}>Company Split</div>
             <div style={{fontSize:'12px',color:'var(--color-text-muted)',marginTop:'2px',marginBottom:'20px'}}>KOB เทียบ BTV</div>
             {companySplit.map(c=>{
-              const tot=c.kob+c.btv||1,totVal=c.kobVal+c.btvVal||1;
+              const tot=c.kob+c.btv||1,totVal=addMoney(c.kobVal,c.btvVal);
               return <div key={c.label} style={{marginBottom:'18px'}}>
                 <div style={{display:'flex',justifyContent:'space-between',marginBottom:'7px'}}><span style={{fontSize:'13px',fontWeight:500,color:'var(--color-text)'}}>{c.label}</span><span style={{fontSize:'12px',color:'var(--color-text-muted)'}}>{c.kob+c.btv} รายการ</span></div>
                 <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginBottom:'3px'}}>ตามจำนวนรายการ</div>
@@ -1813,8 +1815,8 @@ class App extends Component {
                 <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'var(--color-text-muted)',marginTop:'5px',marginBottom:'10px'}}><span>KOB {c.kob}</span><span>BTV {c.btv}</span></div>
                 <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginBottom:'3px'}}>ตามมูลค่า</div>
                 <div style={{display:'flex',height:'10px',borderRadius:'99px',overflow:'hidden',background:'var(--color-surface-muted)'}}>
-                  <span style={{width:(c.kobVal/totVal*100)+'%',background:'var(--color-brand)',transition:'width .5s'}}/>
-                  <span style={{width:(c.btvVal/totVal*100)+'%',background:'#0891b2',transition:'width .5s'}}/>
+                  <span style={{width:(totVal?c.kobVal/totVal*100:0)+'%',background:'var(--color-brand)',transition:'width .5s'}}/>
+                  <span style={{width:(totVal?c.btvVal/totVal*100:0)+'%',background:'#0891b2',transition:'width .5s'}}/>
                 </div>
                 <div style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'var(--color-text-muted)',marginTop:'5px'}}><span>KOB {fmtBaht(c.kobVal)}</span><span>BTV {fmtBaht(c.btvVal)}</span></div>
               </div>;
@@ -2070,7 +2072,7 @@ class App extends Component {
               <thead><tr style={{background:'var(--color-surface-muted)'}}>{['PO','ผู้ขาย','มูลค่าสินค้า','ขนส่ง+พิธีการ+ประกัน','ภาษี+อากร','รวม'].map((h,i)=>(
                 <th key={h} style={{textAlign:i>=2?'right':'left',fontSize:'11px',fontWeight:500,color:'var(--color-text-muted)',letterSpacing:'.14em',textTransform:'uppercase',padding:'11px 14px'}}>{h}</th>
               ))}</tr></thead>
-              <tbody>{costSrc.map(s=>{const goods=s.amount*s.rate,imp=(s.freight||0)+(s.clearance||0)+(s.insurance||0),tax=(s.duty||0)+(s.vat||0),total=goods+imp+tax;return(
+              <tbody>{costSrc.map(s=>{const goods=goodsThb(s),imp=(s.freight||0)+(s.clearance||0)+(s.insurance||0),tax=(s.duty||0)+(s.vat||0),total=totalCostThb(s);return(
                 <tr key={s.id} style={{borderTop:'1px solid var(--color-surface-muted2)'}}>
                   <td style={{padding:'11px 14px'}}><span style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:500,color:'var(--color-text)'}}>{s.poNo}</span></td>
                   <td style={{padding:'11px 14px',fontSize:'12.5px',color:'var(--color-text-secondary)',maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</td>
@@ -2086,7 +2088,7 @@ class App extends Component {
                 <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg)}</td>
                 <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tf)}</td>
                 <td style={{padding:'12px 14px',textAlign:'right',fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tt)}</td>
-                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'13px',fontWeight:500,color:'var(--color-brand)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tg+tf+tt)}</td>
+                <td style={{padding:'12px 14px',textAlign:'right',fontSize:'13px',fontWeight:500,color:'var(--color-brand)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(sumMoney(costAll))}</td>
               </tr></tfoot>
             </table>
           </div>
@@ -2112,7 +2114,7 @@ class App extends Component {
                       <span style={{width:y.impPct+'%',background:'var(--color-brand)'}}/>
                       <span style={{width:y.expPct+'%',background:'#0891b2'}}/>
                     </div>
-                    <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>{Math.round(y.impPct)}% : {Math.round(y.expPct)}%</div>
+                    <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>{y.tot==null?'มูลค่ายังไม่ครบ':Math.round(y.impPct)+'% : '+Math.round(y.expPct)+'%'}</div>
                   </td>
                 </tr>
               ))}
@@ -2244,7 +2246,7 @@ class App extends Component {
     // ข้อมูลจริงจาก mapPo/mapTracking ไม่มี id แบบนั้น ทำให้ export ทุกรายการโดนตีเป็น import
     // ผิดๆ (stage labels/KPI ผิดชุด) ใช้ sel._board ตรงๆ ถูกต้องกับทุกแหล่งข้อมูล
     const tab=sel._board==='export'?'export':'import';
-    const goods=sel.amount*sel.rate,total=goods+costSum(sel);
+    const goods=goodsThb(sel),total=totalCostThb(sel);
     const timeline=this.buildTimeline(sel,tab);
     const ef=editForm||{};
     const curStage=editing?(ef.stage||sel.stage):sel.stage;
@@ -2320,10 +2322,10 @@ class App extends Component {
                         // sel._splitBase||sel.poNo) แต่ goods (=sel.amount*sel.rate) เป็นแค่มูลค่าส่วนของล็อตนี้
                         // เอง — เอา line ทั้งใบมาหารด้วยมูลค่าแค่บางส่วนจะได้สัดส่วนที่ผิด (สูงเกินจริง) ไม่มีทาง
                         // รู้ว่า line ไหนอยู่ในล็อตนี้จริงๆ (แยกกันแค่ระดับมูลค่ารวม ไม่ได้แยกรายบรรทัด) จึงงดแสดง
-                        if(sel._board!=='import'||sel._splitBase)return null;
+                        if(sel._board!=='import'||sel._splitBase||sel._poOriginalAmount!=null)return null;
                         const extra=costSum(sel);
                         if(!(extra>0)||!(goods>0))return null;
-                        const lineValueThb=(parseFloat(it.price_subtotal)||0)*(sel.rate||0);
+                        const lineValueThb=(parseFloat(it.price_subtotal)||0)*sel.rate;
                         const share=lineValueThb/goods;
                         const qty=parseFloat(it.qty)||0;
                         if(!(qty>0))return null;
@@ -2383,7 +2385,7 @@ class App extends Component {
             {(()=>{
               // เทียบกับต้นทุนที่คาดการณ์ไว้ — ผู้ใช้ต้องกรอกเองตอนแก้ไข (Odoo ไม่มีประวัติราคาที่เสนอ/
               // ประเมินไว้ก่อนหน้าเก็บไว้ให้) โชว์เฉพาะตอนมีการกรอกไว้แล้วเท่านั้น ไม่บังคับทุก shipment
-              if(!(sel.expectedCost>0))return null;
+              if(!(sel.expectedCost>0)||total==null)return null;
               const diff=total-sel.expectedCost,pct=Math.round(diff/sel.expectedCost*100);
               const over=diff>0;
               return <div style={{display:'flex',justifyContent:'space-between',gap:'12px',background:over?'var(--color-danger-soft)':'var(--color-success-soft)',border:'1px solid '+(over?'var(--color-danger-border)':'var(--color-success-border)'),borderRadius:'var(--radius)',padding:'10px 14px',marginBottom:'22px'}}>
@@ -2844,11 +2846,13 @@ class App extends Component {
   render(){
     const {tab,view,toast}=this.state;
     const isBoard=tab==='import'||tab==='export';
+    const unresolved=this.allShipments().filter(s=>goodsThb(s)==null);
     return <div style={{display:'flex',height:'var(--control-app-height,100vh)',width:'100%',overflow:'hidden',background:'var(--color-page-bg)'}}>
       {this.renderSidebar()}
       <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',overflow:'hidden'}}>
         {this.renderTopbar()}
         {(this.state.ambiguousPoNames||[]).length>0&&<div role="alert" style={{padding:'10px 22px',background:'var(--color-warn-soft)',color:'var(--color-warn-text)',fontSize:'12px'}}>ข้อมูลไม่ครบ: เลข PO ซ้ำข้ามบริษัทหรือบอร์ด ({this.state.ambiguousPoNames.join(', ')}) — ระงับการแก้ไข ลบ ย้ายสถานะ และแยก shipment ของเลขเหล่านี้จนกว่าจะระบุขอบเขตได้</div>}
+        {unresolved.length>0&&tab!=='dashboard'&&<div role="alert" style={{padding:'10px 22px',background:'var(--color-warn-soft)',color:'var(--color-warn-text)',fontSize:'12px'}}>มูลค่ายังไม่ครบ {unresolved.length} รายการ — ตรวจ FX หรือยอดจัดสรรของ {unresolved.map(s=>s.poNo).join(', ')}</div>}
         {/* โหมดตัวอย่างเดิมบอกแค่จุดสีเล็กๆ กับข้อความ "โหมดตัวอย่าง" ที่ topbar — แต่ข้อมูลตัวอย่างใช้ชื่อผู้ขาย
             และเลข PO ที่หน้าตาเหมือนของจริงทุกอย่าง เสี่ยงมากที่จะมีคนอ่านตัวเลขไปใช้ตัดสินใจ/รายงานโดยไม่รู้ตัว
             (ยิ่งเข้าหน้า Dashboard ตรงๆ จะไม่ได้มองที่ป้าย) จึงกั้นเป็นแถบเตือนเต็มความกว้างให้พลาดไม่ได้
