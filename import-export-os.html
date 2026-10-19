@@ -1156,7 +1156,7 @@ class App extends Component {
     }
   }
   closeBillPicker(){this._billRequestId=(this._billRequestId||0)+1;this.setState({billPicker:false,billTarget:null,billLoading:false});}
-  toggleBill(b){if(!this.state.canWrite)return;if(b.fxStatus==='missing'||b.amount==null||!Number.isFinite(Number(b.amount))){this.showToast('ขาดอัตราแลกเปลี่ยน — ยังเลือกบิลนี้ไม่ได้','error');return;}this.setState(s=>{const sel={...s.selBills};if(sel[b.id])delete sel[b.id];else sel[b.id]=b;return {selBills:sel};});}
+  toggleBill(b){if(!this.state.canWrite)return;const selected=!!(this.state.selBills||{})[b.id];if(!selected&&(b.fxStatus==='missing'||b.amount==null||!Number.isFinite(Number(b.amount)))){this.showToast('ขาดอัตราแลกเปลี่ยน — ยังเลือกบิลนี้ไม่ได้','error');return;}this.setState(s=>{const sel={...s.selBills};if(sel[b.id])delete sel[b.id];else sel[b.id]=b;return {selBills:sel};});}
   // ใช้บิลที่เลือก: รวม freight/duty/vat เติมลงช่อง + จำการจับคู่ไว้
   applySelectedBills(){
     if(!this.state.canWrite)return;
@@ -2717,7 +2717,7 @@ class App extends Component {
           {!billLoading&&list.map(b=>{
             const on=!!sel[b.id],missingRate=b.fxStatus==='missing'||b.amount==null;
             const used=usedBy[b.id];
-            return <div key={b.id} aria-disabled={missingRate} onClick={()=>this.toggleBill(b)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',marginBottom:'7px',border:on?'1px solid var(--color-brand)':'1px solid var(--color-border)',borderRadius:'var(--radius)',background:on?'var(--color-brand-soft)':(used?'var(--color-warn-soft)':'var(--color-surface)'),cursor:'pointer',opacity:used&&!on?0.75:1}}>
+            return <div key={b.id} aria-disabled={missingRate&&!on} onClick={()=>this.toggleBill(b)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',marginBottom:'7px',border:on?'1px solid var(--color-brand)':'1px solid var(--color-border)',borderRadius:'var(--radius)',background:on?'var(--color-brand-soft)':(used?'var(--color-warn-soft)':'var(--color-surface)'),cursor:'pointer',opacity:used&&!on?0.75:1}}>
               <span style={{width:'20px',height:'20px',borderRadius:'var(--radius-sm)',border:on?'0':'1px solid var(--color-border)',background:on?'var(--color-brand)':'var(--color-surface)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{on&&<Ico name="check" size={13} sw={2.6}/>}</span>
               <div style={{minWidth:0,flex:1}}>
                 <div style={{fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</div>

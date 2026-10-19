@@ -41,3 +41,14 @@ test('L9 saveEdit rejects a stage below actual Odoo evidence and preserves the d
 test('L7 legacy selected bill is hydrated only from fetched canonical company identity',async()=>{const legacy={id:7,kind:'bill',bill:'OLD',amount:40,category:'freight'};const a=app(async()=>response({bills:[{id:7,kind:'bill',company_id:1,bill:'CURRENT',amount:55,category:'clearance'}]}));a.state.editForm={poNo:'PO',company:'KOB',freight:40,bills:[legacy],_billsBy:{freight:[legacy]}};await a.openBillPicker('freight','Freight');assert.equal(a.state.selBills[7].company_id,1);assert.equal(a.state.selBills[7].category,'freight');assert.equal(legacy.company_id,undefined);a.applySelectedBills();assert.equal(a.state.editForm.freight,55);assert.equal(a.state.editForm.bills[0].company_id,1);assert.equal(a.state.editForm.bills[0].category,'freight');});
 test('L7 cached scoped bills can verify legacy selections without another request',async()=>{const a=app(async()=>{throw Error('cache must suffice');});a.state.editForm={company:'BTV',bills:[],_billsBy:{duty:[{id:8,kind:'po',amount:20,category:'duty'}]}};a.state.billList=[{id:8,kind:'po',company_id:2,amount:25,category:'other'}];a._billListCompany='BTV';await a.openBillPicker('duty','Duty');assert.equal(a.state.selBills[8].company_id,2);a.applySelectedBills();assert.equal(a.state.editForm.duty,25);assert.equal(a.state.editForm.bills[0].category,'duty');});
 test('L7 unmatched wrong-kind and cross-company legacy selections stay unverified',async()=>{for(const canonical of [[],[{id:7,kind:'po',company_id:1,amount:55}],[{id:7,kind:'bill',company_id:2,amount:55}]]){const a=app(async()=>response({bills:canonical}));a.state.editForm={company:'KOB',freight:40,bills:[],_billsBy:{freight:[{id:7,kind:'bill',amount:40,category:'freight'}]}};await a.openBillPicker('freight','Freight');assert.equal(a.state.selBills[7].company_id,undefined);a.applySelectedBills();assert.equal(a.state.editForm.freight,40);assert.equal(a.state.billPicker,true);assert.match(a.toast[0],/ยืนยัน/);}});
+
+test('L7 a hydrated selected bill missing FX can be removed but cannot be newly selected',async()=>{
+ const canonical={id:7,kind:'bill',company_id:1,amount:null,fxStatus:'missing'};
+ const a=app(async()=>response({bills:[canonical]}));
+ a.toggleBill=vm.runInContext('({'+method('toggleBill')+'})',a.helpers).toggleBill;
+ a.state.editForm={company:'KOB',freight:40,bills:[],_billsBy:{freight:[{id:7,kind:'bill',amount:40,category:'freight'}]}};
+ await a.openBillPicker('freight','Freight');assert.equal(a.state.selBills[7].amount,null);
+ a.toggleBill(a.state.billList[0]);assert.equal(a.state.selBills[7],undefined);
+ a.applySelectedBills();assert.equal(a.state.editForm.freight,0);
+ a.toggleBill(canonical);assert.equal(a.state.selBills[7],undefined);assert.match(a.toast[0],/ขาดอัตราแลกเปลี่ยน/);
+});
