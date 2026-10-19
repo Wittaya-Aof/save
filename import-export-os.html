@@ -23,39 +23,7 @@
 <script src="/vendor/xlsx.full.min.js"></script>
 <!-- กติกา "งานค้าง" — ไฟล์เดียวกับที่ tests/worklist.cjs ใช้ จึงเถียงกันเองไม่ได้ -->
 <script src="/lib/worklist.js"></script>
-<script src="/lib/logistics-workspace.js?v=20261019-1"></script>
 <style>
-.workspace-head{padding:20px 22px 12px;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
-.workspace-head h2{font-size:24px;font-weight:500;letter-spacing:-.7px;margin:6px 0}
-.workspace-head p{font-size:12px;color:var(--color-text-tertiary);margin:0;line-height:1.6;max-width:780px}
-.workspace-eyebrow{font-size:10px;letter-spacing:.14em;color:var(--color-brand);text-transform:uppercase}
-.workspace-button{font-family:inherit;font-size:12px;font-weight:500;min-height:32px;padding:6px 11px;border:1px solid var(--color-border);border-radius:var(--radius);background:var(--color-surface);color:var(--color-text-secondary);cursor:pointer;white-space:nowrap}
-.workspace-button[aria-pressed="true"]{border-color:var(--color-brand);background:var(--color-brand-soft);color:var(--color-brand)}
-.workspace-button:disabled{opacity:.45;cursor:default}
-.workspace-summary{display:flex;gap:9px;padding:0 22px 13px;overflow-x:auto;flex-shrink:0}
-.workspace-metric{flex:1;min-width:125px;text-align:left;padding:12px 13px}
-.workspace-metric strong{display:block;font-size:23px;font-weight:500;line-height:1.3;font-variant-numeric:tabular-nums;margin:3px 0}
-.workspace-metric small{font-size:10px;color:var(--color-text-muted)}
-.workspace-tabs{display:flex;gap:6px;flex-wrap:wrap}
-.workspace-table-wrap{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 22px 18px;overflow:hidden}
-.workspace-table-scroll{overflow:auto;min-height:0;flex:1;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface)}
-.workspace-table{width:100%;min-width:1190px;border-collapse:separate;border-spacing:0;font-size:12px}
-.workspace-table th{position:sticky;top:0;z-index:1;background:var(--color-surface-muted);text-align:left;padding:12px;font-weight:500;font-size:10px;color:var(--color-text-tertiary);border-bottom:1px solid var(--color-border);white-space:nowrap}
-.workspace-table td{padding:13px 12px;vertical-align:top;border-bottom:1px solid var(--color-border);line-height:1.5}
-.workspace-table tbody tr:hover{background:var(--color-surface-muted)}
-.workspace-table .workspace-open{display:block;max-width:205px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:none;border:0;padding:0;color:var(--color-brand);font-family:var(--font-mono);font-size:12px;text-align:left;cursor:pointer}
-.workspace-muted{font-size:11px;color:var(--color-text-tertiary);margin-top:4px;line-height:1.5}
-.workspace-badge{display:inline-block;padding:2px 6px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:10px;white-space:nowrap;color:var(--color-text-secondary);background:var(--color-surface-muted)}
-.workspace-badge.warn{background:var(--color-warn-soft);color:var(--color-warn-text);border-color:var(--color-warn-border,var(--color-border))}
-.workspace-badge.ok{background:var(--color-brand-soft);color:var(--color-brand)}
-.workspace-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:11px 0 0;color:var(--color-text-tertiary);font-size:11px}
-.workspace-cards{padding:0 22px 20px;overflow:auto;flex:1;min-height:0}
-.workspace-task{display:grid;grid-template-columns:170px minmax(180px,1fr) 180px;gap:16px;align-items:center;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:15px;margin-bottom:9px}
-.workspace-day{font-size:13px;font-weight:500;padding:15px 0 9px;position:sticky;top:0;background:var(--color-page-bg);z-index:1}
-.workspace-empty{text-align:center;padding:38px 16px;border:1px dashed var(--color-border);border-radius:var(--radius-lg);color:var(--color-text-tertiary);font-size:13px}
-.workspace-date-controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 14px;font-size:12px;color:var(--color-text-secondary)}
-.workspace-date-controls input{font:inherit;padding:7px;border:1px solid var(--color-border);border-radius:var(--radius);color:var(--color-text);background:var(--color-surface)}
-@media(max-width:879px){.workspace-head{padding:15px 14px 10px}.workspace-head h2{font-size:21px}.workspace-summary{padding:0 14px 12px}.workspace-table-wrap{padding:0 14px 14px}.workspace-cards{padding:0 14px 16px}.workspace-task{grid-template-columns:1fr;gap:8px}.workspace-tabs .workspace-button{padding:6px 8px}.workspace-head p{max-width:100%}}
 /* ── Design tokens: สีที่ใช้ซ้ำมากที่สุดทั่วทั้งแอป (>=10 จุด) รวมเป็นตัวแปรเดียว
    ให้แก้ธีม/สลับ dark mode ได้จากจุดเดียว ไม่ต้องไล่แก้ hex กระจายทั้งไฟล์ ──
    ค่าเริ่มต้น (ไม่มี data-theme) = ตาม prefers-color-scheme ของเครื่อง, data-theme บนหน้า
@@ -500,9 +468,7 @@ class App extends Component {
       const saved=localStorage.getItem('kobTheme');
       theme=saved||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
     }catch(e){}
-    let savedLayout=null;try{savedLayout=localStorage.getItem('kobLogisticsLayout');}catch(e){}
-    const layout=typeof LogisticsWorkspace==='object'?LogisticsWorkspace.layout(window.location.search,savedLayout):'classic';
-    this.state={tab:'import',view:layout==='operations'?'table':'kanban',layout,opsFocus:'all',opsPage:0,opsSort:'priority',opsFrom:typeof LogisticsWorkspace==='object'?LogisticsWorkspace.today():'',opsTo:typeof LogisticsWorkspace==='object'?LogisticsWorkspace.addDays(LogisticsWorkspace.today(),30):'',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},landed:null,costDetail:null,billTarget:null,alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,auditLog:null,auditLoading:false,shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
+    this.state={tab:'import',view:'kanban',co:'',type:'all',query:'',detailId:null,syncing:false,shipments:null,dataSource:'loading',lastSync:'—',creating:false,saving:false,toast:null,form:defaultForm('import'),editing:false,editForm:null,vendors:null,expenseBusy:false,costSrc:'',savingEdit:false,isNarrow:w<880,billPicker:false,billList:null,billMeta:null,billQuery:'',billLoading:false,billError:false,selBills:{},landed:null,costDetail:null,billTarget:null,alertsOpen:false,dragOverKey:null,deleteDialog:null,poLines:null,poLinesLoading:false,poLinesError:'',integrityReport:null,integrityLoading:false,auditLog:null,auditLoading:false,shipRuns:null,shipRunsPo:'',vendorScorecard:null,vendorScorecardLoading:false,glReconcile:null,glReconcileLoading:false,theme};
     this.state.canWrite=false; this.state.role='viewer';this.state.ambiguousPoNames=[];
     this._overrides={}; this._tt=null; this._fx=null; this._poLinesCache={};
   }
@@ -512,13 +478,6 @@ class App extends Component {
     try{localStorage.setItem('kobTheme',next);}catch(e){}
     document.documentElement.dataset.theme=next;
     this.setState({theme:next});
-  }
-  chooseLayout(layout){
-    if(!['classic','operations'].includes(layout))return;
-    if(layout==='operations'&&typeof LogisticsWorkspace!=='object'){this.showToast('โหลดหน้าตาใหม่ไม่สำเร็จ กรุณารีเฟรชหน้า','error');return;}
-    try{localStorage.setItem('kobLogisticsLayout',layout);}catch(e){}
-    try{const url=new URL(window.location.href);url.searchParams.set('layout',layout);window.history.replaceState(null,'',url.pathname+url.search+url.hash);}catch(e){}
-    this.setState({layout,view:layout==='operations'?'table':'kanban',opsFocus:'all',opsPage:0});
   }
   componentDidMount(){
     this.loadPermissions();
@@ -599,7 +558,7 @@ class App extends Component {
   jumpToAuditEntry(poSo){
     const found=this.allShipments().find(s=>s.poNo===poSo);
     if(!found){this.showToast('ไม่พบรายการนี้แล้ว (อาจถูกลบหรือรวมไปแล้ว)','info');return;}
-    this.setState({tab:found._board,detailId:found.id,view:this.state.layout==='operations'?'table':'kanban'});
+    this.setState({tab:found._board,detailId:found.id,view:'kanban'});
   }
   // ผลตรวจสอบข้อมูลอัตโนมัติจาก server (รอบ 24 ชม. + เช็คตอน server เพิ่งเปิด) — force=true = สั่งตรวจใหม่ทันที
   async loadIntegrityReport(force){
@@ -877,7 +836,7 @@ class App extends Component {
   allShipments(){const s=this.state.shipments;return Array.isArray(s)?s:sampleImports().concat(sampleExports());}
   imports(){return this.allShipments().filter(s=>s._board==='import');}
   exports(){return this.allShipments().filter(s=>s._board==='export');}
-  filtered(tab,ignoreWorkspace=false){
+  filtered(tab){
     const {co,type,query}=this.state;
     let list=tab==='export'?this.exports():this.imports();
     if(co)list=list.filter(s=>s.company===co);
@@ -885,8 +844,7 @@ class App extends Component {
     const q=(query||'').trim().toLowerCase();
     // ค้นหาครอบฟิลด์ที่คนใช้จริงเวลาตาม shipment ด้วย: เดิมมีแค่ PO/คู่ค้า/BL ทำให้ค้นเลขตู้ที่ท่าเรือแจ้งมา
     // หรือชื่อเรือ/ตัวแทนขนส่งไม่เจอเลย ทั้งที่ข้อมูลอยู่ในระบบแล้ว (ต้องไล่เปิดดูทีละใบ)
-    if(q)list=list.filter(s=>[s.poNo,s.party,s.bl,s.container,s.vessel,s.forwarder,s.origin,s.dest,...(this.state.layout==='operations'?[s._shipmentId,...(s.poRefs||[]).map(r=>r.poNumber)]:[])].filter(Boolean).join(' ').toLowerCase().includes(q));
-    if(this.state.layout==='operations'&&!ignoreWorkspace&&this.state.opsFocus!=='all'&&typeof LogisticsWorkspace==='object'){const asOf=LogisticsWorkspace.today();list=LogisticsWorkspace.select(list.map(s=>LogisticsWorkspace.describe(s,asOf,{cost:totalCostThb(s),expense:costSum(s)})),this.state.opsFocus).map(r=>r.source);}
+    if(q)list=list.filter(s=>[s.poNo,s.party,s.bl,s.container,s.vessel,s.forwarder,s.origin,s.dest].filter(Boolean).join(' ').toLowerCase().includes(q));
     return list;
   }
 
@@ -905,7 +863,7 @@ class App extends Component {
 
     try{
       const saved=await this.persistTracking({...ov[ns.poNo],_baseTs:0,owner:f.owner||(f.board==='import'?'Wittaya Sawangphol':''),dueDate:f.dueDate||'',documentChecklist:f.documentChecklist||{}});
-      this.setState({shipments:[this.mapSynthetic(saved||ov[ns.poNo])].concat(this.allShipments().filter(x=>x.poNo!==ns.poNo)),creating:false,tab:f.board,view:this.state.layout==='operations'?'table':'kanban'});
+      this.setState({shipments:[this.mapSynthetic(saved||ov[ns.poNo])].concat(this.allShipments().filter(x=>x.poNo!==ns.poNo)),creating:false,tab:f.board,view:'kanban'});
       this.showToast('เพิ่มรายการ '+ns.poNo+' สำเร็จ','success');
     }catch(e){this.showToast('ยังไม่ได้บันทึก: '+e.message,'error');}
     finally{this.setState({saving:false});}
@@ -1009,7 +967,7 @@ class App extends Component {
     try{
       const saved=await this.persistTracking({...o,_baseTs:0});
       const ns=this.mapSynthetic(saved||o);
-      this.setState({shipments:[ns].concat(this.allShipments().filter(x=>x.poNo!==poNo)),detailId:ns.id,tab:s._board,view:this.state.layout==='operations'?'table':'kanban'},()=>this.startEdit());
+      this.setState({shipments:[ns].concat(this.allShipments().filter(x=>x.poNo!==poNo)),detailId:ns.id,tab:s._board,view:'kanban'},()=>this.startEdit());
       this.showToast('สร้าง shipment ย่อย '+poNo+' แล้ว — กรอกมูลค่า/ค่าใช้จ่ายของล็อตนี้เอง','success');
     }catch(e){this.showToast('ยังไม่ได้สร้าง shipment: '+e.message,'error');}
   }
@@ -1274,7 +1232,7 @@ class App extends Component {
   // ── Export Excel: รายการตาม filter ปัจจุบัน + สรุปต้นทุน ──
   exportExcel(tab){
     if(!window.XLSX){this.showToast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)','error');return;}
-    const list=this.state.layout==='operations'?LogisticsWorkspace.forView(this.workspaceRows(tab),{view:this.state.view,focus:this.state.opsFocus,from:this.state.opsFrom,to:this.state.opsTo}).map(r=>r.source):this.filtered(tab);
+    const list=this.filtered(tab);
     if(!list.length){this.showToast('ไม่มีรายการให้ export','info');return;}
     const rows=this.buildExcelRows(list,tab);
     const ws=XLSX.utils.json_to_sheet(rows);
@@ -1428,12 +1386,11 @@ class App extends Component {
       <div style={{display:'flex',alignItems:'center',gap:'4px',padding:'0 22px',overflowX:'auto'}}>
         {[{key:'import',label:'Import Board',count:impAll.length},{key:'export',label:'Export Board',count:expAll.length},{key:'dashboard',label:'Dashboard',count:false}].map(s=>{
           const active=tab===s.key;
-          return <button key={s.key} onClick={()=>this.setState({tab:s.key,detailId:null,opsPage:0})} style={{display:'flex',alignItems:'center',gap:'7px',padding:'12px 4px 11px',margin:'0 10px',border:0,borderBottom:active?'2px solid var(--color-brand)':'2px solid transparent',background:'transparent',color:active?'var(--color-brand)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13px',fontWeight:active?500:500,cursor:'pointer',whiteSpace:'nowrap',marginBottom:'-1px'}}>
+          return <button key={s.key} onClick={()=>this.setState({tab:s.key,detailId:null})} style={{display:'flex',alignItems:'center',gap:'7px',padding:'12px 4px 11px',margin:'0 10px',border:0,borderBottom:active?'2px solid var(--color-brand)':'2px solid transparent',background:'transparent',color:active?'var(--color-brand)':'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'13px',fontWeight:active?500:500,cursor:'pointer',whiteSpace:'nowrap',marginBottom:'-1px'}}>
             <span>{s.label}</span>
             {s.count!==false&&<span style={{fontSize:'10.5px',fontWeight:500,padding:'1px 6px',borderRadius:'var(--radius-sm)',background:active?'var(--color-brand-soft)':'var(--color-surface-muted)',color:active?'var(--color-brand)':'var(--color-text-tertiary)',fontVariantNumeric:'tabular-nums'}}>{s.count}</span>}
           </button>;
         })}
-        <button className="workspace-button" onClick={()=>this.chooseLayout(this.state.layout==='operations'?'classic':'operations')} style={{marginLeft:'auto',flexShrink:0}}>{this.state.layout==='operations'?'ใช้หน้าตาเดิม':'ลองหน้าตาใหม่'}</button>
       </div>
     </div>;
   }
@@ -1448,21 +1405,20 @@ class App extends Component {
     </div>;
     const vbtn=active=>({height:'34px',width:'36px',display:'flex',alignItems:'center',justifyContent:'center',border:0,background:active?'var(--color-brand-soft)':'transparent',color:active?'var(--color-brand)':'var(--color-text-tertiary)',cursor:'pointer'});
     return <div>
-      {this.state.layout==='operations'&&this.renderWorkspaceHeader(tab)}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',flexWrap:'wrap',padding:'14px 22px 10px'}}>
         <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
-          {seg([{k:'',l:'ทุกบริษัท'},{k:'KOB',l:'KOB'},{k:'BTV',l:'BTV'}],co,k=>this.setState({co:k,opsPage:0}))}
-          {tab==='import'&&seg([{k:'all',l:'ทุกประเภท'},{k:'pk',l:'Packaging'},{k:'fg',l:'Finished'},{k:'oversea',l:'Oversea'}],type,k=>this.setState({type:k,opsPage:0}))}
+          {seg([{k:'',l:'ทุกบริษัท'},{k:'KOB',l:'KOB'},{k:'BTV',l:'BTV'}],co,k=>this.setState({co:k}))}
+          {tab==='import'&&seg([{k:'all',l:'ทุกประเภท'},{k:'pk',l:'Packaging'},{k:'fg',l:'Finished'},{k:'oversea',l:'Oversea'}],type,k=>this.setState({type:k}))}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
           <div style={{display:'flex',alignItems:'center',gap:'8px',background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',padding:'0 11px',height:'34px',width:'230px',maxWidth:'48vw'}}>
             <span style={{display:'flex',color:'var(--color-text-muted)'}}><Ico name="search" size={15} sw={1.8}/></span>
-            <input value={query} onChange={e=>this.setState({query:e.target.value,opsPage:0})} placeholder={this.state.layout==='operations'?'ค้นหา Shipment, PO, B/L, ตู้…':'ค้นหา PO, ผู้ขาย, BL, ตู้, เรือ…'} style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',width:'100%'}}/>
+            <input value={query} onChange={e=>this.setState({query:e.target.value})} placeholder="ค้นหา PO, ผู้ขาย, BL, ตู้, เรือ…" style={{border:0,outline:0,background:'transparent',fontFamily:'inherit',fontSize:'13px',color:'var(--color-text)',width:'100%'}}/>
           </div>
-          {this.state.layout!=='operations'&&<div style={{display:'flex',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',overflow:'hidden'}}>
-            <button onClick={()=>this.setState({view:this.state.layout==='operations'?'table':'kanban'})} title="มุมมองบอร์ด" style={vbtn(view==='kanban')}><Ico name="kanban" size={16} sw={1.8}/></button>
+          <div style={{display:'flex',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',overflow:'hidden'}}>
+            <button onClick={()=>this.setState({view:'kanban'})} title="มุมมองบอร์ด" style={vbtn(view==='kanban')}><Ico name="kanban" size={16} sw={1.8}/></button>
             <button onClick={()=>this.setState({view:'table'})} title="มุมมองตาราง" style={{...vbtn(view==='table'),borderLeft:'1px solid var(--color-border)'}}><Ico name="table" size={16} sw={1.8}/></button>
-          </div>}
+          </div>
           <button onClick={()=>this.exportExcel(tab)} title="ดาวน์โหลด Excel" style={{display:'flex',alignItems:'center',gap:'6px',height:'34px',padding:'0 12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-text-secondary)',fontFamily:'inherit',fontSize:'12.5px',fontWeight:500,cursor:'pointer',flexShrink:0}}>
             <Ico name="dl" size={15} sw={1.9}/>{!isNarrow&&<span>Excel</span>}
           </button>
@@ -1471,47 +1427,8 @@ class App extends Component {
           </button>}
         </div>
       </div>
-      {this.state.layout==='operations'?<div style={{padding:'0 22px 10px'}} className="workspace-tabs">{[['table','ตาราง Shipment'],['today','งานวันนี้'],['schedule','กำหนดการ'],['kanban','Kanban']].map(([key,label])=><button key={key} className="workspace-button" aria-pressed={view===key} onClick={()=>this.setState({view:key,opsPage:0})}>{label}</button>)}</div>:<div style={{padding:'0 22px 10px',fontSize:'11.5px',color:'var(--color-text-muted)'}}>แสดง {list.length} รายการ{co?' · '+co:''}{tab==='import'&&type!=='all'?' · '+typeMeta(type).label:''}</div>}
+      <div style={{padding:'0 22px 10px',fontSize:'11.5px',color:'var(--color-text-muted)'}}>แสดง {list.length} รายการ{co?' · '+co:''}{tab==='import'&&type!=='all'?' · '+typeMeta(type).label:''}</div>
     </div>;
-  }
-
-  workspaceRows(tab,focus=this.state.opsFocus){
-    const asOf=LogisticsWorkspace.today(),rows=this.filtered(tab,true).map(s=>LogisticsWorkspace.describe(s,asOf,{cost:totalCostThb(s),expense:costSum(s)}));
-    const selected=LogisticsWorkspace.select(rows,focus),sort=this.state.opsSort;
-    return selected.sort((a,b)=>(sort==='eta'?(a.eta||'9999').localeCompare(b.eta||'9999'):sort==='po'?String(a.source.poNo).localeCompare(String(b.source.poNo)):a.priority-b.priority||(a.dueDate||a.eta||'9999').localeCompare(b.dueDate||b.eta||'9999'))||String(a.id).localeCompare(String(b.id)));
-  }
-  workspacePage(rows){const size=50,total=rows.length,page=Math.min(Math.max(0,this.state.opsPage||0),Math.max(0,Math.ceil(total/size)-1));return {page,total,start:total?page*size+1:0,end:Math.min((page+1)*size,total),rows:rows.slice(page*size,(page+1)*size)};}
-  renderWorkspacePager(rows,unit='รายการ'){
-    const p=this.workspacePage(rows);
-    return <div className="workspace-footer"><span data-testid="workspace-count">แสดง {p.start}–{p.end} จาก {p.total} {unit} · {unit==='เหตุการณ์'?'Excel รวมหนึ่งแถวต่อรายการในช่วงวันที่นี้':'Excel ครบทุกหน้าตามมุมมองและตัวกรองนี้'}</span><div style={{display:'flex',gap:6}}><button className="workspace-button" aria-label="หน้าก่อนหน้า" disabled={!p.page} onClick={()=>this.setState({opsPage:p.page-1})}>ก่อนหน้า</button><button className="workspace-button" aria-label="หน้าถัดไป" disabled={p.end>=p.total} onClick={()=>this.setState({opsPage:p.page+1})}>ถัดไป</button></div></div>;
-  }
-  renderWorkspaceHeader(tab){
-    const all=this.workspaceRows(tab,'all'),assigned=all.filter(r=>r.shipmentId).length;
-    return <>
-      <div className="workspace-head"><div><div className="workspace-eyebrow">{tab==='export'?'EXPORT':'IMPORT'} · รูปแบบทดลอง</div><h2>Shipment Workspace</h2><p>เที่ยวขนส่ง เอกสาร และงานถัดไปในหน้าจอเดียว · {assigned} รายการมี Shipment ID · {all.length-assigned} รายการยังไม่ผูก Shipment<br/>วันคาดการณ์ไม่ใช่วันรับเข้าคลังที่ยืนยันแล้ว · สลับหน้าตาได้โดยข้อมูลไม่เปลี่ยน</p></div><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><button className="workspace-button" aria-pressed={this.state.opsFocus==='backlog'} onClick={()=>this.setState({opsFocus:this.state.opsFocus==='backlog'?'all':'backlog',opsPage:0})}>ค้างสะสม {LogisticsWorkspace.select(all,'backlog').length}</button><label className="workspace-muted" style={{margin:0}}>เรียง <select aria-label="เรียงรายการ" value={this.state.opsSort} onChange={e=>this.setState({opsSort:e.target.value,opsPage:0})} className="workspace-button"><option value="priority">เรื่องที่ต้องตามก่อน</option><option value="eta">ETA ใกล้ที่สุด</option><option value="po">เลข PO / SO</option></select></label></div></div>
-      <div className="workspace-summary">{[['all','ทั้งหมด','ตามบริษัท / คำค้น'],['open','ขนส่งยังไม่ปิด','ยังไม่ยืนยันรับปลายทาง'],['attention','ต้องติดตาม','เอกสาร / วัน / ต้นทุน'],['soon','คาดถึงใน 7 วัน','ตาม ETA ที่บันทึก'],['documents','เอกสารต้องตาม','รวมรายการรอประเมิน'],['cost','ต้นทุนไม่ครบ','ตรวจ FX / ยอดแบ่งส่ง']].map(([key,label,hint])=><button key={key} className="workspace-button workspace-metric" aria-pressed={this.state.opsFocus===key} onClick={()=>this.setState({opsFocus:key,opsPage:0})}><span>{label}</span><strong>{LogisticsWorkspace.select(all,key).length}</strong><small>{hint}</small></button>)}</div>
-    </>;
-  }
-  renderWorkspaceTable(tab){
-    const rows=this.workspaceRows(tab),p=this.workspacePage(rows);
-    return <div className="workspace-table-wrap"><div className="workspace-table-scroll"><table className="workspace-table" aria-label="ตารางติดตาม Shipment"><thead><tr>{['Shipment / PO','บริษัท / คู่ค้า','การขนส่ง','ETA / กำหนดรับ','เอกสาร / ประสานงาน','ต้นทุนรวมที่บันทึก','งานถัดไป / ผู้รับผิดชอบ'].map(h=><th key={h} scope="col">{h}</th>)}</tr></thead><tbody>{p.rows.map(r=>{const s=r.source;return <tr key={r.id} onClick={()=>this.setState({detailId:r.id})} style={{cursor:'pointer'}}>
-      <td style={{minWidth:180}}><button className="workspace-open" onClick={()=>this.setState({detailId:r.id})}>{r.shipmentId||s.poNo}</button>{!r.shipmentId&&<div className="workspace-muted">{tab==='export'?'SO':'PO'} รอจัด Shipment</div>}<div className="workspace-muted">{r.poNumbers.join(' · ')||'ยังไม่ระบุ PO / SO'}</div>{s._synthetic&&<span className="workspace-badge">แบ่งส่ง</span>}</td>
-      <td style={{maxWidth:200}}><span style={coBadgeSty(s.company)}>{s.company}</span><div style={{marginTop:6}}>{s.party}</div><div className="workspace-muted">{typeMeta(s.type).label}</div></td>
-      <td style={{minWidth:145}}><span className={'workspace-badge'+(r.closed?' ok':'')}>{r.transportLabel}</span><div className="workspace-muted">{s.mode==='air'?'AWB':'B/L'}: {s.bl||'ยังไม่ระบุ'}</div>{s.container&&<div className="workspace-muted">ตู้: {s.container}</div>}{s.vessel&&<div className="workspace-muted">{s.vessel}{s.voyage?' · '+s.voyage:''}</div>}</td>
-      <td style={{minWidth:138}}><div>{r.eta?fmtDate(r.eta):'ยังไม่ระบุ'}</div><div className="workspace-muted">{r.eta?r.etaLabel:'รอข้อมูลวันคาดการณ์'}</div>{r.actualArrival&&<div className="workspace-muted">ถึงท่าจริง {fmtDate(r.actualArrival)}</div>}{r.actualReceipt&&<div className="workspace-muted">{tab==='export'?'ถึงปลายทาง':'รับเข้าคลัง'} {fmtDate(r.actualReceipt)}</div>}</td>
-      <td style={{minWidth:180,maxWidth:245}}><span className={'workspace-badge'+(r.documentState==='pending'?' warn':r.documentState==='complete'?' ok':'')}>{r.documentState==='pending'?'ต้องตาม '+r.pendingDocuments.length+' รายการ':r.documentState==='complete'?'รายการที่กำหนดครบ':'ยังไม่ประเมินเอกสาร'}</span>{r.pendingDocuments.length>0&&<div className="workspace-muted">{r.pendingDocuments.map(d=>d.label).join(' · ')}</div>}<div className="workspace-muted">บัญชี: {r.accountingLabel}</div><div className="workspace-muted">คลัง: {s.documentChecklist&&s.documentChecklist.warehouse_notice==='done'?'แจ้งแล้ว':s.documentChecklist&&s.documentChecklist.warehouse_notice==='pending'?'รอแจ้ง':'ยังไม่ระบุ'}</div></td>
-      <td style={{minWidth:165,fontVariantNumeric:'tabular-nums'}}>{r.costMissing?<span className="workspace-badge warn">ข้อมูลไม่ครบ</span>:<span>{fmtAmt(r.cost,'THB')}</span>}<div className="workspace-muted">สินค้า {fmtAmt(s.amount,s.cur)}</div><div className="workspace-muted">{r.costMissing?'ตรวจ FX / ยอดจัดสรร':r.expense===0?'ยังไม่มีรายการค่าใช้จ่าย':'ค่าใช้จ่าย '+fmtAmt(r.expense,'THB')}</div></td>
-      <td style={{minWidth:210}}><div>{r.nextAction}</div><div className="workspace-muted">{r.owner}</div><div className="workspace-muted">กำหนด {r.dueDate?fmtDate(r.dueDate):'ยังไม่ระบุ'} {r.overdue&&<span className="workspace-badge warn">เกินกำหนด</span>}{r.backlog&&<span className="workspace-badge">ค้างสะสม</span>}</div></td>
-    </tr>;})}</tbody></table>{!rows.length&&<div className="workspace-empty">ไม่พบรายการตามตัวกรองนี้ · ลองเลือก “ทั้งหมด” หรือเปลี่ยนคำค้น</div>}</div>{this.renderWorkspacePager(rows)}</div>;
-  }
-  renderWorkspaceToday(tab){
-    const rows=LogisticsWorkspace.forView(this.workspaceRows(tab),{view:'today',focus:this.state.opsFocus}),p=this.workspacePage(rows);
-    return <div className="workspace-cards" data-testid="workspace-today"><p className="workspace-muted" style={{margin:'0 0 13px'}}>เรื่องที่ต้องตามจากข้อมูลที่บันทึก ณ {fmtDate(LogisticsWorkspace.today())} · งานเกินกำหนดหรือเลย ETA เกิน 30 วันแยกไว้ที่ “ค้างสะสม” · ไม่มีการยืนยันแทนผู้ปฏิบัติงาน</p>{p.rows.map(r=><div className="workspace-task" key={r.id}><div><button className="workspace-open workspace-button" onClick={()=>this.setState({detailId:r.id})}>{r.shipmentId||r.source.poNo}</button><div className="workspace-muted">{r.poNumbers.join(' · ')} · {r.company}</div></div><div><div>{r.nextAction}</div><div className="workspace-muted">{r.transportLabel} · {r.source.party}</div></div><div className="workspace-muted">{r.owner}<br/>กำหนด {r.dueDate?fmtDate(r.dueDate):'ยังไม่ระบุ'} {r.overdue&&<span className="workspace-badge warn">เกินกำหนด</span>}</div></div>)}{!rows.length&&<div className="workspace-empty">ยังไม่พบงานเร่งด่วนตามตัวกรอง · รายการที่ไม่มีข้อมูลเอกสารหรือวันกำหนดยังต้องประเมินเพิ่มเติม</div>}{this.renderWorkspacePager(rows)}</div>;
-  }
-  renderWorkspaceSchedule(tab){
-    const rows=this.workspaceRows(tab),from=LogisticsWorkspace.dateKey(this.state.opsFrom),to=LogisticsWorkspace.dateKey(this.state.opsTo),invalid=!from||!to||from>to;
-    const events=LogisticsWorkspace.schedule(rows,from,to),p=this.workspacePage(events),days=[...new Set(p.rows.map(e=>e.date))];
-    return <div className="workspace-cards" data-testid="workspace-schedule"><div className="workspace-date-controls"><label>ตั้งแต่วันที่ <input aria-label="ตั้งแต่วันที่" type="date" value={this.state.opsFrom} onChange={e=>this.setState({opsFrom:e.target.value,opsPage:0})}/></label><label>ถึงวันที่ <input aria-label="ถึงวันที่" type="date" value={this.state.opsTo} onChange={e=>this.setState({opsTo:e.target.value,opsPage:0})}/></label><button className="workspace-button" onClick={()=>this.setState({opsFocus:'undated',view:'table',opsPage:0})}>ยังไม่ระบุ ETA {rows.filter(r=>!r.eta).length} รายการ</button></div><p className="workspace-muted">กำหนดการตามช่วงวันที่ที่เลือก · ETD / ETA เป็นวันคาดการณ์ แยกจากวันถึงท่าจริงและรับเข้าคลังที่บันทึก · กำหนดเสร็จของงานไม่ใช่นัดรับสินค้าเข้าคลัง</p>{invalid&&<div role="alert" className="workspace-empty">กรุณาเลือกช่วงวันที่ให้ถูกต้อง โดยวันเริ่มไม่เกินวันสิ้นสุด</div>}{days.map(day=><section key={day}><h3 className="workspace-day">{fmtDate(day)}</h3>{p.rows.filter(e=>e.date===day).map(e=><div className="workspace-task" key={e.id}><div><button className="workspace-button" onClick={()=>this.setState({detailId:e.row.id})}>{e.row.shipmentId||e.row.source.poNo}</button><div className="workspace-muted">{e.row.poNumbers.join(' · ')}</div></div><div><span className={'workspace-badge'+(e.actual?' ok':'')}>{e.label}</span><div className="workspace-muted">{e.row.source.party} · {e.row.company}</div></div><div className="workspace-muted">{e.row.transportLabel}<br/>{e.row.owner}</div></div>)}</section>)}{!invalid&&!events.length&&<div className="workspace-empty">ไม่มีเหตุการณ์ในช่วงวันที่นี้ · เปลี่ยนช่วงวันหรือดูรายการที่ยังไม่มี ETA</div>}{this.renderWorkspacePager(events,'เหตุการณ์')}</div>;
   }
 
   renderKanban(tab){
@@ -1538,7 +1455,7 @@ class App extends Component {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'6px',padding:'10px 12px 9px',borderBottom:'1px solid var(--color-border)'}}>
               <div style={{display:'flex',alignItems:'center',gap:'7px',minWidth:0}}>
                 <span style={{width:'7px',height:'7px',borderRadius:'50%',background:stg.color,flexShrink:0,animation:isActiveStage(tab,stg.key)?'kobPulse 1.8s ease-in-out infinite':'none'}}/>
-                <span style={{fontSize:'11.5px',fontWeight:500,color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{this.state.layout==='operations'&&tab==='import'&&stg.key==='etd'?'กำลังขนส่ง':stg.label}</span>
+                <span style={{fontSize:'11.5px',fontWeight:500,color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{stg.label}</span>
               </div>
               <span style={{fontSize:'11px',fontWeight:500,minWidth:'20px',textAlign:'center',color:'var(--color-text-muted)',fontVariantNumeric:'tabular-nums'}}>{cards.length}</span>
             </div>
@@ -1585,7 +1502,6 @@ class App extends Component {
   }
 
   renderTable(tab){
-    if(this.state.layout==='operations')return this.renderWorkspaceTable(tab);
     const list=this.filtered(tab);
     return <div style={{flex:1,overflow:'auto',minHeight:0,padding:'0 22px 22px'}}>
       <div style={{background:'var(--color-surface)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',overflow:'hidden'}}>
@@ -1808,7 +1724,7 @@ class App extends Component {
             </div>
             {missingCost.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'2px'}}>
               {missingCost.slice(0,5).map(s=>(
-                <div key={s.id} onClick={()=>this.setState({tab:'import',detailId:s.id,view:this.state.layout==='operations'?'table':'kanban'})} style={{fontSize:'12px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',borderLeft:'2px solid var(--color-danger)',borderRadius:'0 var(--radius-sm) var(--radius-sm) 0',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
+                <div key={s.id} onClick={()=>this.setState({tab:'import',detailId:s.id,view:'kanban'})} style={{fontSize:'12px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',borderLeft:'2px solid var(--color-danger)',borderRadius:'0 var(--radius-sm) var(--radius-sm) 0',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
                   <span style={{fontFamily:'var(--font-mono)',fontWeight:500}}>{s.poNo}</span>
                   <span>{s.party}</span>
                 </div>
@@ -1817,7 +1733,7 @@ class App extends Component {
             </div>}
             {overBudget.length>0&&<div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'2px'}}>
               {overBudget.slice(0,5).map(s=>(
-                <div key={s.id} onClick={()=>this.setState({tab:s._board,detailId:s.id,view:this.state.layout==='operations'?'table':'kanban'})} style={{fontSize:'12px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',borderLeft:'2px solid var(--color-danger)',borderRadius:'0 var(--radius-sm) var(--radius-sm) 0',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
+                <div key={s.id} onClick={()=>this.setState({tab:s._board,detailId:s.id,view:'kanban'})} style={{fontSize:'12px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',borderLeft:'2px solid var(--color-danger)',borderRadius:'0 var(--radius-sm) var(--radius-sm) 0',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
                   <span style={{fontFamily:'var(--font-mono)',fontWeight:500}}>{s.poNo}</span>
                   <span>ต้นทุนจริง {fmtBaht(totalCostThb(s))} เทียบคาดการณ์ {fmtBaht(s.expectedCost)}</span>
                 </div>
@@ -2974,7 +2890,7 @@ class App extends Component {
           {isBoard&&<>
             {this.renderToolbar(tab)}
             <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',minHeight:0}}>
-              {this.state.layout==='operations'&&view==='today'?this.renderWorkspaceToday(tab):this.state.layout==='operations'&&view==='schedule'?this.renderWorkspaceSchedule(tab):view==='kanban'?this.renderKanban(tab):this.renderTable(tab)}
+              {view==='kanban'?this.renderKanban(tab):this.renderTable(tab)}
             </div>
           </>}
           {tab==='work'&&this.renderWorklist()}
