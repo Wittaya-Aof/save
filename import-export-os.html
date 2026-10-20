@@ -1365,7 +1365,7 @@ class App extends Component {
         <div style={{minWidth:0}}><div className="kobDisplayTight" style={{fontSize:'16px',color:'var(--color-chrome-display)'}}>Import-Export OS</div><div style={{fontSize:'10.5px',color:'var(--color-chrome-muted)'}}>KOB &amp; BTV</div></div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'12px 10px',display:'flex',flexDirection:'column',gap:'1px'}}>
-        {[{key:'work',label:'งานค้าง',icon:'check',active:tab==='work'},{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'Freight Charges Comparison',icon:'scale',active:tab==='freight'}].map(t=>{
+        {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'Freight Charges Comparison',icon:'scale',active:tab==='freight'},{key:'work',label:'งานค้าง',icon:'check',active:tab==='work'}].map(t=>{
           const active=t.active;
           return <button key={t.key} onClick={()=>{
             if(t.key==='logistics'){if(!inLogisticsGroup)this.setState({tab:'import',detailId:null});}
@@ -2865,13 +2865,11 @@ class App extends Component {
   render(){
     const {tab,view,toast}=this.state;
     const isBoard=tab==='import'||tab==='export';
-    const unresolved=this.allShipments().filter(s=>goodsThb(s)==null);
     return <div style={{display:'flex',height:'var(--control-app-height,100vh)',width:'100%',overflow:'hidden',background:'var(--color-page-bg)'}}>
       {this.renderSidebar()}
       <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',overflow:'hidden'}}>
         {this.renderTopbar()}
         {(this.state.ambiguousPoNames||[]).length>0&&<div role="alert" style={{padding:'10px 22px',background:'var(--color-warn-soft)',color:'var(--color-warn-text)',fontSize:'12px'}}>ข้อมูลไม่ครบ: เลข PO ซ้ำข้ามบริษัทหรือบอร์ด ({this.state.ambiguousPoNames.join(', ')}) — ระงับการแก้ไข ลบ ย้ายสถานะ และแยก shipment ของเลขเหล่านี้จนกว่าจะระบุขอบเขตได้</div>}
-        {unresolved.length>0&&tab!=='dashboard'&&<div role="alert" style={{padding:'10px 22px',background:'var(--color-warn-soft)',color:'var(--color-warn-text)',fontSize:'12px'}}>มูลค่ายังไม่ครบ {unresolved.length} รายการ — ตรวจ FX หรือยอดจัดสรรของ {unresolved.map(s=>s.poNo).join(', ')}</div>}
         {/* โหมดตัวอย่างเดิมบอกแค่จุดสีเล็กๆ กับข้อความ "โหมดตัวอย่าง" ที่ topbar — แต่ข้อมูลตัวอย่างใช้ชื่อผู้ขาย
             และเลข PO ที่หน้าตาเหมือนของจริงทุกอย่าง เสี่ยงมากที่จะมีคนอ่านตัวเลขไปใช้ตัดสินใจ/รายงานโดยไม่รู้ตัว
             (ยิ่งเข้าหน้า Dashboard ตรงๆ จะไม่ได้มองที่ป้าย) จึงกั้นเป็นแถบเตือนเต็มความกว้างให้พลาดไม่ได้
