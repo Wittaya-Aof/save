@@ -1367,13 +1367,16 @@ class App extends Component {
       <div style={{flex:1,overflowY:'auto',padding:'12px 10px',display:'flex',flexDirection:'column',gap:'1px'}}>
         {[{key:'logistics',label:'Logistics Tracking',icon:'kanban',active:inLogisticsGroup},{key:'container',label:'Container Calculator',icon:'boxes',active:tab==='container'},{key:'freight',label:'Freight Charges Comparison',icon:'scale',active:tab==='freight'},{key:'work',label:'งานค้าง',icon:'check',active:tab==='work'}].map(t=>{
           const active=t.active;
-          return <button key={t.key} onClick={()=>{
+          return <React.Fragment key={t.key}>
+          {t.key==='work'&&<hr style={{width:'auto',alignSelf:'stretch',border:0,borderTop:'1px solid var(--color-chrome-border)',margin:'10px 12px'}}/>}
+          <button onClick={()=>{
             if(t.key==='logistics'){if(!inLogisticsGroup)this.setState({tab:'import',detailId:null});}
             else this.setState({tab:t.key,detailId:null});
           }} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 12px',border:0,borderRadius:'var(--radius)',background:active?'var(--color-chrome-active)':'transparent',color:active?'var(--color-brand)':'var(--color-chrome-text)',fontFamily:'inherit',fontSize:'13px',fontWeight:active?500:500,cursor:'pointer',textAlign:'left',width:'100%'}}>
             <Ico name={t.icon} size={16} sw={1.8}/>
             <span style={{flex:1}}>{t.label}</span>
-          </button>;
+          </button>
+          </React.Fragment>;
         })}
       </div>
     </aside>;
