@@ -24,3 +24,18 @@ test('ETS failures and missing credentials never expose private error content',a
  const s=createEtsService({env:{ETS_USER:'x',ETS_PASS:'x'},open:async()=>{throw Error('private-password');}});
  await assert.rejects(s.lookup({vessel:'A',voyage:'B',port:'0119'}),e=>!e.message.includes('private-password'));
 });
+
+test('ETS cleanup logs out the owned session and closes its browser even if logout fails',async()=>{
+ const {closeEtsSession}=await import(require('node:url').pathToFileURL(require('node:path').resolve(__dirname,'../lib/ets-lookup.mjs')).href);
+ let clicked=0,closed=0;
+ const link={first(){return this;},isVisible:async()=>true,click:async()=>{clicked++;}};
+ const page={isClosed:()=>false,locator:()=>link,once:()=>{},waitForNavigation:async()=>{}};
+ await closeEtsSession({page,browser:{close:async()=>{closed++;}}});assert.equal(clicked,1);assert.equal(closed,1);
+ link.click=async()=>{throw Error('fixture unavailable');};await closeEtsSession({page,browser:{close:async()=>{closed++;}}});assert.equal(closed,2);
+});
+
+test('ETS account already in use returns a useful conflict without exposing credentials',async()=>{
+ const {createEtsService}=require('../lib/ets-service.cjs');
+ const service=createEtsService({env:{ETS_USER:'x',ETS_PASS:'x'},open:async()=>{throw Object.assign(Error('private'),{code:'ETS_SESSION_IN_USE'});},search:async()=>{},close:async()=>{}});
+ await assert.rejects(service.lookup({vessel:'A',voyage:'B',port:'0119'}),e=>e.statusCode===409&&!e.message.includes('private'));
+});
