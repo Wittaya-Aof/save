@@ -681,6 +681,7 @@ class App extends Component {
     const syncOK=isLive&&trackingRows!==null;
     this.setState({shipments:base,ambiguousPoNames,dataSource:ambiguousPoNames.length||(res&&res.incomplete)||trackingRows===null?'incomplete':isLive?'live':'fallback',lastSync:syncOK?this.nowTime():this.state.lastSync});
     if(this._forceSync&&!syncOK)this.showToast('ดึงข้อมูลล่าสุดไม่สำเร็จ — ยังแสดงข้อมูลชุดที่มีอยู่ กรุณาตรวจสถานะการเชื่อมต่อ Odoo','error');
+    else if(this._forceSync)this.showToast(ambiguousPoNames.length?'ดึง Odoo ล่าสุดแล้ว แต่มี PO ที่ต้องตรวจข้อมูลซ้ำ: '+ambiguousPoNames.join(', '):'ซิงค์ข้อมูลล่าสุดจาก Odoo แล้ว — นำเข้า '+(boardRows.import||[]).length+' รายการ · ส่งออก '+(boardRows.export||[]).length+' รายการ',ambiguousPoNames.length?'info':'success');
   }
 
   strip(k){return(k||'').replace(/\s*\(\d+\)\s*$/,'').trim();}
@@ -948,7 +949,7 @@ class App extends Component {
     const prev=this._overrides&&this._overrides[o.po_so];
     const source=this.allShipments().find(r=>r.poNo===o.po_so&&this.sameScope(r,o));
     const copy={...o,_baseTs:prev&&prev._ts!=null?prev._ts:0};
-    if(source){copy.companyId=source.companyId;copy.odooOrderId=source.odooOrderId;if(!copy.poRefs&&source.poRefs)copy.poRefs=source.poRefs;if(!source._synthetic&&source._poOriginalAmount!=null){copy.amount=source._poOriginalAmount;copy._poOriginalAmount=source._poOriginalAmount;copy._poOriginalCurrency=source._poOriginalCurrency;copy._poOriginalRate=source._poOriginalRate;}}
+    if(source){if(source._shipmentId)copy._shipmentId=source._shipmentId;copy.companyId=source.companyId;copy.odooOrderId=source.odooOrderId;if(!copy.poRefs&&source.poRefs)copy.poRefs=source.poRefs;if(!source._synthetic&&source._poOriginalAmount!=null){copy.amount=source._poOriginalAmount;copy._poOriginalAmount=source._poOriginalAmount;copy._poOriginalCurrency=source._poOriginalCurrency;copy._poOriginalRate=source._poOriginalRate;}}
     delete copy._ts;return copy;
   }
   async loadPermissions(){
