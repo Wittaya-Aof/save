@@ -14,7 +14,7 @@ const scripts = [
   'runtime-port', 'runtime-paths', 'users', 'shipment-stage', 'scan-policy', 'worklist',
   'container-cleanup', 'mail-disabled', 'manage-users-data-dir', 'manage-users-dotenv',
   'mcp-live-fallback', 'verify-deployment', 'odoo-source-routing',
-  'container-correctness', 'freight-correctness',
+  'container-correctness', 'pallet-loading-review', 'freight-correctness',
 ].map(name => 'tests/' + name + '.cjs');
 const tasks = [['isolated unit and HTTP regression tests', ['--test', ...unit]],
   ...scripts.map(file => [file, [file]])];
@@ -22,6 +22,7 @@ if (process.argv.includes('--packing')) for (const name of ['pack-invariants', '
 if (process.argv.includes('--browser')) tasks.push(['isolated browser journeys', ['tests/frontend-browser.cjs']], ['browser against real fixture API', ['tests/browser-real-api.cjs']], ['login and logout browser journeys', ['tests/login-browser.cjs']], ['data availability browser status', ['tests/availability-browser.cjs']]);
 if (process.argv.includes('--browser')) {
   tasks.push(['container correctness browser journeys', ['tests/container-correctness-browser.cjs']]);
+  tasks.push(['pallet loading browser journeys', ['tests/pallet-loading-browser.cjs']]);
   tasks.push(['freight correctness browser journeys', ['tests/freight-browser-isolated.cjs']]);
   for (const name of ['freight-ui', 'freight-pdf', 'freight-review']) tasks.push([name + ' isolated fixtures', ['tests/freight-browser-isolated.cjs', '--legacy=' + name]]);
 }

@@ -26,7 +26,10 @@ const BASELINE_PLACED = {
   '20GP|standard 1200x1000': { rot: 624, norot: 576 }, '20GP|euro 1200x800': { rot: 490, norot: 432 },
   '20GP|asia 1100x1100': { rot: 480, norot: 480 }, '20GP|us 1219x1016': { rot: 624, norot: 576 },
   '40HC|standard 1200x1000': { rot: 1440, norot: 1440 }, '40HC|euro 1200x800': { rot: 1120, norot: 1080 },
-  '40HC|asia 1100x1100': { rot: 1056, norot: 1056 }, '40HC|us 1219x1016': { rot: 1440, norot: 1440 },
+  // Corrected 40HC internal length 12032 (was exterior 12192):
+  // fixed Asia grid = floor(12032/1100)*2 = 20 pallets * 48 cartons;
+  // fixed US grid = floor(12032/1219)*2 = 18 pallets * 72 cartons.
+  '40HC|asia 1100x1100': { rot: 1056, norot: 960 }, '40HC|us 1219x1016': { rot: 1440, norot: 1296 },
   '20RF|standard 1200x1000': { rot: 576, norot: 576 }, '20RF|euro 1200x800': { rot: 448, norot: 432 },
   '20RF|asia 1100x1100': { rot: 384, norot: 384 }, '20RF|us 1219x1016': { rot: 576, norot: 576 },
   '40RF|standard 1200x1000': { rot: 1296, norot: 1296 }, '40RF|euro 1200x800': { rot: 1008, norot: 972 },
