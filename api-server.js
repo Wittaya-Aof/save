@@ -15,6 +15,7 @@ const ROOT = __dirname;
 const { loadProjectEnv } = require('./lib/config-env.cjs');
 loadProjectEnv(ROOT);
 const API_MODE = process.env.ODOO_DATA_SOURCE === 'api';
+const etsService = require('./lib/ets-service.cjs').createEtsService();
 const odooClient = API_MODE ? require('./lib/odoo-api.cjs').createOdooClient(process.env) : null;
 const odooBoards = API_MODE ? require('./lib/odoo-boards.cjs').createOdooBoards(odooClient) : null;
 const odooServices = API_MODE ? require('./lib/odoo-services.cjs').createOdooServices(odooClient) : null;
@@ -2000,6 +2001,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Read-only customs lookup; the editor saves the confirmed result with its own revision.
+    if (reqUrl === '/api/ets/arrival' && method === 'POST') {
+      if (!rateLimit('ets:' + (req.socket.remoteAddress || '?'), 6, 60 * 1000)) { jsonErr(res,429,'ตรวจ ETS ถี่เกินไป กรุณารอสักครู่');return; }
+      const input=await readJsonBody(req,res,4096);if(input===null)return;
+      try { jsonOk(res,{ok:true,...await etsService.lookup(input)}); }
+      catch(e) { jsonErr(res,e.statusCode||502,e.message); }
+      return;
+    }
+
     // ── Upsert ทีละรายการ: ปลอดภัยเมื่อใช้พร้อมกันหลายคน ──
     // POST /api/tracking/upsert  body = record เดียว หรือ array ของ records
     // merge ด้วย key po_so — ไม่แตะรายการอื่นในไฟล์
@@ -2091,6 +2101,8 @@ const server = http.createServer(async (req, res) => {
               else delete r.container;
             }
           }
+          // Compatibility guard for older scanners that copied the ETS actual into ETA.
+          if (sanitizeOrigin(r._origin || origin).startsWith('scan:') && r.etsActualArrivalDate && r.eta === r.etsActualArrivalDate) delete r.eta;
           const idx    = shipmentIdentity.resolveTrackingIndex(data, r);
           const before = idx >= 0 ? data[idx] : null;
           // ── ⭐ กันสองคนแก้ record เดียวกันทับกัน (optimistic concurrency) ──────────────

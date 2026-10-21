@@ -5,6 +5,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
+# Customs Vessel Arrival lookup uses the same bounded browser adapter as local scanning.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN node node_modules/playwright/cli.js install --with-deps chromium && chmod -R a+rX /ms-playwright && rm -rf /var/lib/apt/lists/*
+
 # Explicit source inputs only; never copy environment or runtime files.
 COPY api-server.js odoo-queries.js manage-users.mjs ./
 COPY import-export-os.html freight-comparison.html container-loading-calculator.html ./

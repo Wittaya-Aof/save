@@ -36,7 +36,7 @@ ok("ขาดชื่อเรือ = 'po'", () =>
 ok('addDays ข้ามเดือนถูก', () => assert.strictEqual(addDays('2026-09-30', 1), '2026-10-01'));
 ok('normalizeEtsResult เคส found', () =>
   assert.deepStrictEqual(normalizeEtsResult({ status:'found', eta:'2026-09-12', matchedVoyage:'123S' }, '2026-09-08T00:00:00Z'),
-    { etsStatus:'found', etsCheckedAt:'2026-09-08T00:00:00Z', etsActualArrivalDate:'2026-09-12', eta:'2026-09-12', etsMatchedVoyage:'123S' }));
+    { etsStatus:'found', etsCheckedAt:'2026-09-08T00:00:00Z', etsActualArrivalDate:'2026-09-12', etsMatchedVoyage:'123S' }));
 
 console.log('\n── 2. autoStage ไปถึงสถานะปลายทางไม่ได้ (เหตุที่ต้องมีเกราะกันถอยหลัง) ──');
 

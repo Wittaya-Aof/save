@@ -744,6 +744,7 @@ class App extends Component {
     if(!this.trackingMatch(s,o))return {...s};
     const m={...s,...this.workflowFields({...s,...o})};
     ['origin','dest','portOfLoading','portOfDischarge','bl','container','vessel','voyage','forwarder','etd','eta','etsActualArrivalDate','etsStatus','etsCheckedAt','etsMatchedVoyage','documentReceivedAt','note','mode','seaType','courierCo','actualDate'].forEach(k=>{if(o[k]!=null)m[k]=o[k];});
+    if(o.etsPortCode!=null)m.etsPortCode=o.etsPortCode;
     if(o._stageManual!=null)m._stageManual=!!o._stageManual;
     // ตัวสแกนเขียนเลข B/L ลงฟิลด์ bl_awb ฟิลด์เดียว (ไม่ได้เขียน bl) — วัดจริง 2026-08-13:
     // 218 record มี bl_awb แต่ไม่มี bl จึงไม่มีเลข B/L ขึ้นบนการ์ดเลย และการจับคู่ต้นทุนด้วย
@@ -873,10 +874,34 @@ class App extends Component {
     if(!this.state.canWrite)return;
     const s=this.allShipments().find(x=>x.id===this.state.detailId);if(!s||!this.canEditPo(s.poNo))return;
     const ef={_baseTs:s._ts!=null?s._ts:0,owner:s.owner||(s._board==='import'?'Wittaya Sawangphol':''),dueDate:s.dueDate||'',documentChecklist:{...(s.documentChecklist||{})},_billsBy:{...(s._billsBy||{})},board:s._board,poNo:s.poNo,company:s.company,party:s.party,type:s.type,cur:s.cur,amount:s.amount,rate:s.rate,stage:s.stage,mode:s.mode||'sea',seaType:s.seaType||'',containerQty:s.containerQty||'',courierCo:s.courierCo||'',origin:s.origin||'',dest:s.dest||'',bl:s.bl||'',container:s.container||'',vessel:s.vessel||'',voyage:s.voyage||'',forwarder:s.forwarder||'',etd:(s.etd||'').slice(0,10),eta:(s.eta||'').slice(0,10),etsActualArrivalDate:(s.etsActualArrivalDate||'').slice(0,10),etsStatus:s.etsStatus||'',etsCheckedAt:s.etsCheckedAt||'',etsMatchedVoyage:s.etsMatchedVoyage||'',documentReceivedAt:(s.documentReceivedAt||'').slice(0,10),actualDate:(s.actualDate||'').slice(0,10),freight:s.freight||'',clearance:s.clearance||'',insurance:s.insurance||'',duty:s.duty||'',vat:s.vat||'',other:s.other||'',expectedCost:s.expectedCost||'',bills:Array.isArray(s.bills)?s.bills:[],overReceipt:!!s.overReceipt,note:s.note||'',_stageManual:!!s._stageManual,_synthetic:!!s._synthetic,_splitBase:s._splitBase||''};
-    this.setState({editing:true,editForm:ef,costSrc:'',selBills:{}});this.loadVendors();this.loadLanded();
+    ef.etsPortCode=s.etsPortCode||((this._overrides||{})[s.poNo]||{}).etsPortCode||(/LAEM|แหลมฉบัง/i.test(s.dest||'')?'2801':/BANGKOK|กรุงเทพ|\bPAT\b/i.test(s.dest||'')?'0119':'');
+    this._etsLookupId=(this._etsLookupId||0)+1;
+    this.setState({editing:true,editForm:ef,costSrc:'',selBills:{},etsBusy:false});this.loadVendors();this.loadLanded();
   }
-  cancelEdit(){this.setState({editing:false,editForm:null,costSrc:''});}
-  setEdit(k,v){this.setState(s=>({editForm:{...s.editForm,[k]:v,...(k==='company'&&s.editForm._synthetic?{rate:this.fxRate(s.editForm.cur,v)}:{})}}));}
+  cancelEdit(){this._etsLookupId=(this._etsLookupId||0)+1;this.setState({editing:false,editForm:null,costSrc:'',etsBusy:false});}
+  setEdit(k,v){this.setState(s=>({editForm:{...s.editForm,[k]:v,...(['vessel','voyage','etd','etsPortCode'].includes(k)&&s.editForm[k]!==v?{etsActualArrivalDate:'',etsStatus:'',etsCheckedAt:'',etsMatchedVoyage:''}:{}),...(k==='company'&&s.editForm._synthetic?{rate:this.fxRate(s.editForm.cur,v)}:{})}}));}
+  async lookupAta(){
+    const f=this.state.editForm;if(!this.state.canWrite||!f||this.state.etsBusy||f.board!=='import'||f.mode!=='sea')return;
+    if(!f.vessel||!f.voyage||!/^\d{4}$/.test(f.etsPortCode||'')){this.showToast('กรอกชื่อเรือ Voyage และรหัสท่าปลายทาง 4 หลักก่อนตรวจ ATA','error');return;}
+    const id=(this._etsLookupId||0)+1;this._etsLookupId=id;
+    const detailId=this.state.detailId;
+    const input={vessel:f.vessel,voyage:f.voyage,etd:f.etd||'',port:f.etsPortCode};
+    const current=()=>{const c=this.state.editForm;return this._etsLookupId===id&&this.state.detailId===detailId&&this.state.editing&&c&&['poNo','company','board','vessel','voyage','etd','etsPortCode'].every(k=>c[k]===f[k]);};
+    this.setState({etsBusy:true});
+    try{
+      const res=await fetchTimeout('/api/ets/arrival',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)},100000);
+      const j=await res.json();if(!current())return;
+      if(!res.ok||!j.ok)throw new Error(j.error||'ตรวจ ETS ไม่สำเร็จ');
+      if(j.etsStatus==='found'&&j.etsActualArrivalDate){
+        this.setState(s=>({editForm:{...s.editForm,etsActualArrivalDate:j.etsActualArrivalDate,etsStatus:'found',etsCheckedAt:j.etsCheckedAt||'',etsMatchedVoyage:j.etsMatchedVoyage||'',etsPortCode:j.etsPortCode||f.etsPortCode}}));
+        this.showToast('พบ ATA แล้ว — กดบันทึกเพื่อเก็บวันที่เรือถึงจริง','success');
+      }else{
+        this.setState(s=>({editForm:{...s.editForm,...(!s.editForm.etsActualArrivalDate?{etsStatus:j.etsStatus||'not_found',etsCheckedAt:j.etsCheckedAt||''}:{})}}));
+        this.showToast('ยังไม่พบวันที่เรือถึงจริงของเที่ยวนี้ · ETA คงเดิม','info');
+      }
+    }catch(e){if(current())this.showToast(e.name==='AbortError'?'ETS ไม่ตอบภายในเวลาที่กำหนด กรุณาลองใหม่':e.message,'error');}
+    finally{if(this._etsLookupId===id)this.setState({etsBusy:false});}
+  }
   // เปลี่ยนสกุลเงินของ shipment ที่แยกเอง ต้องคำนวณ rate ใหม่เสมอ (เหมือน submitCreate ทำตอนสร้าง) —
   // เดิม setEdit('cur',...) เปลี่ยนแค่ cur แต่ rate เก่ายังค้างอยู่ ทำให้ totalCostThb คำนวณผิดทันทีที่บันทึก
   // (เช่น เปลี่ยนจาก CNY เป็น USD แต่ rate ยังเป็นอัตรา CNY เดิม มูลค่าบาทจะเพี้ยนหลายเท่าโดยไม่มีอะไรเตือน)
@@ -1179,6 +1204,7 @@ class App extends Component {
   }
   async saveEdit(){
     if(!this.state.canWrite)return;
+    if(this.state.etsBusy){this.showToast('รอผลตรวจ ATA ก่อนบันทึก','error');return;}
     const f=this.state.editForm;if(!f||this.state.savingEdit||!this.canEditPo(f.poNo))return;
     const current=this.allShipments().find(s=>s.poNo===f.poNo);
     if(current&&f.stage){
@@ -1191,6 +1217,7 @@ class App extends Component {
     // ของ PO จริง มูลค่ามาจาก Odoo เสมอ ไม่ให้ฟอร์มนี้ทับ (ไม่มีช่องแก้ในฟอร์มอยู่แล้ว ค่าจะเท่าเดิม)
     const stageManual=!!f._stageManual||(!!current&&current.stage!==f.stage);
     const o={po_so:f.poNo,_board:f.board,_edited:true,_rateIsThb:true,_synthetic:!!f._synthetic,_splitBase:f._splitBase||'',_stageManual:stageManual,type:f.type,company:f.company,party:f.party,cur:f.cur,amount:num(f.amount)||0,rate:f.rate,stage:f.stage||'',mode:f.mode||'sea',seaType:f.seaType||'',containerQty:num(f.containerQty),courierCo:f.courierCo||'',origin:f.origin||'',dest:f.dest||'',bl:f.bl||'',bl_awb:f.bl||'',container:f.container||'',vessel:f.vessel||'',voyage:f.voyage||'',forwarder:f.forwarder||'',etd:f.etd||'',eta:f.eta||'',etsActualArrivalDate:f.etsActualArrivalDate||'',etsStatus:f.etsStatus||'',etsCheckedAt:f.etsCheckedAt||'',etsMatchedVoyage:f.etsMatchedVoyage||'',documentReceivedAt:f.documentReceivedAt||'',actualDate:f.actualDate||'',freight:num(f.freight),clearance:num(f.clearance),insurance:num(f.insurance),duty:num(f.duty),vat:num(f.vat),other:num(f.other),expectedCost:num(f.expectedCost),owner:f.owner||'',dueDate:f.dueDate||'',documentChecklist:f.documentChecklist||{},bills:Array.isArray(f.bills)?f.bills:[],_billsBy:f._billsBy||{},overReceipt:!!f.overReceipt,note:f.note||''};
+    o.etsPortCode=f.etsPortCode||'';
     const payload={...this.withBase(o),_baseTs:f._baseTs!=null?f._baseTs:this.withBase(o)._baseTs};
     try{
       const saved=await this.persistTracking(payload);
@@ -1306,7 +1333,7 @@ class App extends Component {
     const curIdx=stages.findIndex(x=>x.key===s.stage);
     const lastIdx=stages.length-1;
     // ขั้นสุดท้าย (รับเข้าคลัง/ถึงปลายทาง) ใช้วันที่รับจริง (actualDate) ถ้ามี — แม่นกว่า eta ที่เป็นแค่ประมาณการ
-    const dateFor=k=>({po:'',etd:s.etd,arrived:s.etsActualArrivalDate||s.eta,customs:s.etsActualArrivalDate||s.eta,received:s.actualDate||s.eta,draft:'',packing:s.etd,shipped:s.etd})[k];
+    const dateFor=k=>({po:'',etd:s.etd,arrived:s._board==='export'?s.actualDate:s.etsActualArrivalDate,customs:s.etsActualArrivalDate,received:s.actualDate,draft:'',packing:s.etd,shipped:s.etd})[k];
     return stages.map((st,i)=>{
       // ขั้นสุดท้ายที่เป็นสถานะปัจจุบันแล้ว = จบกระบวนการ ไม่มีขั้นต่อไปให้ "กำลังดำเนินการ"
       // ต้องติ๊กถูกเหมือนขั้นก่อนหน้า ไม่ใช่วงกลมค้างแบบ current (เดิมค้างเป็นวงกลมว่างตลอดไป)
@@ -2371,6 +2398,7 @@ class App extends Component {
                   ['ตัวแทนขนส่ง',sel.forwarder,src.forwarder,!!sel.forwarder],
                   ['ETD (ออกเดินทาง)',fmtDate(sel.etd),src.etd,!!sel.etd],
                   ['ETA (ประมาณ)',fmtDate(sel.eta),src.eta,!!sel.eta],
+                  ...(sel._board==='import'&&sel.mode==='sea'?[['ATA (เรือถึงจริงจาก ETS)',fmtDate(sel.etsActualArrivalDate),src.etsActualArrivalDate,!!sel.etsActualArrivalDate]]:[]),
                   [sel._board==='export'?'วันที่ถึงปลายทางจริง':'วันที่รับเข้าคลังจริง',fmtDate(sel.actualDate),src.actualDate,!!sel.actualDate]
                 ].map(([l,v,sc,hv])=>(<Row key={l} label={l} value={v||'—'} src={sc} hasValue={hv}/>));})()}
             </div>
@@ -2506,10 +2534,19 @@ class App extends Component {
               {[['BL / AWB','bl','text','เช่น COSU1234567'],['ตู้คอนเทนเนอร์','container','text','เช่น TGHU5521430'],['เรือ','vessel','text','เช่น COSCO HARMONY'],['Voyage','voyage','text','เช่น 123S'],['ETD — วันออกเดินทาง','etd','date','']].map(([l,k,t,ph])=>(
                 <div key={k}><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>{l}</div><input value={ef[k]||''} onChange={e=>this.setEdit(k,e.target.value)} type={t} placeholder={ph} style={INP}/></div>
               ))}
-              <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ETA — Actual time of Arrive จาก ETS</div>
-                <input value={ef.etsActualArrivalDate||ef.eta||''} readOnly type="date" style={{...INP,background:'var(--color-surface-muted)',cursor:'not-allowed'}}/>
-                <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>{ef.etsStatus==='found'?'ยืนยันจากกรมศุลกากร'+(ef.etsMatchedVoyage?' · เที่ยว '+ef.etsMatchedVoyage:''):(ef.etsStatus==='not_found'?'ยังไม่มี Actual Arrival — ระบบไม่ใช้ Schedule เดา ETA':'ยังไม่ได้ตรวจ ETS')}</div>
+              <div><label htmlFor="edit-eta" style={{display:'block',fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ETA — Estimated Time of Arrival (วันที่คาดว่าจะถึง)</label>
+                <input id="edit-eta" value={ef.eta||''} onChange={e=>this.setEdit('eta',e.target.value)} type="date" style={INP}/>
+                <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>แอดมินแก้ไขตามข้อมูล Forwarder · แยกจากวันที่เรือถึงจริง</div>
               </div>
+              {ef.board==='import'&&ef.mode==='sea'&&<div>
+                <label htmlFor="edit-ata" style={{display:'block',fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ATA — Actual Time of Arrival (วันที่เรือถึงจริงจาก ETS)</label>
+                <input id="edit-ata" value={ef.etsActualArrivalDate||''} readOnly type="date" style={{...INP,background:'var(--color-surface-muted)'}}/>
+                <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>{ef.etsActualArrivalDate?'ข้อมูลวันถึงจริง'+(ef.etsMatchedVoyage?' · Voyage '+ef.etsMatchedVoyage:''):ef.etsStatus==='not_found'?'ยังไม่พบวันที่เรือถึงจริง · ระบบไม่ใช้ Schedule แทน ATA':'ยังไม่มีผลตรวจ ATA จาก ETS'}</div>
+                <label htmlFor="ets-port" style={{display:'block',fontSize:'11px',color:'var(--color-text-muted)',marginTop:'8px'}}>รหัสท่าปลายทางสำหรับ ETS (ตรวจให้ตรงกับ B/L)</label>
+                <input id="ets-port" inputMode="numeric" maxLength={4} value={ef.etsPortCode||''} onChange={e=>this.setEdit('etsPortCode',e.target.value)} placeholder="รหัสท่า 4 หลัก" style={{...INP,marginTop:'4px'}}/>
+                <button onClick={()=>this.lookupAta()} disabled={this.state.etsBusy||savingEdit} style={{...INP,marginTop:'8px',cursor:'pointer',color:'var(--color-brand)'}}>{this.state.etsBusy?'กำลังตรวจ ATA…':'ตรวจ ATA จาก ETS'}</button>
+                <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'4px'}}>ค้นตามชื่อเรือ + Voyage + ท่าปลายทาง · เมื่อพบแล้วกดบันทึก</div>
+              </div>}
               <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>วันที่ได้รับเอกสาร</div>
                 <input value={ef.documentReceivedAt||''} onChange={e=>this.setEdit('documentReceivedAt',e.target.value)} type="date" style={INP}/></div>
               <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>{ef.board==='export'?'วันที่ถึงปลายทางจริง (Actual)':'วันที่รับเข้าคลังจริง (Actual)'}</div>

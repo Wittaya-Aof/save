@@ -1090,9 +1090,8 @@ async function main() {
           }
         }
 
-        // ETA/Actual arrival provenance is explicit: no ETS result means no ETA is inferred.
-        // The API derives the automated stage from these fields and preserves manual stages.
-        if (fields.etsActualArrivalDate) fields.eta = fields.etsActualArrivalDate;
+        // ETS updates ATA only. ETA belongs to the forwarder's estimate and is never
+        // replaced by an actual arrival, even when the two dates happen to coincide.
 
         // ── วันที่ได้รับเอกสาร: ติดเฉพาะเมื่อสกัดข้อมูลได้จริงอย่างน้อย 1 ฟิลด์ ──────────────
         // ⚠ ถ้าตั้งค่านี้ตอนสร้าง `fields` ว่างๆ จะทำให้ `Object.keys(fields).length` ไม่มีวันเป็น 0
