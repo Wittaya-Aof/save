@@ -18,11 +18,14 @@ test('ETS service has bounded concurrency and closes late sessions after timeout
  await assert.rejects(service.lookup({vessel:'A',voyage:'B',port:'0119'}),/กำลัง/);
  await assert.rejects(pending,/ไม่ตอบ/);resolveOpen({page:{}});await new Promise(r=>setTimeout(r,5));assert.equal(closed,1);
 });
-test('ETS failures and missing credentials never expose private error content',async()=>{
+test('public ETS lookup needs no private credentials and failures never expose private error content',async()=>{
  const {createEtsService}=require('../lib/ets-service.cjs');
- await assert.rejects(createEtsService({env:{}}).lookup({vessel:'A',voyage:'B',port:'0119'}),/ยังไม่ได้ตั้งค่า/);
- const s=createEtsService({env:{ETS_USER:'x',ETS_PASS:'x'},open:async()=>{throw Error('private-password');}});
+ const publicService=createEtsService({open:async()=>({page:{},publicInquiry:true}),search:async()=>({status:'not_found'}),close:async()=>{}});
+ assert.equal((await publicService.lookup({vessel:'A',voyage:'B',port:'0119'})).etsStatus,'not_found');
+ let opened=false;
+ const s=createEtsService({open:async()=>{opened=true;throw Error('private-password');},search:async()=>{},close:async()=>{}});
  await assert.rejects(s.lookup({vessel:'A',voyage:'B',port:'0119'}),e=>!e.message.includes('private-password'));
+ assert.equal(opened,true);
 });
 
 test('ETS cleanup logs out the owned session and closes its browser even if logout fails',async()=>{
