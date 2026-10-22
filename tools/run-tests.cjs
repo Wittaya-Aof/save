@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, '..');
 const unit = [
   'authorization', 'persistence-permissions', 'import-workflow', 'logistics-costs',
   'login-sessions', 'session-store', 'client-session',
-  'availability', 'local-supervisor', 'service-guardian', 'http-probe', 'operation-lock',
+  'hidden-launcher', 'availability', 'local-supervisor', 'service-guardian', 'http-probe', 'operation-lock',
   'odoo-api', 'odoo-boards', 'odoo-services', 'odoo-financial-sql',
   'frontend-regressions', 'tracking-correctness', 'loading-weight', 'runtime-backup', 'release-runtime', 'release-checks',
 ].map(name => 'tests/' + name + '.cjs');
@@ -31,7 +31,7 @@ if (process.argv.includes('--browser')) {
 }
 const failures = [];
 for (const [label, args] of tasks) {
-  const result = spawnSync(process.execPath, args, { cwd: root, encoding: 'utf8', timeout: 180000, maxBuffer: 8 * 1024 * 1024 });
+  const result = spawnSync(process.execPath, args, { windowsHide: true, cwd: root, encoding: 'utf8', timeout: 180000, maxBuffer: 8 * 1024 * 1024 });
   process.stdout.write((result.stdout || '') + (result.stderr || ''));
   if (result.status !== 0 || result.error) failures.push({ task: label, status: result.status, error: result.error && result.error.message });
 }

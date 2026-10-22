@@ -11,23 +11,26 @@ foreach ($name in @('config-env.cjs','availability.cjs','http-probe.cjs')) { Cop
 $arguments = '"' + (Join-Path $runtime 'tools\local-supervisor.cjs') + '" --root "' + $ProjectRoot + '"'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $taskName = 'ImportExportControlCloud'
+$wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+$wrapper = Join-Path $runtime 'start-service.vbs'
+$command = ('"' + $node + '" ' + $arguments).Replace('"','""')
+$vbs = 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'Do' + "`r`n" + '  result = shell.Run("' + $command + '", 0, True)' + "`r`n" + '  If result = 0 Then Exit Do' + "`r`n" + '  WScript.Sleep 5000' + "`r`n" + 'Loop' + "`r`n"
+[IO.File]::WriteAllText($wrapper, $vbs)
 try {
-    $action = New-ScheduledTaskAction -Execute $node -Argument $arguments -WorkingDirectory $ProjectRoot
+    # Hidden=true in Task Scheduler hides its listing, not a console window.
+    # WScript keeps the supervisor attached while starting its console hidden.
+    $action = New-ScheduledTaskAction -Execute $wscript -Argument ('//B //NoLogo "' + $wrapper + '"') -WorkingDirectory $ProjectRoot
     $triggers = @((New-ScheduledTaskTrigger -AtLogOn -User $identity), (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)))
     $principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Force | Out-Null
     Start-ScheduledTask -TaskName $taskName
-    Write-Output 'Installed current-user logon service with scheduled recovery.'
+    Write-Output 'Installed hidden current-user service with scheduled recovery.'
 } catch {
     # A normal Windows account can always install its own logon entry without UAC.
-    $wrapper = Join-Path $runtime 'start-service.vbs'
-    $command = ('"' + $node + '" ' + $arguments).Replace('"','""')
-    $vbs = 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'Do' + "`r`n" + '  result = shell.Run("' + $command + '", 0, True)' + "`r`n" + '  If result = 0 Then Exit Do' + "`r`n" + '  WScript.Sleep 5000' + "`r`n" + 'Loop' + "`r`n"
-    [IO.File]::WriteAllText($wrapper, $vbs)
     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
     New-Item -Path $runKey -Force | Out-Null
-    New-ItemProperty -Path $runKey -Name $taskName -Value ('wscript.exe "' + $wrapper + '"') -PropertyType String -Force | Out-Null
-    Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $wrapper + '"') -WindowStyle Hidden
+    New-ItemProperty -Path $runKey -Name $taskName -Value ('"' + $wscript + '" //B //NoLogo "' + $wrapper + '"') -PropertyType String -Force | Out-Null
+    Start-Process -FilePath $wscript -ArgumentList ('//B //NoLogo "' + $wrapper + '"') -WindowStyle Hidden
     Write-Output 'Installed current-user logon service with hidden recovery launcher.'
 }

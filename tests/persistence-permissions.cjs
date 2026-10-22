@@ -36,7 +36,7 @@ Module._load=function(name,...rest){
     DELETE_PASSWORD: 'fixture-delete',
     APP_BACKGROUND_DISABLED: '1', MAIL_DISABLED: '1', ALERT_EMAIL_TO: '', MCP_URL: '', MCP_TOKEN: '' };
   const child = spawn(process.execPath, ['--require', hook, path.join(root, 'api-server.js')], {
-    cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true, cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', data => { logs += data; });
   child.stderr.on('data', data => { logs += data; });

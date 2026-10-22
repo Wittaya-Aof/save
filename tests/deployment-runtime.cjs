@@ -17,7 +17,7 @@ const env = { ...process.env, DATA_DIR: dir, HOST: '127.0.0.1', DB_HOST: '127.0.
 let server;
 let logs = '';
 async function start() {
-  server = spawn(process.execPath, [path.join(root, 'api-server.js')], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  server = spawn(process.execPath, [path.join(root, 'api-server.js')], { windowsHide: true, cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
   server.stdout.on('data', b => { logs += b; });
   server.stderr.on('data', b => { logs += b; });
   for (let i = 0; i < 100; i++) {

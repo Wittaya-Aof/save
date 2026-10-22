@@ -38,7 +38,7 @@ Module._load = function(name, ...rest) {
 `);
   try {
     child = spawn(process.execPath, ['--require', hook, path.join(root, 'api-server.js')], {
-      cwd: root, env: { ...process.env, ODOO_DATA_SOURCE: 'api',
+      windowsHide: true, cwd: root, env: { ...process.env, ODOO_DATA_SOURCE: 'api',
         ODOO_API_URL: 'https://fixture.invalid', ODOO_DB: 'fixture', ODOO_LOGIN: 'fixture', ODOO_API_KEY: 'fixture-only',
         HOST: '127.0.0.1', PORT: String(port), DATA_DIR: temp,
         DB_HOST: '127.0.0.1', DB_USER: 'fixture', DB_PASS: 'fixture', DB_NAME: 'fixture',
