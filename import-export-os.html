@@ -2299,11 +2299,11 @@ class App extends Component {
     const stages=tab==='export'?EXP_STAGES:IMP_STAGES;
     const vList=vendors||[];
     return <>
-      <div onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} style={{position:'fixed',inset:0,background:'rgba(15,23,42,.45)',zIndex:60,animation:'kobFadeIn .2s ease'}}/>
-      <div style={{position:'fixed',top:0,right:0,bottom:0,width:'440px',maxWidth:'94vw',background:'var(--color-surface)',zIndex:61,boxShadow:'var(--shadow-pop)',display:'flex',flexDirection:'column',animation:'kobSlideIn .26s cubic-bezier(.4,0,.2,1)'}}>
-        <div style={{display:'flex',alignItems:'flex-start',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid var(--color-border)'}}>
+      <div onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} style={{position:'fixed',inset:0,background:'rgba(15,23,42,.45)',backdropFilter:'blur(2px)',zIndex:60,animation:'kobFadeIn .2s ease'}}/>
+      <div role="dialog" aria-modal="true" aria-labelledby="po-detail-title" style={{position:'fixed',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:'780px',maxWidth:'calc(100vw - 32px)',height:'min(900px, calc(100dvh - 112px))',boxSizing:'border-box',borderRadius:'var(--radius-lg)',overflow:'hidden',background:'var(--color-surface)',zIndex:61,boxShadow:'var(--shadow-pop)',display:'flex',flexDirection:'column',animation:'kobFadeIn .2s ease'}}>
+        <div style={{display:'flex',flexShrink:0,alignItems:'flex-start',gap:'12px',padding:'20px 22px 16px',borderBottom:'1px solid var(--color-border)'}}>
           <div style={{minWidth:0}}>
-            <div style={{fontFamily:'var(--font-mono)',fontSize:'17px',fontWeight:500,color:'var(--color-text)'}}>{sel.poNo}</div>
+            <div id="po-detail-title" style={{fontFamily:'var(--font-mono)',fontSize:'17px',fontWeight:500,color:'var(--color-text)'}}>{sel.poNo}</div>
             <div style={{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}}>
               <span style={coBadgeSty(sel.company)}>{sel.company}</span>
               <span style={typeBadgeSty(sel.type)}><span style={typeDotSty(sel.type)}/>{typeMeta(sel.type).label}</span>
@@ -2313,7 +2313,7 @@ class App extends Component {
           </div>
           <button onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
         </div>
-        <div style={{flex:1,overflowY:'auto',padding:'20px 22px'}}>
+        <div style={{flex:1,minHeight:0,overflowY:'auto',overscrollBehavior:'contain',padding:'20px 22px'}}>
           <div style={{fontSize:'13px',color:'var(--color-text-secondary)',marginBottom:'6px'}}>{sel.party}</div>
           {this.renderWorkflow(sel,editing?ef:null,(k,v)=>this.setEdit(k,v))}
           {(()=>{const ov=(this._overrides||{})[sel.poNo];return (ov&&ov._ts)?<div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginBottom:'14px'}}>แก้ไขล่าสุด {new Date(ov._ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</div>:<div style={{marginBottom:'14px'}}/>;})()}
@@ -2616,7 +2616,7 @@ class App extends Component {
             <textarea value={ef.note||''} onChange={e=>this.setEdit('note',e.target.value)} placeholder="หมายเหตุเพิ่มเติม เช่น อ้างอิง PO ต้นทาง, เหตุผลที่ของเกิน…" rows={3} style={{...INP,height:'auto',padding:'9px 11px',resize:'vertical',fontFamily:'inherit'}}/>
           </div>}
         </div>
-        <div style={{padding:'14px 22px',borderTop:'1px solid var(--color-border)',display:'flex',gap:'10px'}}>
+        <div style={{padding:'14px 22px',flexShrink:0,borderTop:'1px solid var(--color-border)',display:'flex',gap:'10px'}}>
           {!editing&&<>
             {this.canEditPo(sel.poNo)&&<button onClick={()=>this.splitShipment()} title="แยกเป็น shipment ย่อยใหม่ (PO เดียวกัน ส่งคนละรอบ)" style={{width:'40px',height:'40px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-brand-text)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="split" size={16} sw={1.8}/></button>}
             {sel._synthetic&&this.canEditPo(sel.poNo)&&<button onClick={()=>this.openDeleteDialog(sel.poNo)} title="ลบ shipment ย่อยนี้ (ต้องมีรหัสผ่านผู้มีอำนาจ)" style={{width:'40px',height:'40px',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius)',background:'var(--color-surface)',color:'var(--color-danger)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}><Ico name="trash" size={16} sw={1.8}/></button>}

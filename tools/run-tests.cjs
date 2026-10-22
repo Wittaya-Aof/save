@@ -25,6 +25,7 @@ if (process.argv.includes('--browser')) {
   tasks.push(['pallet loading browser journeys', ['tests/pallet-loading-browser.cjs']]);
   tasks.push(['ETA and ATA browser journeys', ['tests/eta-ata-browser.cjs']]);
   tasks.push(['legacy PO save and sync browser journey', ['tests/legacy-scope-browser.cjs']]);
+  tasks.push(['centered PO details browser journey', ['tests/po-dialog-browser.cjs']]);
   tasks.push(['freight correctness browser journeys', ['tests/freight-browser-isolated.cjs']]);
   for (const name of ['freight-ui', 'freight-pdf', 'freight-review']) tasks.push([name + ' isolated fixtures', ['tests/freight-browser-isolated.cjs', '--legacy=' + name]]);
 }
