@@ -36,7 +36,16 @@ const failures = [];
 for (const [label, args] of tasks) {
   const result = spawnSync(process.execPath, args, { windowsHide: true, cwd: root, encoding: 'utf8', timeout: 180000, maxBuffer: 8 * 1024 * 1024 });
   process.stdout.write((result.stdout || '') + (result.stderr || ''));
-  if (result.status !== 0 || result.error) failures.push({ task: label, status: result.status, error: result.error && result.error.message });
+  if (result.status !== 0 || result.error) {
+    failures.push({ task: label, status: result.status, error: result.error && result.error.message });
+    // Make isolated-test failures visible in the public check summary, too.
+    // These suites use fixture data; never run this runner against live data.
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+      const detail = ((result.stderr || '') + '\n' + (result.stdout || '')).slice(-2500);
+      console.log('::error title=Isolated regression failed::' + escape(label + '\n' + (result.error?.message || detail)));
+    }
+  }
 }
 console.log(JSON.stringify({ testGroups: tasks.length, failures }));
 if (failures.length) process.exitCode = 1;
