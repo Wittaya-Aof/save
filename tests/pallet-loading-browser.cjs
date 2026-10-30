@@ -18,8 +18,27 @@ async function exercise(page){
   groups=[{id:1,name:'Test',usePallet:true,pallet:{...PALLET_PRESET},items:[{...makeDefaultItem(),id:2}]}];renderGroups();switchTab('products');openEditModal(1,2);
  });
  assert.equal(await page.locator('#mi-rotL').isChecked(),false);assert.equal(await page.locator('#mi-rotW').isChecked(),false);assert.equal(await page.locator('#mi-weight').inputValue(),'0');
+ await page.locator('#mi-kmb-search').fill('savc230');
+ assert.equal(await page.locator('.kmb-search-result').count(),1);
+ await page.locator('.kmb-search-result').click();
+ assert.equal(await page.locator('#mi-kmb').inputValue(),'SAVC230');
+ assert.equal(await page.locator('#mi-L').inputValue(),'22.1');
+ await page.locator('#mi-kmb-search').fill('retinol concentrate');
+ assert.ok(await page.locator('.kmb-search-result').count()>0);
+ await page.locator('#mi-kmb-search').fill('SBR275');
+ await page.locator('#mi-kmb-search').press('Enter');
+ assert.equal(await page.locator('#mi-kmb').inputValue(),'SBR275');
+ await page.locator('#mi-kmb-search').fill('not-a-product');
+ assert.equal(await page.locator('.kmb-search-result').count(),0);
+ assert.ok(await page.getByText('ไม่พบสินค้าที่ตรงกับคำค้น').isVisible());
+ assert.equal(await page.locator('#mi-kmb').inputValue(),'SBR275');
  await page.locator('#mi-maxTopLoad').fill('0');await page.locator('#modal-save-btn').click();
  assert.equal(await page.evaluate(()=>groups[0].items[0].maxTopLoad),0);
+ assert.equal(await page.evaluate(()=>groups[0].items[0]._kmb),'SBR275');
+ await page.evaluate(()=>openEditModal(1,2));
+ assert.equal(await page.locator('#mi-kmb').inputValue(),'SBR275');
+ assert.equal(await page.locator('#mi-L').inputValue(),'28');
+ await page.evaluate(()=>closeModal());
  await page.evaluate(()=>{selUnits=[makeUnit('20GP')];renderContainers();switchTab('containers');});
  const length=page.locator('input[onchange*="setUnitField"][onchange*="\'L\'"]');await length.fill('5800');await length.dispatchEvent('change');
  assert.equal(await page.evaluate(()=>unitSpec(selUnits[0]).L),5800);
@@ -28,5 +47,5 @@ async function exercise(page){
  await page.getByText('Revise this loading plan',{exact:true}).waitFor();
  return stats;
 }
-if(require.main===module)(async()=>{const browser=await chromium.launch();try{const p=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];p.on('pageerror',e=>errors.push(e.message));await p.route('**/*',r=>r.request().url().startsWith('file:')?r.continue():r.abort());await p.goto(pathToFileURL(path.resolve(__dirname,'../container-loading-calculator.html')).href);await exercise(p);assert.deepEqual(errors,[]);console.log('Pallet browser: screenshot counts, pending strength, upright default, zero top-load, editable equipment and wrapped cards pass.');}finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+if(require.main===module)(async()=>{const browser=await chromium.launch();try{const p=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];p.on('pageerror',e=>errors.push(e.message));await p.route('**/*',r=>r.request().url().startsWith('file:')?r.continue():r.abort());await p.goto(pathToFileURL(path.resolve(__dirname,'../container-loading-calculator.html')).href);await exercise(p);assert.deepEqual(errors,[]);console.log('Pallet browser: product search and reopen, loading counts, pending strength, upright default, zero top-load, and editable equipment pass.');}finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
 module.exports={exercise};

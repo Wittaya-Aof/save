@@ -14,6 +14,26 @@ test('mixed pallet places heavier cartons below light cartons with identical foo
  assert.equal(r._layout.blocks.find(b=>b.idx===1).z0,150);
  r._layout.blocks.forEach(b=>assert.ok(fullySupported(b,r._layout.blocks)));
 });
+test('mixed pallet fills a compatible side strip before stacking the second SKU',()=>{
+ const c=fixture(),sea=c.CONTAINERS.find(x=>x.id==='20GP');
+ const r=c.buildResult(sea,[
+  cargo({name:'Large carton',L:60,W:40,H:30,qty:4,weight:10}),
+  cargo({name:'Small carton',L:40,W:20,H:20,qty:3,weight:5,color:'#abcdef'}),
+ ]);
+ const floor=r._layout.blocks.filter(b=>b.idx!=null&&Math.abs(b.z0-pal.D)<1e-7);
+ const covered=floor.reduce((n,b)=>n+b.L*b.W,0);
+ assert.equal(r._palletManifest.length,1);
+ assert.equal(r.items[1].packed,3);
+ assert.equal(covered,pal.L*pal.W,'bottom layer should tile the complete 1200 × 1000 pallet deck');
+ assert.ok(floor.some(b=>b.idx===1),'small cartons should use the side strip on the pallet floor');
+ for(let i=0;i<floor.length;i++)for(let j=i+1;j<floor.length;j++){
+  const a=floor[i],b=floor[j];
+  const overlapX=a.x0<b.x0+b.L-1e-7&&b.x0<a.x0+a.L-1e-7;
+  const overlapY=a.y0<b.y0+b.W-1e-7&&b.y0<a.y0+a.W-1e-7;
+  assert.ok(!(overlapX&&overlapY),`floor cartons ${i} and ${j} must not overlap`);
+ }
+ for(const b of r._layout.blocks.filter(b=>b.idx!=null))assert.ok(fullySupported(b,r._layout.blocks));
+});
 test('known maximum top load is checked including zero; missing strength is pending',()=>{
  const c=fixture(),sea=c.CONTAINERS[0];
  const r=c.buildResult(sea,[cargo({L:100,W:100,H:50,qty:3,weight:10,maxTopLoad:5})]);

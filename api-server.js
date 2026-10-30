@@ -1389,9 +1389,9 @@ const server = http.createServer(async (req, res) => {
   }
   req.auth = session ? session.identity : !sessionToken && !browserRequest ? accessLib.resolveAccess({ authorization: req.headers.authorization, env: process.env,
     store: USERS.store, requireUsers: USERS.required, localNoAuth: !authRequired && isLoopback }) : !authRequired && isLoopback ? {user:'local',role:'developer',canWrite:true} : null;
-  if (reqUrl === '/vendor/auth.js' && ['GET','HEAD'].includes(method)) {
+  if (['/vendor/auth.js','/vendor/language.js'].includes(reqUrl) && ['GET','HEAD'].includes(method)) {
     res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store',...SECURITY_HEADERS});
-    res.end(method==='HEAD'?'':fs.readFileSync(path.join(ROOT,'vendor','auth.js')));return;
+    res.end(method==='HEAD'?'':fs.readFileSync(path.join(ROOT,'vendor',path.basename(reqUrl))));return;
   }
   if (reqUrl !== '/api/alive') {
     if (!req.auth) {

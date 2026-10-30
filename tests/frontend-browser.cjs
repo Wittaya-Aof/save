@@ -31,10 +31,10 @@ try{
       await page.getByText('ผู้รับผิดชอบ: Fixture Owner · กำหนด: '+record.dueDate,{exact:true}).first().waitFor();
     }
     if(currentRole==='admin'){
-      await page.getByRole('button',{name:'แก้ไข',exact:true}).click();await page.getByLabel('ผู้รับผิดชอบ').fill('Edited Owner');failWrite=true;
+      await page.getByRole('button',{name:'แก้ไข',exact:true}).click();await page.getByLabel('กำหนดติดตาม').fill('2026-11-05');failWrite=true;
       await page.locator('button[title^="เลือกบิลจาก Odoo"]').first().click();await page.getByText('ขาดอัตราแลกเปลี่ยน',{exact:true}).waitFor();await page.getByText('BILL-MISSING-FX',{exact:true}).click();await page.getByText('ขาดอัตราแลกเปลี่ยน — ยังเลือกบิลนี้ไม่ได้',{exact:true}).waitFor();
       await page.getByText('BILL-KNOWN',{exact:true}).click();await page.getByText('REFUND',{exact:true}).click();await page.getByRole('button',{name:'ใช้รายการที่เลือก (฿35)',exact:true}).click();
-      await page.getByRole('button',{name:'บันทึก',exact:true}).click();await page.getByText('ยังไม่ได้บันทึก: Fixture disk failure',{exact:false}).waitFor();assert.equal(await page.getByLabel('ผู้รับผิดชอบ').inputValue(),'Edited Owner');assert.equal(posts.at(-1).body._baseTs,100);failWrite=false;
+      await page.getByRole('button',{name:'บันทึก',exact:true}).click();await page.getByText('ยังไม่ได้บันทึก: Fixture disk failure',{exact:false}).waitFor();assert.equal(await page.getByLabel('กำหนดติดตาม').inputValue(),'2026-11-05');assert.equal(posts.at(-1).body._baseTs,100);failWrite=false;
       assert.equal(posts.at(-1).body.freight,35);assert.equal(posts.at(-1).body.bills.length,2);assert.equal(posts.at(-1).body.bills[0].category,'freight');
     }
     await page.goto(base+'/freight-comparison.html');await page.locator('#tbl tbody tr').first().waitFor();assert.equal(await page.locator('#btnSave').isVisible(),currentRole==='admin');assert.equal(await page.locator('#btnReadPdf').isVisible(),currentRole==='admin');assert.equal(await page.locator('#btnXlsx').isVisible(),true);

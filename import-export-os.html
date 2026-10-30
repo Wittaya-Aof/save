@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Import-Export OS — KOB &amp; BTV</title>
+<script src="/vendor/language.js?v=20261030-2"></script>
 <script src="/vendor/auth.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -295,6 +296,7 @@ function fmtDate(d){
   if(!d) return '—';
   const p=String(d).slice(0,10).split('-');
   if(p.length<3||!p[1]) return '—';
+  if(window.ControlLanguage&&window.ControlLanguage.get()==='en')return parseInt(p[2])+' '+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(p[1])-1]+' '+p[0];
   return parseInt(p[2])+' '+MONTHS[parseInt(p[1])-1]+' '+(parseInt(p[0])+543-2500);
 }
 function fmtBaht(v){return v==null||!Number.isFinite(v)?'ยังไม่ครบ / ตรวจ FX':'฿'+Math.round(v).toLocaleString('en-US');}
@@ -480,6 +482,7 @@ class App extends Component {
     this.setState({theme:next});
   }
   componentDidMount(){
+    window.addEventListener('control-language-change',this._onLanguage=()=>this.forceUpdate());
     this.loadPermissions();
     document.documentElement.dataset.theme=this.state.theme;
     window.addEventListener('resize',this._onResize=()=>{const n=window.innerWidth<880;if(n!==this.state.isNarrow)this.setState({isNarrow:n});});
@@ -529,7 +532,7 @@ class App extends Component {
       this.setState({vendorScorecard:j.rows,vendorScorecardLoading:false});
     }catch(e){this.setState({vendorScorecardLoading:false});}
   }
-  componentWillUnmount(){window.removeEventListener('resize',this._onResize);window.removeEventListener('keydown',this._onKey);clearInterval(this._autoRefresh);clearTimeout(this._tt);}
+  componentWillUnmount(){window.removeEventListener('control-language-change',this._onLanguage);window.removeEventListener('resize',this._onResize);window.removeEventListener('keydown',this._onKey);clearInterval(this._autoRefresh);clearTimeout(this._tt);}
   // ประวัติการแก้ไขล่าสุด (สำหรับ manager ดูภาพรวม) — endpoint เดิม /api/tracking/history รองรับอยู่แล้ว
   // (ไม่ใส่ po = คืนทุกรายการล่าสุด) แค่ยังไม่เคยมี UI ฝั่งนี้เรียกใช้แบบภาพรวมมาก่อน
   async loadAuditLog(){
@@ -1509,7 +1512,7 @@ class App extends Component {
                       <span style={coBadgeSty(s.company)}>{s.company}</span>
                     </span>
                   </div>
-                  <div style={{fontSize:'12.5px',color:'var(--color-text)',fontWeight:500,margin:'7px 0 8px',lineHeight:'1.35',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{s.party}</div>
+                  <div style={{fontSize:'12.5px',color:'var(--color-text)',fontWeight:500,margin:'7px 0 8px',lineHeight:'1.35',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}><span translate="no">{s.party}</span></div>
                   <div style={{display:'flex',alignItems:'center',gap:'5px',marginBottom:'9px'}}>
                     <span style={typeBadgeSty(s.type)}><span style={typeDotSty(s.type)}/>{typeMeta(s.type).label}</span>
                     <span style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'11px',color:'var(--color-text-tertiary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'150px'}}><Ico name={s.mode==='air'?'plane':s.mode==='courier'?'courier':'ship'} size={13} sw={1.6}/>{shipModeLabel(s)}</span>
@@ -1545,7 +1548,7 @@ class App extends Component {
           <tbody>
             {list.map(s=>{const sm=stageMeta(tab,s.stage);return(
               <tr key={s.id} onClick={()=>this.setState({detailId:s.id})} style={{cursor:'pointer',borderTop:'1px solid var(--color-surface-muted2)'}}>
-                <td style={{padding:'12px 14px'}}><div style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:500,color:'var(--color-text)'}}>{s.poNo}</div><div style={{fontSize:'12px',color:'var(--color-text-tertiary)',marginTop:'2px',maxWidth:'240px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</div></td>
+                <td style={{padding:'12px 14px'}}><div style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:500,color:'var(--color-text)'}}>{s.poNo}</div><div style={{fontSize:'12px',color:'var(--color-text-tertiary)',marginTop:'2px',maxWidth:'240px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span translate="no">{s.party}</span></div></td>
                 <td style={{padding:'12px 14px'}}><span style={coBadgeSty(s.company)}>{s.company}</span></td>
                 <td style={{padding:'12px 14px'}}><span style={typeBadgeSty(s.type)}><span style={typeDotSty(s.type)}/>{typeMeta(s.type).label}</span></td>
                 <td style={{padding:'12px 14px'}}><span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{sm.label}</span></td>
@@ -1757,7 +1760,7 @@ class App extends Component {
               {missingCost.slice(0,5).map(s=>(
                 <div key={s.id} onClick={()=>this.setState({tab:'import',detailId:s.id,view:'kanban'})} style={{fontSize:'12px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',borderLeft:'2px solid var(--color-danger)',borderRadius:'0 var(--radius-sm) var(--radius-sm) 0',padding:'8px 11px',cursor:'pointer',display:'flex',justifyContent:'space-between'}}>
                   <span style={{fontFamily:'var(--font-mono)',fontWeight:500}}>{s.poNo}</span>
-                  <span>{s.party}</span>
+                  <span><span translate="no">{s.party}</span></span>
                 </div>
               ))}
               {missingCost.length>5&&<div style={{fontSize:'11px',color:'var(--color-text-muted)'}}>และอีก {missingCost.length-5} รายการ</div>}
@@ -1923,7 +1926,7 @@ class App extends Component {
                 {col.rows.map((r,i)=>(
                   <div key={r.partyId!=null?r.partyId:r.party} style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderTop:i>0?'1px solid var(--color-surface-muted2)':'none'}}>
                     <span style={{width:'18px',fontSize:'11px',fontWeight:500,color:'var(--color-text-muted)',flexShrink:0}}>{i+1}</span>
-                    <span style={{flex:1,fontSize:'12.5px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={r.party}>{r.party}</span>
+                    <span style={{flex:1,fontSize:'12.5px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} translate="no" title={r.party}><span translate="no">{r.party}</span></span>
                     <span style={{fontSize:'11px',color:'var(--color-text-muted)',flexShrink:0,whiteSpace:'nowrap'}}>{r.count} รายการ</span>
                     <span style={{fontSize:'12.5px',fontWeight:500,color:col.color,flexShrink:0,fontVariantNumeric:'tabular-nums',minWidth:'78px',textAlign:'right'}}>{fmtBaht(r.value)}</span>
                   </div>
@@ -1959,7 +1962,7 @@ class App extends Component {
                   const rate=v.deliveries>0?Math.round(v.on_time/v.deliveries*100):0;
                   const delay=parseFloat(v.avg_delay_days)||0;
                   return <tr key={v.vendor_id!=null?v.vendor_id:v.vendor} style={{borderTop:i?'1px solid var(--color-surface-muted2)':'none'}}>
-                    <td style={{padding:'9px 12px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} title={v.vendor}>{v.vendor}</td>
+                    <td style={{padding:'9px 12px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} translate="no" title={v.vendor}><span translate="no">{v.vendor}</span></td>
                     <td style={{padding:'9px 12px',textAlign:'right',color:'var(--color-text-secondary)'}}>{v.deliveries}</td>
                     <td style={{padding:'9px 12px',textAlign:'right',fontWeight:500,color:rate>=80?'var(--color-success-text)':rate>=50?'var(--color-warn)':'var(--color-danger)'}}>{rate}%</td>
                     <td style={{padding:'9px 12px',textAlign:'right',color:delay>3?'var(--color-danger)':'var(--color-text-secondary)'}}>{delay>0?'+':''}{delay.toLocaleString('en-US',{maximumFractionDigits:1})} วัน</td>
@@ -1995,7 +1998,7 @@ class App extends Component {
                 ))}</tr></thead>
                 <tbody>{ltByVendor.slice(0,10).map((v,i)=>(
                   <tr key={v.partyId!=null?v.partyId:v.party} style={{borderTop:i?'1px solid var(--color-surface-muted2)':'none'}}>
-                    <td style={{padding:'9px 12px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} title={v.party}>{v.party}</td>
+                    <td style={{padding:'9px 12px',color:'var(--color-text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'220px'}} translate="no" title={v.party}><span translate="no">{v.party}</span></td>
                     <td style={{padding:'9px 12px',textAlign:'right',color:'var(--color-text-secondary)'}}>{v.count}</td>
                     <td style={{padding:'9px 12px',textAlign:'right',fontWeight:500,color:v.avgDays>(ltAvg||0)*1.3?'var(--color-danger)':v.avgDays>(ltAvg||0)?'var(--color-warn)':'var(--color-success-text)'}}>{v.avgDays} วัน</td>
                   </tr>
@@ -2053,7 +2056,7 @@ class App extends Component {
               {impBacklog.slice(0,5).map(({s,days})=>(
                 <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid var(--color-surface-muted2)'}}>
                   <span style={{fontFamily:'var(--font-mono)',fontSize:'11.5px',fontWeight:500,color:'var(--color-text)',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
-                  <span style={{flex:1,fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
+                  <span style={{flex:1,fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} translate="no" title={s.party}><span translate="no">{s.party}</span></span>
                   <span style={stageBadgeSty('import',s.stage)}><span style={stageDotSty('import',s.stage)}/>{stageMeta('import',s.stage).label}</span>
                   <span style={{fontSize:'11.5px',fontWeight:500,color:'var(--color-danger)',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
                 </div>
@@ -2068,7 +2071,7 @@ class App extends Component {
               {expBacklog.slice(0,5).map(({s,days})=>(
                 <div key={s.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderTop:'1px solid var(--color-surface-muted2)'}}>
                   <span style={{fontFamily:'var(--font-mono)',fontSize:'11.5px',fontWeight:500,color:'var(--color-text)',flexShrink:0,whiteSpace:'nowrap'}}>{s.poNo}</span>
-                  <span style={{flex:1,fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={s.party}>{s.party}</span>
+                  <span style={{flex:1,fontSize:'12px',color:'var(--color-text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} translate="no" title={s.party}><span translate="no">{s.party}</span></span>
                   <span style={stageBadgeSty('export',s.stage)}><span style={stageDotSty('export',s.stage)}/>{stageMeta('export',s.stage).label}</span>
                   <span style={{fontSize:'11.5px',fontWeight:500,color:'var(--color-danger)',flexShrink:0,whiteSpace:'nowrap'}}>{days} วัน</span>
                 </div>
@@ -2121,7 +2124,7 @@ class App extends Component {
               <tbody>{costSrc.map(s=>{const goods=goodsThb(s),imp=(s.freight||0)+(s.clearance||0)+(s.insurance||0),tax=(s.duty||0)+(s.vat||0),total=totalCostThb(s);return(
                 <tr key={s.id} style={{borderTop:'1px solid var(--color-surface-muted2)'}}>
                   <td style={{padding:'11px 14px'}}><span style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:500,color:'var(--color-text)'}}>{s.poNo}</span></td>
-                  <td style={{padding:'11px 14px',fontSize:'12.5px',color:'var(--color-text-secondary)',maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.party}</td>
+                  <td style={{padding:'11px 14px',fontSize:'12.5px',color:'var(--color-text-secondary)',maxWidth:'200px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span translate="no">{s.party}</span></td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-text)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(goods)}</td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-text-secondary)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(imp)}</td>
                   <td style={{padding:'11px 14px',textAlign:'right',fontSize:'12.5px',color:'var(--color-text-secondary)',fontVariantNumeric:'tabular-nums'}}>{fmtBaht(tax)}</td>
@@ -2270,13 +2273,12 @@ class App extends Component {
   }
   renderWorkflow(sel,form,setField){
     const f=form||sel;
-    const labels={"commercial_invoice":"Commercial Invoice","packing_list":"Packing List","form_e":"Form E","bl":"B/L","insurance":"ประกันภัย","import_declaration":"ใบขนขาเข้า","tisi_permit":"TISI (ยืนยันโดยผู้ดูแล)","warehouse_notice":"แจ้งคลังสินค้า","tax_payment_notice":"แจ้งชำระภาษี","forwarder_booking":"ประสาน Forwarder"};
+    const labels={"commercial_invoice":"Commercial Invoice","packing_list":"Packing List","form_e":"Form E","bl":"B/L","insurance":"ประกันภัย","import_declaration":"ใบขนขาเข้า","tisi_permit":"TISI (ยืนยันโดยผู้ดูแล)","warehouse_notice":"แจ้งคลังสินค้า","tax_payment_notice":"แจ้งชำระภาษี"};
     return <section style={{padding:'12px',border:'1px solid var(--color-border)',borderRadius:'var(--radius)',marginBottom:'16px'}}>
       <div style={{fontSize:'11px',marginBottom:'8px'}}>Shipment ID: {sel._shipmentId||'จะกำหนดเมื่อบันทึก'}<br/>PO: {(sel.poRefs||[]).map(p=>p.poNumber+' (บริษัท '+(p.companyId||'—')+')').join(', ')||sel._splitBase||sel.poNo||'—'}</div>
       {form&&this.state.canWrite?<>
-        <label>ผู้รับผิดชอบ<input style={INP} value={f.owner||''} onChange={e=>setField('owner',e.target.value)}/></label>
         <label>กำหนดติดตาม<input style={INP} type="date" value={f.dueDate||''} onChange={e=>setField('dueDate',e.target.value)}/></label>
-      </>:<div style={{fontSize:'12px'}}>ผู้รับผิดชอบ: {f.owner||(sel._board==='import'?'Wittaya Sawangphol':'—')} · กำหนด: {f.dueDate||'ยังไม่กำหนด'}</div>}
+      </>:<div style={{fontSize:'12px'}}>กำหนด: {f.dueDate||'ยังไม่กำหนด'}</div>}
       {Object.entries(labels).map(([key,label])=><div key={key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',fontSize:'11px',marginTop:'6px'}}>
         <span>{label}</span>{form&&this.state.canWrite?<select value={(f.documentChecklist||{})[key]||'pending'} onChange={e=>setField('documentChecklist',{...(f.documentChecklist||{}),[key]:e.target.value})}>
           <option value="pending">รอติดตาม</option><option value="done">เสร็จแล้ว</option><option value="not_required">ยืนยันว่าไม่ต้องใช้</option>
@@ -2314,7 +2316,7 @@ class App extends Component {
           <button onClick={()=>this.setState({detailId:null,editing:false,editForm:null})} aria-label="ปิด" title="ปิด" style={{marginLeft:'auto',display:'flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',borderRadius:'var(--radius)',border:'1px solid var(--color-border)',background:'var(--color-surface)',color:'var(--color-text-tertiary)',cursor:'pointer',flexShrink:0}}><Ico name="close" size={16} sw={1.9}/></button>
         </div>
         <div style={{flex:1,minHeight:0,overflowY:'auto',overscrollBehavior:'contain',padding:'20px 22px'}}>
-          <div style={{fontSize:'13px',color:'var(--color-text-secondary)',marginBottom:'6px'}}>{sel.party}</div>
+          <div style={{fontSize:'13px',color:'var(--color-text-secondary)',marginBottom:'6px'}}><span translate="no">{sel.party}</span></div>
           {this.renderWorkflow(sel,editing?ef:null,(k,v)=>this.setEdit(k,v))}
           {(()=>{const ov=(this._overrides||{})[sel.poNo];return (ov&&ov._ts)?<div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginBottom:'14px'}}>แก้ไขล่าสุด {new Date(ov._ts).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} น.</div>:<div style={{marginBottom:'14px'}}/>;})()}
           {(()=>{
@@ -2345,7 +2347,7 @@ class App extends Component {
                 {poLines.map((it,i)=>(
                   <div key={it.id||i} style={{display:'flex',justifyContent:'space-between',gap:'10px',padding:'9px 12px',borderTop:i?'1px solid var(--color-surface-muted2)':'none'}}>
                     <div style={{minWidth:0,flex:1}}>
-                      <div style={{fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.product_name||'—'}</div>
+                      <div translate="no" style={{fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.product_name||'—'}</div>
                       <div style={{fontSize:'11px',color:'var(--color-text-muted)',marginTop:'2px'}}>{it.sku?('SKU '+it.sku+' · '):''}{Math.round(parseFloat(it.qty)||0).toLocaleString('en-US')} {it.uom||''}</div>
                       {(()=>{
                         // qty_fulfilled = qty_received (import) หรือ qty_delivered (export) — เพิ่งเพิ่มจาก server
@@ -2441,7 +2443,7 @@ class App extends Component {
               </div>;
             })()}
             {(sel._odooState||sel._receiptStatus)&&<div style={{fontSize:'11.5px',color:'var(--color-text-muted)',marginBottom:'18px'}}>สถานะดิบจาก Odoo: {odooStateLabel(sel._odooState)}{sel._receiptStatus?' · การรับของ: '+receiptStatusLabel(sel._receiptStatus):''}</div>}
-            {sel.note&&<div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}>{sel.note}</div>}
+            {sel.note&&<div style={{fontSize:'12.5px',color:'var(--color-text-secondary)',background:'var(--color-surface-muted)',border:'1px solid var(--color-surface-muted2)',borderRadius:'var(--radius)',padding:'11px 13px',marginBottom:'18px',whiteSpace:'pre-wrap'}}><span translate="no">{sel.note}</span></div>}
             {(()=>{
               // ── ชิปเม้นที่เอกสารบอกว่ามี แต่ยังไม่มีการ์ดในระบบ ──────────────────────────
               // การ์ด 1 ใบเก็บได้ชิปเม้นเดียว (1 B/L) แต่ PO เดียวแบ่งส่งได้หลายชิปเม้น ระบบจึง
@@ -2506,12 +2508,12 @@ class App extends Component {
               <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ท่าต้นทาง</div>
                 <select value={ef.origin||''} onChange={e=>this.setEdit('origin',e.target.value)} style={SEL}>
                   <option value="">— เลือกท่าต้นทาง —</option>
-                  {PORTS_ORIGIN.map(p=><option key={p} value={p}>{p}</option>)}
+                  {PORTS_ORIGIN.map(p=><option key={p} value={p}><span translate="no">{p}</span></option>)}
                 </select></div>
               <div><div style={{fontSize:'11px',color:'var(--color-text-muted)',marginBottom:'5px'}}>ท่าปลายทาง</div>
                 <select value={ef.dest||''} onChange={e=>this.setEdit('dest',e.target.value)} style={SEL}>
                   <option value="">— เลือกท่าปลายทาง —</option>
-                  {PORTS_DEST.map(p=><option key={p} value={p}>{p}</option>)}
+                  {PORTS_DEST.map(p=><option key={p} value={p}><span translate="no">{p}</span></option>)}
                 </select></div>
             </div>
             {ef._synthetic&&<>
@@ -2686,12 +2688,12 @@ class App extends Component {
           {Object.keys(byPartner).sort((a,b)=>byPartner[b].reduce((x,r)=>x+(+r.thb||0),0)-byPartner[a].reduce((x,r)=>x+(+r.thb||0),0)).map(p=>(
             <div key={p} style={{marginTop:'14px'}}>
               <div style={{display:'flex',alignItems:'baseline',gap:'8px',marginBottom:'4px'}}>
-                <span style={{fontSize:'12px',fontWeight:500}}>{p}</span>
+                <span style={{fontSize:'12px',fontWeight:500}}><span translate="no">{p}</span></span>
                 <span style={{marginLeft:'auto',fontSize:'12px',fontWeight:500,fontVariantNumeric:'tabular-nums'}}>฿{Math.round(byPartner[p].reduce((x,r)=>x+(+r.thb||0),0)).toLocaleString()}</span>
               </div>
               <table style={{width:'100%',borderCollapse:'collapse'}}><tbody>
                 {byPartner[p].map((r,i)=><tr key={i}>
-                  <td style={{...CELL,color:'var(--color-text-secondary)'}}>{r.desc||'—'}
+                  <td style={{...CELL,color:'var(--color-text-secondary)'}}><span translate="no">{r.desc||'—'}</span>
                     <div style={{fontSize:'10.5px',color:'var(--color-text-muted)',marginTop:'2px'}}>
                       {r.bill_no} · {r.bill_date}{r.origin?' · PO ค่าใช้จ่าย '+r.origin:''}
                     </div></td>
@@ -2761,7 +2763,7 @@ class App extends Component {
             return <div key={b.id} aria-disabled={missingRate&&!on} onClick={()=>this.toggleBill(b)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',marginBottom:'7px',border:on?'1px solid var(--color-brand)':'1px solid var(--color-border)',borderRadius:'var(--radius)',background:on?'var(--color-brand-soft)':(used?'var(--color-warn-soft)':'var(--color-surface)'),cursor:'pointer',opacity:used&&!on?0.75:1}}>
               <span style={{width:'20px',height:'20px',borderRadius:'var(--radius-sm)',border:on?'0':'1px solid var(--color-border)',background:on?'var(--color-brand)':'var(--color-surface)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{on&&<Ico name="check" size={13} sw={2.6}/>}</span>
               <div style={{minWidth:0,flex:1}}>
-                <div style={{fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.partner}</div>
+                <div style={{fontSize:'12.5px',fontWeight:500,color:'var(--color-text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}><span translate="no">{b.partner}</span></div>
                 <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'3px',flexWrap:'wrap'}}>
                   <span style={billCatSty(b.category)}>{billCatLabel(b.category)}</span>
                   <span style={{display:'inline-flex',alignItems:'center',padding:'1px 7px',borderRadius:'var(--radius-sm)',fontSize:'10px',fontWeight:500,background:b.kind==='po'?'var(--color-surface-muted)':'var(--color-success-soft)',color:b.kind==='po'?'var(--color-text-tertiary)':'var(--color-success-text)'}}>{b.kind==='po'?'PO รอบิล':'จ่ายจริง'}</span>
@@ -2821,7 +2823,7 @@ class App extends Component {
                     <span style={{fontFamily:'var(--font-mono)',fontSize:'11.5px',fontWeight:500,color:'var(--color-text)'}}>{s.poNo}</span>
                     <span style={coBadgeSty(s.company)}>{s.company}</span>
                   </div>
-                  <div style={{fontSize:'11.5px',color:'var(--color-text-tertiary)',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.party}</div>
+                  <div style={{fontSize:'11.5px',color:'var(--color-text-tertiary)',marginTop:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}><span translate="no">{s.party}</span></div>
                   <div style={{display:'flex',alignItems:'center',gap:'7px',marginTop:'5px'}}>
                     <span style={stageBadgeSty(tab,s.stage)}><span style={stageDotSty(tab,s.stage)}/>{stageMeta(tab,s.stage).label}</span>
                     <span style={{fontSize:'11px',color:'var(--color-text-muted)'}}>ETA {fmtDate(s.eta)}</span>
@@ -2874,11 +2876,11 @@ class App extends Component {
             <FInput label="มูลค่าสินค้า" value={form.amount} type="number" placeholder="0" onChange={e=>sf('amount',e.target.value)}/>
             <FSelect label="ท่าต้นทาง (Port of Origin)" value={form.origin} onChange={e=>sf('origin',e.target.value)}>
               <option value="">— เลือกท่าต้นทาง —</option>
-              {PORTS_ORIGIN.map(p=><option key={p} value={p}>{p}</option>)}
+              {PORTS_ORIGIN.map(p=><option key={p} value={p}><span translate="no">{p}</span></option>)}
             </FSelect>
             <FSelect label="ท่าปลายทาง (Port of Destination)" value={form.dest} onChange={e=>sf('dest',e.target.value)}>
               <option value="">— เลือกท่าปลายทาง —</option>
-              {PORTS_DEST.map(p=><option key={p} value={p}>{p}</option>)}
+              {PORTS_DEST.map(p=><option key={p} value={p}><span translate="no">{p}</span></option>)}
             </FSelect>
             <FInput label="BL / AWB" value={form.bl} placeholder="—" onChange={e=>sf('bl',e.target.value)}/>
             <FInput label="ตู้คอนเทนเนอร์" value={form.container} placeholder="—" onChange={e=>sf('container',e.target.value)}/>
@@ -2958,7 +2960,7 @@ function srcLabel(tag){
   const origin=at>0?String(tag).slice(0,at):String(tag);
   const iso=at>0?String(tag).slice(at+1):'';
   const when=iso?new Date(iso):null;
-  const date=(when&&!isNaN(when))?when.toLocaleDateString('th-TH',{day:'numeric',month:'short'}):'';
+  const date=(when&&!isNaN(when))?when.toLocaleDateString(window.ControlLanguage&&window.ControlLanguage.get()==='en'?'en-GB':'th-TH',{day:'numeric',month:'short'}):'';
   if(origin.startsWith('verify:'))return {kind:'doc',text:'จากเอกสาร '+origin.slice(7),date};
   if(origin==='manual')return {kind:'manual',text:'กรอกเอง',date};
   // ตั้งแต่ 2026-09-22 ค่าที่คนกรอกติดชื่อผู้ใช้มาด้วย → `manual:<ผู้ใช้>`
@@ -2975,7 +2977,7 @@ function Row({label,value,src,hasValue}){
   return <div style={{display:'flex',justifyContent:'space-between',gap:'12px',alignItems:'baseline'}}>
     <span style={{fontSize:'12.5px',color:'var(--color-text-tertiary)',flexShrink:0}}>{label}</span>
     <span style={{textAlign:'right',minWidth:0}}>
-      <span style={{fontSize:'12.5px',color:'var(--color-text)',fontWeight:500,fontVariantNumeric:'tabular-nums'}}>{value}</span>
+      <span translate="no" style={{fontSize:'12.5px',color:'var(--color-text)',fontWeight:500,fontVariantNumeric:'tabular-nums'}}>{value}</span>
       {s&&<span title={'ที่มา: '+s.text+(s.date?' ('+s.date+')':'')} style={{display:'block',fontSize:'10px',marginTop:'1px',color:s.kind==='doc'?'var(--color-success-text)':'var(--color-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.kind==='doc'?'📄 ':''}{s.text}{s.date?' · '+s.date:''}</span>}
       {unknown&&<span title="ค่านี้มีอยู่ในระบบก่อนที่จะเริ่มบันทึกที่มา จึงไม่ทราบว่ามาจากเอกสารใบไหนหรือใครกรอก" style={{display:'block',fontSize:'10px',marginTop:'1px',color:'var(--color-text-muted)'}}>ไม่ทราบที่มา</span>}
     </span>

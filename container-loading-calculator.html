@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Load & Stuffing Calculator</title>
+<script src="/vendor/language.js?v=20261030-2"></script>
 <script src="/vendor/auth.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,13 +22,9 @@
   try{apply(localStorage.getItem('kobTheme'));}catch(e){}
   window.addEventListener('storage',function(e){if(e.key==='kobTheme')apply(e.newValue);});
   // เปิดเป็น iframe ในแอปหลัก = ชื่อหน้าอยู่บน topbar ของแอปแล้ว ไม่ต้องมีหัวเรื่องซ้ำอีกชั้น
-  // ซ่อนแถบหัวเรื่องแล้วย้ายตัวสลับภาษาไปอยู่ท้ายแถบแท็บแทน (ทำตอน DOM พร้อม)
+  // ใช้ตัวเลือกภาษากลางในแถบบัญชีของแอปหลัก
   if(window.self!==window.top){
     document.documentElement.classList.add('embedded');
-    document.addEventListener('DOMContentLoaded',function(){
-      var ls=document.querySelector('.lang-switch'), tabs=document.querySelector('.tabs');
-      if(ls&&tabs)tabs.appendChild(ls);
-    });
   }
 })();
 </script>
@@ -173,6 +170,11 @@ canvas{display:block;width:100%;background:#fff}
 .fl{font-size:11px;color:var(--color-text-secondary);font-weight:500}
 .fi{padding:0 11px;height:36px;border:1px solid var(--color-border);border-radius:var(--radius);font-family:inherit;font-size:13px;width:100%;background:var(--color-surface);color:var(--color-text)}
 .fi:focus{outline:none;border-color:var(--color-brand);box-shadow:0 0 0 3px var(--color-brand-soft)}
+.kmb-search-results{max-height:190px;overflow-y:auto;border:1px solid var(--color-border);border-radius:var(--radius);margin:6px 0 10px;background:var(--color-surface)}
+.kmb-search-result{display:block;width:100%;padding:8px 11px;text-align:left;border:0;border-bottom:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);font:inherit;font-size:12px;cursor:pointer}
+.kmb-search-result:last-child{border-bottom:0}
+.kmb-search-result:hover,.kmb-search-result:focus{background:var(--color-brand-soft);outline:none}
+.kmb-search-empty{padding:9px 11px;color:var(--color-text-muted);font-size:12px}
 .chk{display:flex;align-items:center;gap:8px;padding:7px 0;cursor:pointer;font-size:12.5px;color:var(--color-text-secondary)}
 .chk input{width:15px;height:15px;cursor:pointer;accent-color:var(--color-brand)}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -307,13 +309,6 @@ canvas{display:block;width:100%;background:#fff}
 .cat-section-label{font-size:11px;font-weight:500;color:var(--color-text-muted);letter-spacing:.7px;text-transform:uppercase;margin:18px 0 10px;display:flex;align-items:center;gap:8px}
 .cat-section-label:first-child{margin-top:0}
 .cat-section-label::after{content:'';flex:1;height:1px;background:var(--color-border)}
-/* ── LANGUAGE SWITCH ── */
-.lang-switch{position:absolute;top:50%;right:22px;transform:translateY(-50%);display:flex;align-items:center;gap:8px;font-size:12.5px}
-.lang-switch .lang-opt{cursor:pointer;color:var(--color-text-tertiary)}
-.lang-switch .lang-opt:hover{color:var(--color-brand)}
-.lang-switch .lang-opt.active{color:var(--color-brand);font-weight:500}
-.lang-switch .lang-sep{color:var(--color-border)}
-.lang-switch .lang-flag{width:22px;height:15px;border-radius:2px;object-fit:cover;box-shadow:0 0 0 1px var(--color-border)}
 /* ── EMPTY STATES ── */
 .empty-state{text-align:center;padding:56px 20px}
 .empty-badge{width:96px;height:96px;margin:0 auto 16px;border-radius:50%;background:var(--color-surface-muted);display:flex;align-items:center;justify-content:center;position:relative}
@@ -343,12 +338,6 @@ canvas{display:block;width:100%;background:#fff}
 <div class="header" style="position:relative">
   <h1>Load &amp; Stuffing Calculation</h1>
   <p data-i18n="app_sub">คำนวณการบรรจุสินค้าเข้าตู้คอนเทนเนอร์</p>
-  <div class="lang-switch">
-    <span class="lang-opt" id="lang-en" onclick="setLang('en')">English</span>
-    <span class="lang-sep">|</span>
-    <span class="lang-opt" id="lang-th" onclick="setLang('th')">ภาษาไทย</span>
-    <svg class="lang-flag" id="lang-flag" viewBox="0 0 30 20" xmlns="http://www.w3.org/2000/svg"></svg>
-  </div>
 </div>
 
 <div class="tabs">
@@ -485,7 +474,7 @@ var colorIdx=0, itemAutoSeq=0;
 var COLORS=['#4CAF50','#2196F3','#FF9800','#9C27B0','#F44336','#00BCD4','#FF5722','#795548','#8BC34A','#607D8B'];
 
 // ── I18N (TH / EN) ──────────────────────────────────────────────────────────────
-var LANG='th';
+var LANG=window.ControlLanguage?window.ControlLanguage.get():'th';
 var I18N={
   th:{
     app_sub:'คำนวณการบรรจุสินค้าเข้าตู้คอนเทนเนอร์',
@@ -518,6 +507,7 @@ var I18N={
     step3_place:'3. การจัดวาง', square_pack:'สี่เหลี่ยม (Square packing)', hex_pack:'หกเหลี่ยม (Hex packing ~15% ประหยัดกว่า)',
     max_capacity:'ความจุสูงสุด', items_unit:'รายการ',
     kmb_pick_title:'เลือกสินค้า (Kiss My Body / Skinoxy)', kmb_pick_help:'เลือกแล้วระบบจะกรอกขนาดกล่อง (ยาว×กว้าง×สูง) ให้อัตโนมัติ — หรือเลือก "กรอกเอง" เพื่อกำหนดเอง', kmb_manual:'— กรอกเอง / กำหนดขนาดเอง —',
+    kmb_search_placeholder:'ค้นหารหัสสินค้า หรือชื่อสินค้า', kmb_search_empty:'ไม่พบสินค้าที่ตรงกับคำค้น',
     no_result_title:'ยังไม่มีผลการคำนวณ', no_result_desc:'กรอกข้อมูลสินค้า เลือกตู้ แล้วกด "คำนวณ"',
     recommended:'★ แนะนำ', fit_all:'✓ บรรจุได้ครบ', fit_partial:'⚠ บางส่วน',
     warn_3d_partial:'จำนวนที่วางได้จริงในตู้นี้ — ส่วนที่เหลือต้องใช้ตู้เพิ่ม',
@@ -573,6 +563,7 @@ var I18N={
     step3_place:'3. Placement', square_pack:'Square packing', hex_pack:'Hex packing (~15% denser)',
     max_capacity:'Maximum capacity', items_unit:'items',
     kmb_pick_title:'Select product (Kiss My Body / Skinoxy)', kmb_pick_help:'Picking a product auto-fills its carton size (L×W×H) — or choose "Custom" to enter your own', kmb_manual:'— Custom / enter size manually —',
+    kmb_search_placeholder:'Search product code or name', kmb_search_empty:'No matching products',
     no_result_title:'No results yet', no_result_desc:'Enter products, pick a container, then press "Calculate"',
     recommended:'★ Recommended', fit_all:'✓ All fit', fit_partial:'⚠ Partial',
     warn_3d_partial:'Cartons actually placed in this container — load the remainder in another unit.',
@@ -598,19 +589,28 @@ var I18N={
     unit_m3:'m³', unit_mm:'mm', unit_kg:'kg', unit_cm:'cm'
   }
 };
+if(window.ControlLanguage&&typeof window.ControlLanguage.addDictionary==='function')window.ControlLanguage.addDictionary(I18N.th,I18N.en);
 function t(k){var d=I18N[LANG]||I18N.th;return (k in d)?d[k]:(I18N.th[k]!==undefined?I18N.th[k]:k);}
 
-var FLAG_TH='<rect width="30" height="20" fill="#fff"/><rect width="30" height="3.33" y="0" fill="#A51931"/><rect width="30" height="3.33" y="16.67" fill="#A51931"/><rect width="30" height="6.67" y="6.67" fill="#2D2A4A"/>';
-var FLAG_EN='<clipPath id="gb"><rect width="30" height="20"/></clipPath><g clip-path="url(#gb)"><rect width="30" height="20" fill="#012169"/><path d="M0,0 30,20 M30,0 0,20" stroke="#fff" stroke-width="3"/><path d="M0,0 30,20 M30,0 0,20" stroke="#C8102E" stroke-width="1.6"/><path d="M15,0 V20 M0,10 H30" stroke="#fff" stroke-width="5"/><path d="M15,0 V20 M0,10 H30" stroke="#C8102E" stroke-width="3"/></g>';
 function applyI18n(){
   document.querySelectorAll('[data-i18n]').forEach(function(el){el.textContent=t(el.getAttribute('data-i18n'));});
-  document.getElementById('lang-en').classList.toggle('active',LANG==='en');
-  document.getElementById('lang-th').classList.toggle('active',LANG==='th');
-  var fl=document.getElementById('lang-flag'); if(fl)fl.innerHTML=(LANG==='en'?FLAG_EN:FLAG_TH);
   document.documentElement.lang=LANG;
   ['v3d-reset','v3d-auto','v3d-stop'].forEach(function(id,i){var b=document.getElementById(id);if(b)b.title=t(['v3d_reset','v3d_auto','v3d_stop'][i]);});
 }
 function setLang(l){
+  if(l!=='th'&&l!=='en')return;
+  if(window.ControlLanguage&&window.ControlLanguage.get()!==l){window.ControlLanguage.set(l);return;}
+  // A language change can arrive from another tab before blur/change commits an inline field.
+  // Preserve raw control values (including empty numbers), not only their parsed model values.
+  var autoNames={};
+  groups.forEach(function(g){g.items.forEach(function(it){if(it._auto&&it._autoNum)autoNames["setItemField("+g.id+","+it.id+",'name',this.value)"]={name:it.name,num:it._autoNum};});});
+  function controlKey(el){return el.id?'id:'+el.id:el.getAttribute('onchange');}
+  var hadFocus=document.hasFocus(),drafts=Array.from(document.querySelectorAll('input,select,textarea')).map(function(el){
+    var key=controlKey(el),auto=autoNames[key];
+    return {key:key,value:el.value,checked:el.checked,focused:el===document.activeElement,start:el.selectionStart,end:el.selectionEnd,autoNum:auto&&el.value===auto.name?auto.num:null};
+  }).filter(function(d){return d.key;});
+  // Capture the open editor before translating its controls; do not discard an unsaved draft.
+  if(_mitem&&document.getElementById('modal').classList.contains('open'))Object.assign(_mitem,getMVals());
   LANG=l; applyI18n();
   // auto-named products follow the selected language
   groups.forEach(function(g){g.items.forEach(function(it){if(it._auto&&it._autoNum)it.name=defaultItemName(it._autoNum);});});
@@ -618,6 +618,9 @@ function setLang(l){
   if(document.getElementById('modal').classList.contains('open'))renderModal();
   if(document.getElementById('cont-picker').classList.contains('open')){pickerCatSwitch(pickerCat);}
   if(window._lastResults)renderResults(window._lastResults);
+  var controls=new Map(Array.from(document.querySelectorAll('input,select,textarea')).map(function(el){return [controlKey(el),el];}));
+  drafts.forEach(function(d){var el=controls.get(d.key);if(!el)return;el.value=d.autoNum?defaultItemName(d.autoNum):d.value;if(typeof d.checked==='boolean')el.checked=d.checked;if(d.focused&&hadFocus){el.focus({preventScroll:true});if(d.start!=null&&typeof el.setSelectionRange==='function')el.setSelectionRange(d.start,d.end);}});
+  if(document.getElementById('modal').classList.contains('open')){['layers','mh','mwt'].forEach(togCon);updModalCartons();searchKMBProducts();}
 }
 
 // Color palette (7×7 = 49 colors)
@@ -826,6 +829,38 @@ function kmbOptionsHTML(selectedCode){
     html+='</optgroup>';
   });
   return html;
+}
+function searchKMBProducts(){
+  var input=document.getElementById('mi-kmb-search'), results=document.getElementById('mi-kmb-results');
+  if(!input||!results)return;
+  var terms=input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  results.replaceChildren();
+  results.dataset.firstCode='';
+  if(!terms.length){results.style.display='none';return;}
+  var matches=KMB_PRODUCTS.filter(function(p){
+    var text=(p.code+' '+p.name).toLowerCase(), compact=text.replace(/[\s_-]+/g,'');
+    return terms.every(function(term){return text.indexOf(term)>=0||compact.indexOf(term.replace(/[\s_-]+/g,''))>=0;});
+  });
+  results.style.display='block';
+  if(!matches.length){
+    var empty=document.createElement('div');empty.className='kmb-search-empty';
+    empty.textContent=t('kmb_search_empty');results.appendChild(empty);return;
+  }
+  results.dataset.firstCode=matches[0].code;
+  matches.forEach(function(p){
+    var button=document.createElement('button');button.type='button';button.className='kmb-search-result';
+    button.textContent=p.code+' — '+p.name;
+    button.addEventListener('click',function(){applyKMBProduct(p.code);});
+    results.appendChild(button);
+  });
+}
+function kmbSearchKeydown(event){
+  if(event.key==='Enter'){
+    var results=document.getElementById('mi-kmb-results');
+    if(results&&results.dataset.firstCode){event.preventDefault();applyKMBProduct(results.dataset.firstCode);}
+  }else if(event.key==='Escape'){
+    event.target.value='';searchKMBProducts();
+  }
 }
 // Apply a selected KMB product to the in-modal item, preserving weight/pieces already typed.
 function applyKMBProduct(code){
@@ -1396,6 +1431,8 @@ function renderModal(){
   document.getElementById('modal-body').innerHTML=`
     <div class="fs">
       <div class="fs-title">${t('kmb_pick_title')}</div>
+      <input class="fi" id="mi-kmb-search" type="search" autocomplete="off" placeholder="${t('kmb_search_placeholder')}" aria-label="${t('kmb_search_placeholder')}" oninput="searchKMBProducts()" onkeydown="kmbSearchKeydown(event)" style="margin-bottom:6px">
+      <div class="kmb-search-results" id="mi-kmb-results" aria-live="polite" style="display:none"></div>
       <select class="fi" id="mi-kmb" onchange="applyKMBProduct(this.value)" style="cursor:pointer;font-weight:500">
         ${kmbOptionsHTML(m._kmb||'')}
       </select>
@@ -2124,7 +2161,7 @@ function renderResults(results){
       // below the ordered qty, show "placed / needed" in orange (the rest needs another unit).
       var short=ir.packed<ir.needed?' <span style="color:var(--color-warn-text)" title="'+t('warn_3d_partial')+'">/ '+ir.needed.toLocaleString()+'</span>':'';
       return `<tr>
-        <td><span class="dot" style="background:${ir.item.color}"></span>${esc(ir.item.name)}</td>
+        <td><span class="dot" style="background:${ir.item.color}"></span><span translate="no">${esc(ir.item.name)}</span></td>
         <td>${getTypeInfo(ir.item.type).emoji} ${ir.packed.toLocaleString()}${short}</td>
         <td class="r">${pcsLoaded.toLocaleString()}</td>
         <td class="r">${gr.across||'–'}</td>
@@ -2198,7 +2235,7 @@ function renderResults(results){
               <div class="pm-card-dims">${pm.L}×${pm.W}×${pm.H} ${t('unit_mm')} &nbsp;|&nbsp; ${t('pm_tare')}: ${pm.tare.toFixed(2)} ${t('unit_kg')}</div>
               ${pm.products.map(p=>`<div class="pm-product-row">
                 <span class="dot" style="background:${p.color}"></span>
-                <span>${esc(p.name)}</span>
+                <span translate="no">${esc(p.name)}</span>
                 <span class="pm-product-qty">${p.placed} ${t('col_pkg')} &nbsp; ${(p.pcs||p.placed).toLocaleString()} ${t('pm_pcs')} &nbsp; ${p.wt.toFixed(1)} ${t('unit_kg')}</span>
               </div>`).join('')}
             </div>`).join('')}
@@ -2650,11 +2687,12 @@ function packLayout(result){
   var stdItems=items.filter(function(P){ return !(P.it.usePallet&&P.it.pallet); });
   var palItems=items.filter(function(P){ return !!(P.it.usePallet&&P.it.pallet); });
 
-  // ─── Pallet items: pack multiple SKUs onto shared pallets, stacked vertically ───
-  // Same no-gap principle as the container layer packer, scoped to each pallet:
-  // per-pallet 3-axis cursor (pz height, px column mm, py boxes across). The open
-  // partial column/layer left by one SKU is COMPLETED by the next SKU before it
-  // moves on — no voids between SKUs on the same pallet.
+  // ─── Pallet items: plan mixed-SKU floor lanes, then build upward ───
+  // Each mixed-SKU pallet first reserves side-by-side lanes on the deck. Where carton
+  // footprints and quantities permit, lanes tile the floor before any SKU is stacked.
+  // Each lane then has its own skyline so cartons from one SKU cannot hide an unused
+  // side strip from another. Exact full-floor coverage is not always geometrically
+  // possible for arbitrary carton sizes, orientations, quantities, or stack limits.
   // จัดกลุ่มสินค้าที่ขึ้นพาเลทตาม "สเปคพาเลท" (ขนาด/ความสูงซ้อน/หน้าพาเลท/น้ำหนักพาเลท) แล้ววางแยก
   // โซนกันไปตามความยาวตู้ — เดิมใช้ palItems[0].it.pallet เป็นสเปคของ "ทุกใบ" ทั้งที่ pallet ผูกกับ group
   // ผู้ใช้ตั้งคนละขนาดได้จริงจากหน้าจอ ผลคือของจาก group ที่ตั้งพาเลทเล็กกว่าถูกวางบนพาเลทใหญ่เงียบๆ
@@ -2748,19 +2786,73 @@ function packLayout(result){
       slots.sort(function(m,n){ return m.x-n.x||m.y-n.y; });
 
       // เลน = แถบตามความกว้างพาเลทที่มี skyline ของตัวเอง · ปกติมีเลนเดียวเต็มความกว้าง
-      // เมื่อกลุ่มมี SKU เดียว จะได้เลนรองที่กล่องหมุน 90° ในแถบที่เหลือ (ดู palBoxPlan)
+      // SKU เดียวใช้ palBoxPlan หาเลนจากการหมุนกล่อง; SKU หลายชนิดแบ่งเลนตาม footprint (mixedPalLanePlan)
       // ⚠ ทุกเลนอยู่คนละช่วง y กันสนิท → กล่องข้ามเลนทับกันไม่ได้เชิงเรขาคณิต
       // ⚠ ต้องคำนวณเลนจาก slot **ใบนั้นเอง** ไม่ใช่ใบแรก — ใบที่หันขวาง (rot) มี along/across
       //   สลับกัน แผนเลนจึงต่างกัน · เคยพลาดตรงนี้: ใช้ slots[0] กับทุกใบแล้วได้ 4 กล่อง/ชั้น
       //   ทั้งที่ตัววางแผนบอก 5 = ความจุที่รายงานกับที่วางได้จริงไม่ตรงกัน
-      function makePal(slot,laneCfg){
+      function mixedPalLanePlan(slot,activeList){
+        var active=activeList.filter(function(a){return a.remaining>0;}),best=null;
+        function orientations(P){
+          var out=[{bL:P.bL,bW:P.bW}];
+          if(P.it.rotH!==false&&P.bL!==P.bW)out.push({bL:P.bW,bW:P.bL});
+          return out.filter(function(d){return d.bL>0&&d.bW>0&&d.bL<=slot.along&&d.bW<=slot.across;});
+        }
+        function build(seed,seedBox){
+          var lanes=[],used={},remaining=slot.across,score=0;
+          function add(a,d){
+            var n=Math.floor((remaining+1e-7)/d.bW),width=n*d.bW;
+            if(n<1||d.bL>slot.along)return false;
+            var qty=Math.min(a.remaining,Math.floor(slot.along/d.bL)*n);
+            if(qty<1)return false;
+            lanes.push({y0:slot.across-remaining,across:width,seedIdx:a.P.idx,bL:d.bL,bW:d.bW,nAcross:n});
+            score+=qty*d.bL*d.bW;remaining-=width;used[a.P.idx]=true;
+            return true;
+          }
+          if(!add(seed,seedBox))return null;
+          while(remaining>1e-7){
+            var pick=null;
+            active.forEach(function(a,ai){
+              if(used[a.P.idx])return;
+              orientations(a.P).forEach(function(d,oi){
+                var n=Math.floor((remaining+1e-7)/d.bW),qty=Math.min(a.remaining,Math.floor(slot.along/d.bL)*n),area=qty*d.bL*d.bW;
+                if(!n||qty<1)return;
+                var c={a:a,d:d,area:area,width:n*d.bW,ai:ai,oi:oi};
+                if(!pick||c.area>pick.area||(c.area===pick.area&&(c.width>pick.width||(c.width===pick.width&&c.ai<pick.ai))))pick=c;
+              });
+            });
+            if(!pick||!add(pick.a,pick.d))break;
+          }
+          lanes.forEach(function(lane){
+            lane.boxes={};
+            active.forEach(function(a){
+              var choices=orientations(a.P).filter(function(d){return d.bW<=lane.across&&Math.abs(lane.across/d.bW-Math.round(lane.across/d.bW))<1e-7;});
+              choices.sort(function(x,y){return Math.min(a.remaining,Math.floor(slot.along/y.bL)*Math.floor(lane.across/y.bW))-Math.min(a.remaining,Math.floor(slot.along/x.bL)*Math.floor(lane.across/x.bW));});
+              if(choices.length){var d=choices[0];lane.boxes[a.P.idx]={bL:d.bL,bW:d.bW,nAcross:Math.floor(lane.across/d.bW)};}
+            });
+          });
+          return {lanes:lanes,score:score};
+        }
+        active.forEach(function(a){orientations(a.P).forEach(function(d){
+          var candidate=build(a,d);
+          if(candidate&&(!best||candidate.score>best.score||(candidate.score===best.score&&candidate.lanes.length<best.lanes.length)))best=candidate;
+        });});
+        return best?best.lanes:[];
+      }
+      function makePal(slot,laneCfg,activeList){
         var lanes=null;
-        if(laneCfg){
+        if(laneCfg&&laneCfg.mixed){
+          var mixed=mixedPalLanePlan(slot,activeList||[]);
+          if(mixed.length)lanes=mixed;
+        }else if(laneCfg){
           var pl=palBoxPlan(slot.along,slot.across,laneCfg.bL,laneCfg.bW,laneCfg.rot);
-          if(pl.lanes.length>1)lanes=pl.lanes;
+          if(pl.lanes.length>1)lanes=pl.lanes.map(function(ln){
+            var boxes={};boxes[laneCfg.idx]={bL:ln.bL,bW:ln.bW,nAcross:ln.nAcross};
+            return {y0:ln.y0,across:ln.across,boxes:boxes};
+          });
         }
         var out=lanes
-          ? lanes.map(function(ln){ return {y0:ln.y0,across:ln.across,bL:ln.bL,bW:ln.bW,nAcross:ln.nAcross,fixed:true,sky:[{x0:0,x1:slot.along,z:0}]}; })
+          ? lanes.map(function(ln){ return {y0:ln.y0,across:ln.across,boxes:ln.boxes,fixed:true,sky:[{x0:0,x1:slot.along,z:0}]}; })
           : [{y0:0,across:slot.across,fixed:false,sky:[{x0:0,x1:slot.along,z:0}]}];
         return {lanes:out,places:[],counts:{},slot:slot,along:slot.along,across:slot.across,_bo:{}};
       }
@@ -2787,7 +2879,7 @@ function packLayout(result){
       // cache ต่อ (พาเลท, SKU) — ทิศต้องคงที่ภายในพาเลทใบเดียว ไม่งั้นกองจะสลับทิศมั่วในใบเดียว
       // เลนที่ fixed มาจาก palBoxPlan แล้ว ทิศกล่องถูกกำหนดโดยเลน ไม่ใช่โดย SKU
       function palBoxFor(pal,P,lane){
-        if(lane&&lane.fixed)return {bL:lane.bL,bW:lane.bW};
+        if(lane&&lane.fixed)return lane.boxes&&lane.boxes[P.idx]||null;
         if(!pal._bo[P.idx])pal._bo[P.idx]=palBox(P,pal.along,pal.across);
         return pal._bo[P.idx];
       }
@@ -2841,7 +2933,7 @@ function packLayout(result){
       // claim it immediately — a segment only gets skipped when NOTHING fits it right
       // now, and a new pallet only opens when NOTHING fits ANYWHERE in the current one.
       function fillPalletsGreedy(pallets,actives,slotList,capOf,laneSpec){
-        if(!pallets.length)pallets.push(makePal(slotList[0],laneSpec));
+        if(!pallets.length)pallets.push(makePal(slotList[0],laneSpec,actives));
         var guard=0;
         while(actives.some(function(a){return a.remaining>0;})&&guard++<200000){
           var cur=pallets[pallets.length-1];
@@ -2853,8 +2945,8 @@ function packLayout(result){
           if(openA){
             // ทิศกล่องต้องอ่านจากพาเลทที่คอลัมน์นั้นอยู่ (oc.pal) ไม่ใช่พาเลทปัจจุบัน — อาจต่างใบกันได้
             var oc=openA.openCol, ocLane=oc.pal.lanes[oc.lane||0];
-            var ob=palBoxFor(oc.pal,openA.P,ocLane), bW=ob.bW;
-            var nWp=ocLane.fixed?ocLane.nAcross:Math.max(1,Math.floor(ocLane.across/bW));
+            var ob=palBoxFor(oc.pal,openA.P,ocLane); if(!ob){openA.openCol=null;continue;} var bW=ob.bW;
+            var nWp=ocLane.fixed?ob.nAcross:Math.max(1,Math.floor(ocLane.across/bW));
             var fill=supportedCartons(oc.pal.places,oc.x,ocLane.y0+oc.cy*bW,oc.z,ob.bL,bW,nWp-oc.cy,Math.min(openA.remaining,nWp-oc.cy,palWeightRoom(oc.pal,openA.P)));
             if(fill<1){openA.openCol=null;continue;}
             oc.pal.places.push({idx:openA.P.idx,color:openA.P.it.color,x0:oc.x,y0:ocLane.y0+oc.cy*bW,z0:oc.z,L:ob.bL,W:fill*bW,H:openA.P.bH,nL:1,nW:fill});
@@ -2874,6 +2966,7 @@ function packLayout(result){
               var c2=actives[i];
               if(c2.remaining<=0||palWeightRoom(cur,c2.P)<1)continue;
               var c2b=palBoxFor(cur,c2.P,segLane);
+              if(!c2b)continue;
               if(seg.x1-seg.x0<c2b.bL)continue;
               // กล่องต้องวางตามความกว้างพาเลท (across) ได้อย่างน้อย 1 ใบ ไม่งั้นจะล้นออกนอกพาเลท
               // — nWp ด้านล่างใช้ Math.max(1,…) ซึ่งจะบังคับวาง 1 ใบแม้กล่องกว้างเกิน จึงต้องกันที่นี่
@@ -2902,7 +2995,7 @@ function packLayout(result){
                   if(cj.remaining<=0||palWeightRoom(cur,cj.P)<1)continue;
                   // ต้องเช็คเพดานชั้นด้วยเงื่อนไขเดียวกับตอนเลือกจริงด้านบน ไม่งั้นจะตอบว่า "ยังวางได้"
                   // ทั้งที่ติดเพดาน maxLayers แล้ว → วนซ้ำมาร์ค segment ตายไปเรื่อยๆ โดยไม่เปิดพาเลทใหม่
-                  var cjb=palBoxFor(cur,cj.P,_sl);
+                  var cjb=palBoxFor(cur,cj.P,_sl); if(!cjb)continue;
                   if(s.x1-s.x0>=cjb.bL&&cjb.bW<=_sl.across&&s.z+cj.P.bH<=Math.min(capOf(pallets.length-1),cj.P.effH)
                      &&hasFootprintSupport(cur.places,s.x0,_sl.y0,s.z,cjb.bL,cjb.bW)
                      &&palLayersUsed(cj,pallets.length-1,s.z)<cj.P.nH){ fitsSomewhere=true; break; }
@@ -2911,12 +3004,12 @@ function packLayout(result){
             }
             if(fitsSomewhere){ seg.z=1e15; continue; }   // dead segment only -- try the next lowest
             if(pallets.length>=slotList.length)break;      // no room anywhere, no slots left to open
-            pallets.push(makePal(slotList[pallets.length],laneSpec));
+            pallets.push(makePal(slotList[pallets.length],laneSpec,actives));
             continue;
           }
           var ab=palBoxFor(cur,a.P,segLane);
           var bL=ab.bL,bW=ab.bW,bH=a.P.bH;
-          var nWp=segLane.fixed?segLane.nAcross:Math.max(1,Math.floor(segLane.across/bW));
+          var nWp=segLane.fixed?ab.nAcross:Math.max(1,Math.floor(segLane.across/bW));
           var colsFit=Math.floor((seg.x1-seg.x0)/bL);
           var take=supportedCartons(cur.places,seg.x0,segLane.y0,seg.z,bL,bW,nWp,Math.min(a.remaining,colsFit*nWp,palWeightRoom(cur,a.P)));
           var fullCols=Math.floor(take/nWp), lastCol=take-fullCols*nWp;
@@ -2935,13 +3028,12 @@ function packLayout(result){
 
       var pallets=[];
       var actives=palItems.map(function(P){ return {P:P,remaining:P.placed,placedHere:0,openCol:null,zSeen:{}}; });
-      // ⭐ เลนรอง (กล่องหมุน 90° ในแถบที่เหลือ) เปิดได้เฉพาะกลุ่มที่มี SKU เดียว —
-      // หลาย SKU แชร์พาเลทได้จริงและต้องการความกว้างเลนไม่เท่ากัน จึงประกอบเป็นเลนชุดเดียวไม่ได้
-      // ต้องใช้เงื่อนไขเดียวกับฝั่งความจุ (palPlanScore ใช้ items.length===1) ไม่งั้นรายงานเกินจริง
-      var _laneSpec=null;
+      // SKU เดียวใช้แผนเลนรองที่หมุนกล่องได้; หลาย SKU สร้างเลนตามขนาดจริงของแต่ละชนิด
+      // ผ่าน mixedPalLanePlan เพื่อเปิดใช้พื้นที่ข้างกล่องบนพื้นก่อนเริ่มซ้อนชั้น
+      var _laneSpec=palItems.length>1?{mixed:true}:null;
       if(palItems.length===1){
         var _P0=palItems[0];
-        _laneSpec={bL:_P0.bL,bW:_P0.bW,rot:_P0.it.rotH!==false};
+        _laneSpec={idx:_P0.idx,bL:_P0.bL,bW:_P0.bW,rot:_P0.it.rotH!==false};
       }
       fillPalletsGreedy(pallets,actives,slots,function(){ return availH; },_laneSpec);
       actives.forEach(function(a){
@@ -2995,7 +3087,9 @@ function packLayout(result){
         entries.sort(function(a,b){ return b.P.perBoxWt-a.P.perBoxWt||b.placed-a.placed; });
         var re=[];
         var actives3=entries.map(function(e){ return {P:e.P,remaining:e.placed,placedHere:0,openCol:null,zSeen:{}}; });
-        fillPalletsGreedy(re,actives3,[pal.slot],function(){ return availH; });
+        // Keep the original lane geometry during the weight-order repack; omitting it
+        // would revert a mixed pallet to one full-width skyline and recreate floor gaps.
+        fillPalletsGreedy(re,actives3,[pal.slot],function(){ return availH; },_laneSpec);
         var ok2=actives3.every(function(a,idx){ return a.placedHere>=entries[idx].placed; });
         return (ok2&&re.length===1)?re[0]:pal;   // keep original order if re-pack doesn't fit
       });
@@ -3641,6 +3735,7 @@ function arrowHead(ctx, tx, ty, dx, dy, color){
 function midpt(a,b){return{x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
 
 // ── START ─────────────────────────────────────────────────────────────────────
+if(window.ControlLanguage)window.ControlLanguage.register(function(l){if(LANG!==l)setLang(l);});
 init();
 </script>
 </body>

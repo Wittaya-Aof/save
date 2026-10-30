@@ -39,3 +39,18 @@ test('installer scheduled task routes through Windows Script Host, not node cons
  assert.match(source,/New-ScheduledTaskAction -Execute \$wscript/);
  assert(source.indexOf('[IO.File]::WriteAllText($wrapper, $vbs)')<source.indexOf('Register-ScheduledTask'));
 });
+test('shipment scan wrapper runs the scanner hidden and propagates its exit code',{skip:process.platform!=='win32'},()=>{
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'hidden scan wrapper-'));
+ const fixture=path.join(temp,'fake scanner.mjs'), marker=path.join(temp,'ran.txt');
+ const wrapper=path.join(root,'tools','run-hidden-doc-scan.vbs');
+ fs.writeFileSync(fixture,`import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)},'ran'); process.exitCode=7;`);
+ try{
+  const wscript=path.join(process.env.SystemRoot,'System32','wscript.exe');
+  const r=spawnSync(wscript,['//B','//NoLogo',wrapper],{
+   windowsHide:true,encoding:'utf8',timeout:15000,
+   env:{...process.env,IMPORT_EXPORT_NODE_EXE:process.execPath,IMPORT_EXPORT_SCAN_SCRIPT:fixture},
+  });
+  assert.equal(r.status,7,r.stderr||r.error?.message);
+  assert.equal(fs.readFileSync(marker,'utf8'),'ran');
+ }finally{fs.rmSync(temp,{recursive:true,force:true});}
+});

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Freight Charges Comparison</title>
+<script src="/vendor/language.js?v=20261030-2"></script>
 <script src="/vendor/auth.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -621,7 +622,7 @@ function renderSummary(){
     const short=t[i].filled>0&&t[i].filled<M.maxFilled?M.maxFilled-t[i].filled:0;
     const gap=M.fair&&i===best&&nFilledOpt>1?Math.min(...t.filter((x,j)=>j!==i&&x.filled).map(x=>x.total))-t[i].total:null;
     return `<div class="sum ${t[i].unresolved?'warn':i===best?(M.fair?'best':'warn'):''}">
-    <div class="t"><span>${esc(o.label)||'ตัวเลือก '+(i+1)}</span><span>${KIND_LABEL[o.kind]||''}${isFcl(o.kind)?' × '+(num(o.containers)||1)+' ตู้':''}</span></div>
+    <div class="t"><span translate="${o.label?'no':'yes'}">${esc(o.label)||'ตัวเลือก '+(i+1)}</span><span>${KIND_LABEL[o.kind]||''}${isFcl(o.kind)?' × '+(num(o.containers)||1)+' ตู้':''}</span></div>
     <div class="v">${t[i].unresolved?'<span class="muted">ยังคำนวณไม่ได้</span>':t[i].filled?fmt(t[i].total,0)+' <span style="font-size:12px;font-weight:400">THB</span>':'<span class="muted">ยังไม่กรอกราคา</span>'}</div>
     <div class="s">${t[i].filled&&t[i].avg!=null?fmt(t[i].avg,4)+' THB / unit':''}${gap!=null?` · ประหยัดกว่าถัดไป ${fmt(gap,0)} THB`:''}</div>
     ${short?`<div class="s" style="color:var(--color-warn-text)">กรอกน้อยกว่าคอลัมน์ที่ครบที่สุด ${short} รายการ</div>`:''}

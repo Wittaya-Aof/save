@@ -28,6 +28,12 @@ The private `.env` selects `HOST=127.0.0.1`, `PORT=3002`, and this project's own
 
 ## Tests
 
+The session bar provides one Thai/English selector for Logistics Tracking, Container
+Calculator and Freight Charges Comparison. The choice is saved as `controlLanguage`
+in browser storage and follows embedded modules and other tabs. Business names,
+notes, input values and API data retain their original values. Run
+`node tests/global-language-browser.cjs` for the isolated language and draft checks.
+
 `npm test` runs the isolated API, permissions, financial, backup/restore and UI-method
 regressions plus the existing safe data-rule checks. `npm run test:full` also runs
 packing suites and browser journeys, including the actual HTTP application with
@@ -65,7 +71,7 @@ See `docs/VPS-DEPLOYMENT.md` for backup, deployment, cutover and rollback. Never
 ## Stabilization and roles
 
 Browser access now uses `/login` with the existing accounts and a Logout button
-on each standalone tool. Sessions expire after 30 minutes idle or 12 hours total;
+on each standalone tool. Sessions have no idle timeout and expire after 12 hours total;
 logout revokes the server token across tabs. See `docs/LOGIN-LOGOUT.md`.
 
 The shared `viewer` account reads the same business data as admin but cannot

@@ -45,3 +45,12 @@ test('daily work carries explicit owner, due date, shipment/PO identity', () => 
   assert.equal(due.items[0].shipmentId, row._shipmentId);
   assert.equal(due.items[0].poRefs[0].poNumber, 'PO1');
 });
+test('retired forwarder checklist item cannot create an unresolvable follow-up',()=>{
+ const checklist=Object.fromEntries(Object.keys(workflow.CHECKLIST).map(key=>[key,key==='forwarder_booking'?'pending':'done']));
+ const row={po_so:'PO-RETIRED-FIELD',_board:'import',stage:'received',dueDate:'2026-10-16',documentChecklist:checklist};
+ assert.equal(worklist.buildWorklist([row],'2026-10-16').now.some(bucket=>bucket.key==='due_workflow'),false);
+ assert.equal(row.documentChecklist.forwarder_booking,'pending','review must preserve historical data');
+ row.documentChecklist.commercial_invoice='pending';
+ const due=worklist.buildWorklist([row],'2026-10-16').now.find(bucket=>bucket.key==='due_workflow');
+ assert.ok(due);assert.match(due.items[0].why,/ค้าง 1 รายการ/);
+});

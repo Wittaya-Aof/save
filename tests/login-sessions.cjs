@@ -14,6 +14,8 @@ test('browser login/logout use revocable cookies and preserve existing role rule
   assert.equal((await post('/api/auth/login',{username:'viewer',password:'wrong'})).status,401);
   const login=await post('/api/auth/login',{username:'viewer',password:'fixture-viewer',next:'https://evil.invalid/'},null,{'x-forwarded-proto':'https'});
   assert.equal(login.status,200);const payload=await login.json();assert.equal(payload.canWrite,false);assert.equal(payload.next,'/');
+  assert.equal(payload.idleMs,0,'browser sessions must not have an inactivity timeout');
+  assert.ok(payload.expiresAt>Date.now()+11*60*60*1000,'login deadline must be the total session lifetime');
   const set=login.headers.get('set-cookie');assert.match(set,/HttpOnly/);assert.match(set,/SameSite=Lax/);assert.match(set,/Secure/);assert.match(login.headers.get('cache-control'),/no-store/);
   const cookie=set.split(';')[0];
   assert.equal((await request('/api/tracking',{headers:{cookie}})).status,200);

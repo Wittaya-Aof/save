@@ -21,6 +21,9 @@ const tasks = [['isolated unit and HTTP regression tests', ['--test', ...unit]],
 if (process.argv.includes('--packing')) for (const name of ['pack-invariants', 'pack-capacity', 'pack-plan', 'pack-lanes', 'pack-fuzz']) tasks.push([name, ['tests/' + name + '.mjs']]);
 if (process.argv.includes('--browser')) tasks.push(['isolated browser journeys', ['tests/frontend-browser.cjs']], ['browser against real fixture API', ['tests/browser-real-api.cjs']], ['login and logout browser journeys', ['tests/login-browser.cjs']], ['data availability browser status', ['tests/availability-browser.cjs']]);
 if (process.argv.includes('--browser')) {
+  tasks.push(['shared application language browser journeys', ['tests/global-language-browser.cjs']]);
+  tasks.push(['language form and identity regressions', ['--test', 'tests/language-review-browser.cjs']]);
+  tasks.push(['language asset cache upgrade regressions', ['--test', 'tests/language-cache-browser.cjs']]);
   tasks.push(['container correctness browser journeys', ['tests/container-correctness-browser.cjs']]);
   tasks.push(['pallet loading browser journeys', ['tests/pallet-loading-browser.cjs']]);
   tasks.push(['ETA and ATA browser journeys', ['tests/eta-ata-browser.cjs']]);

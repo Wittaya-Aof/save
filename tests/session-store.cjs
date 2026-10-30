@@ -1,5 +1,18 @@
 'use strict';
 const assert=require('node:assert/strict'),{test}=require('node:test');
+test('default sessions stay signed in while idle and retain their 12-hour limit and logout',()=>{
+ const {createSessionStore}=require('../lib/web-sessions.cjs');
+ let now=0;const sessions=createSessionStore({now:()=>now});
+ const token=sessions.create({user:'viewer',role:'viewer',canWrite:false},'proof');
+ for(const elapsed of [31*60*1000,2*60*60*1000,12*60*60*1000-1]){
+  now=elapsed;const session=sessions.get(token,'proof');
+  assert.ok(session,'inactivity must not expire the session');
+  assert.equal(session.idleMs,0);assert.equal(session.expiresAt,12*60*60*1000);
+ }
+ now=12*60*60*1000;assert.equal(sessions.get(token,'proof'),null);
+ const fresh=sessions.create({user:'admin'},'proof');sessions.revoke(fresh);
+ assert.equal(sessions.get(fresh,'proof'),null);
+});
 test('session tokens expire on idle/absolute time and revoke when account proof changes',()=>{
  let api;assert.doesNotThrow(()=>{api=require('../lib/web-sessions.cjs');},'a revocable server session store is required');
  let now=0;const sessions=api.createSessionStore({now:()=>now,idleMs:100,absoluteMs:250,max:2});

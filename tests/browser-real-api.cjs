@@ -21,11 +21,11 @@ const { fixture } = require('./persistence-permissions.cjs');
     await page.goto(f.base+'/login');await page.locator('#username').fill('admin');await page.locator('#password').fill('fixture-admin');await page.getByRole('button',{name:'เข้าสู่ระบบ',exact:true}).click();await page.waitForURL(f.base+'/');
     await page.getByText('PO-FIXTURE', { exact: true }).first().click();
     await page.getByRole('button', { name: 'แก้ไข', exact: true }).click();
-    await page.getByLabel('ผู้รับผิดชอบ').fill('Browser Fixture Owner');
+    await page.getByLabel('กำหนดติดตาม').fill('2026-11-05');
     await page.getByRole('button', { name: 'บันทึก', exact: true }).click();
     await page.waitForFunction(async () => {
       const response = await fetch('/api/tracking'); const json = await response.json();
-      return json.rows[0].owner === 'Browser Fixture Owner';
+      return json.rows[0].dueDate === '2026-11-05';
     });
     const saved = (await f.request('/api/tracking')).body.rows[0];
     assert(saved._ts > 100); assert.match(saved._shipmentId, /^shp_[a-f0-9]{32}$/);
