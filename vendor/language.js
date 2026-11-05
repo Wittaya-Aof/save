@@ -551,6 +551,7 @@ Export · ทางเรือ|Export · Sea
 จำนวนหน่วยสินค้า|Product units
 ชื่อ Freight Forwarder|Freight forwarder name
 ดึงอัตราล่าสุดจาก Odoo|Fetch latest Odoo rate
+ดึงอัตราจาก Odoo ไม่สำเร็จ:|Could not fetch Odoo rates:
 ลบคอลัมน์นี้|Delete this column
 เพิ่มรายการในหมวดนี้|Add item to this section
 ลบรายการที่เพิ่มเอง|Delete custom item

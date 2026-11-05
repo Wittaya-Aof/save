@@ -510,22 +510,25 @@ function renderHead(){
   const T=TEMPLATES[Q.type], h=Q.head, air=Q.type==='import-air';
   const partyList=vendors.length?`list="vendorList"`:'';
   $('headGrid').innerHTML=[
+    field('บริษัท', `<select id="quoteCompany"><option value="">— KOB / BTV —</option>${[[1,'KOB'],[2,'BTV']].map(([id,label])=>`<option value="${id}" ${quoteCompany(Q)===id?'selected':''}>${label}</option>`).join('')}</select>`),
     field(T.refLabel, inp('head.ref',h.ref,`list="poList" placeholder="${Q.type==='export-sea'?'เช่น CI-ITS2605-001':'เช่น KOBPO2605-08758'}"`)),
     field(T.partyLabel, inp('head.party',h.party,`${partyList} placeholder="ชื่อผู้ขาย / ผู้รับ"`)),
     field('PO Category', inp('head.category',h.category,'placeholder="เช่น Finished Goods / Packaging"')),
     field('Product Group', inp('head.group',h.group,'placeholder="เช่น Kiss My Body"')),
     field('Total Qty', numInp('head.qty',h.qty,'placeholder="จำนวนหน่วยสินค้า"'),'units'),
     field(Q.type==='export-sea'?'Incoterm':'Term', `<select data-p="head.term">${T.termOptions.map(t=>`<option ${t===h.term?'selected':''}>${t}</option>`).join('')}</select>`),
-    field('USD Exchange Rate (BOT)', numInp('head.fx',h.fx,'step="0.0001"')+`<button class="btn btn-outline btn-sm no-print" id="btnFx" title="ดึงอัตราล่าสุดจาก Odoo">↻</button>`,'THB/USD'+(h.fxAsOf?` · ${esc(h.fxAsOf)}`:'')),
+    field('USD Exchange Rate (Odoo)', numInp('head.fx',h.fx,'step="0.0001"')+`<button class="btn btn-outline btn-sm no-print" id="btnFx" title="ดึงอัตราล่าสุดจาก Odoo">↻</button>`,'THB/USD'+(h.fxAsOf?` · ${esc(h.fxAsOf)}`:'')),
     air?field('Gross Weight (GW)', numInp('head.gw',h.gw),'KGS'):field('Measurement (CBM)', numInp('head.cbm',h.cbm,'step="0.001"'),'CBM'),
     air?field('Volume Weight (VW)', numInp('head.vw',h.vw),'KGS'):field('Gross Weight (GW)', numInp('head.gw',h.gw),'KGS'),
     field('Document Ref.', inp('head.docRef',h.docRef)),
     field('วันที่จัดทำ', `<input type="date" data-p="createdAt" value="${esc(Q.createdAt)}">`),
     field('รหัสใบเปรียบเทียบ', `<input value="${esc(Q.id)}" readonly style="color:var(--color-text-muted);font-family:var(--font-mono);font-size:12px">`),
   ].join('');
+  $('quoteCompany').onchange=e=>{setQuoteCompany(num(e.target.value));touch();renderAll();};
   $('btnFx').onclick=async()=>{
-    const quote=Q;await loadFx(true);if(Q!==quote)return;
-    if(fxRates?.USD){Q.head.fx=+fxRates.USD.toFixed(4);Q.head.fxAsOf=fxRates.USD_asOf;touch();renderAll();toast('อัตรา USD '+Q.head.fx+' ('+Q.head.fxAsOf+')');}
+    const quote=Q,revision=editRevision;const rates=await loadFx(true);if(Q!==quote||editRevision!==revision)return;
+    if(rates?.USD){Q.head.companyId=rates.companyId;Q.head.fx=+rates.USD.toFixed(4);Q.head.fxAsOf=rates.USD_asOf;touch();renderAll();toast('อัตรา USD '+Q.head.fx+' ('+Q.head.fxAsOf+')');}
+    else if(rates?.error)toast('ดึงอัตราจาก Odoo ไม่สำเร็จ: '+rates.error,true);
     else toast('ไม่พบอัตรา USD ที่ตรงกับบริษัทของใบนี้ — กรุณาตรวจบริษัทและกรอกอัตราแลกเปลี่ยนที่ถูกต้อง',true);
   };
 }
@@ -794,27 +797,40 @@ async function deleteQuote(){
   }catch(e){toast('ลบไม่สำเร็จ: '+e.message,true);}
   finally{pendingWrites.delete(id);renderToolbar();}
 }
+function quoteCompany(quote){
+  const explicit=num(quote?.head?.companyId??quote?.head?.company_id??quote?.companyId??quote?.company_id);
+  if(explicit!=null)return explicit;
+  const matches=pos.filter(p=>String(p.po).toUpperCase()===String(quote?.head?.ref||'').trim().toUpperCase());
+  const ids=[...new Set(matches.map(p=>num(p.companyId)).filter(id=>id===1||id===2))];
+  return ids.length===1?ids[0]:null;
+}
+function setQuoteCompany(companyId){
+  if(quoteCompany(Q)!==companyId){Q.head.fx=null;Q.head.fxAsOf='';}
+  Q.head.companyId=companyId;delete Q.head.company_id;delete Q.companyId;delete Q.company_id;fxRates=null;
+}
 async function loadFx(force){
   // Older quotes have no company scope. Only a genuinely global rate can be
   // filled automatically in that case; never use whichever company row is last.
-  const companyId=num(Q?.head?.companyId??Q?.head?.company_id??Q?.companyId??Q?.company_id);
+  const quote=Q,companyId=quoteCompany(Q);
   try{
-    const j=await api('/api/fx-rates'+(force?'?force=1':''));fxRates={companyId};
+    const j=await api('/api/fx-rates'+(force?'?force=1':''));const selected={companyId};
     const rows=(j.rows||[]).filter(r=>num(r.thb_per_unit)>0);
     for(const currency of new Set(rows.map(r=>r.currency))){
       const global=rows.find(r=>r.currency===currency&&r.company_id==null);
       const row=(companyId!=null?rows.find(r=>r.currency===currency&&num(r.company_id)===companyId):null)||global;
-      if(row){fxRates[currency]=num(row.thb_per_unit);fxRates[currency+'_asOf']=String(row.as_of||'').slice(0,10);}
+      if(row){selected[currency]=num(row.thb_per_unit);selected[currency+'_asOf']=String(row.as_of||'').slice(0,10);}
     }
+    if(Q!==quote||quoteCompany(Q)!==companyId)return null;
+    fxRates=selected;return selected;
   }
-  catch(e){ fxRates=null; }
+  catch(e){if(Q===quote&&quoteCompany(Q)===companyId)fxRates=null;return {error:e.message};}
 }
 // ตัวเลือกใน datalist มีเพดานไว้กันหน้าหน่วง แต่ถ้าตัดจริงต้องบอก ไม่ใช่ตัดเงียบ
 // (กฎเดิมของโปรเจกต์: ห้ามตัดข้อมูลโดยไม่บอก — ผู้ใช้ที่พิมพ์ PO แล้วไม่ขึ้นจะนึกว่าไม่มี PO นั้น)
 const DL_CAP_PO=3000, DL_CAP_VENDOR=3000;
 async function loadLists(){
   const cut=[];
-  try{ const j=await api('/api/import-pos'); pos=(j.rows||[]).map(r=>({po:r.po_number,supplier:r.supplier,cat:r.goods_category,qty:null})); }catch(e){ pos=[]; }
+  try{ const j=await api('/api/import-pos'); pos=(j.rows||[]).map(r=>({po:r.po_number,companyId:num(r.company_id),supplier:r.supplier,cat:r.goods_category,qty:null})); }catch(e){ pos=[]; }
   try{ const j=await api('/api/vendors'); vendors=(j.rows||[]).map(r=>r.name).filter(Boolean); if(j.truncated)cut.push(`รายชื่อผู้ให้บริการจาก Odoo ถูกตัดที่ ${vendors.length} จาก ${j.total} ราย`); }catch(e){ vendors=[]; }
   let dl=$('poList'); if(!dl){dl=document.createElement('datalist');dl.id='poList';document.body.appendChild(dl);}
   dl.innerHTML=pos.slice(0,DL_CAP_PO).map(p=>`<option value="${esc(p.po)}">${esc(p.supplier||'')}</option>`).join('');
@@ -825,9 +841,11 @@ async function loadLists(){
   if(cut.length)toast('หมายเหตุ: '+cut.join(' · '),true);
 }
 function autofillFromPO(ref){
-  const p=pos.find(x=>String(x.po).toUpperCase()===String(ref||'').trim().toUpperCase()); if(!p)return;
+  const matches=pos.filter(x=>String(x.po).toUpperCase()===String(ref||'').trim().toUpperCase());
+  const p=matches.length===1?matches[0]:matches.find(x=>num(x.companyId)===quoteCompany(Q));if(!p)return;
   // เติมค่าลงช่องตรงๆ ไม่ renderHead() — ผู้ใช้มักกด Tab ไปช่องถัดไปแล้วเริ่มพิมพ์ทันที ถ้าวาดใหม่ช่องนั้นจะหลุดโฟกัส
   let changed=false;
+  if(p.companyId&&(num(Q.head.companyId)!==p.companyId)){setQuoteCompany(p.companyId);const select=$('quoteCompany');if(select)select.value=p.companyId;changed=true;for(const key of ['fx','fxAsOf']){const el=document.querySelector(`[data-p="head.${key}"]`);if(el)el.value=Q.head[key]??'';}}
   const setIn=(key,val)=>{ Q.head[key]=val; const el=document.querySelector(`[data-p="head.${key}"]`); if(el)el.value=val; changed=true; };
   if(!Q.head.party&&p.supplier)setIn('party',p.supplier);
   if(!Q.head.category&&p.cat)setIn('category',p.cat);
@@ -839,10 +857,10 @@ function exportXlsx(){
   if(!window.XLSX){toast('ไม่พบไลบรารี Excel (vendor/xlsx.full.min.js)',true);return;}
   const T=TEMPLATES[Q.type], t=totals(), h=Q.head, air=Q.type==='import-air', nOpt=Q.options.length;
   const aoa=[];
-  aoa.push([T.title]); aoa.push(['Kiss of Beauty Co., Ltd. (Head Office)']); aoa.push([]);
+  aoa.push([T.title]); aoa.push([quoteCompany(Q)===2?'BTV':quoteCompany(Q)===1?'Kiss of Beauty Co., Ltd. (Head Office)':'']); aoa.push([]);
   aoa.push(['SHIPMENT DETAILS']);
   aoa.push([T.refLabel,h.ref,'',T.partyLabel,h.party,'',Q.type==='export-sea'?'Incoterm':'Term',h.term]);
-  aoa.push(['PO Category',h.category,'','Product Group',h.group,'','USD Exchange Rate',h.fx,'THB/USD (BOT)'+(h.fxAsOf?' '+h.fxAsOf:'')]);
+  aoa.push(['PO Category',h.category,'','Product Group',h.group,'','USD Exchange Rate',h.fx,'THB/USD'+(h.fxAsOf?' '+h.fxAsOf:'')]);
   aoa.push(['Total Qty',h.qty,'','Document Ref.',h.docRef,'',air?'Gross Weight (GW)':'Measurement (CBM)',air?h.gw:h.cbm,air?'KGS':'CBM']);
   if(air)aoa.push(['','','','','','','Volume Weight (VW)',h.vw,'KGS']); else aoa.push(['','','','','','','Gross Weight (GW)',h.gw,'KGS']);
   aoa.push([]);

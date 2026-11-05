@@ -2448,7 +2448,7 @@ const server = http.createServer(async (req, res) => {
             LIMIT 1
           ) chosen ON TRUE
           ORDER BY c.name, target.company_id
-        `, false, { orderCols: "r.company_id::text || '|' || r.currency AS _ord", maxRows: 500 });
+        `, new URL('http://x' + req.url).searchParams.get('force') === '1', { orderCols: "r.company_id::text || '|' || r.currency AS _ord", maxRows: 500 });
         // Odoo เก็บ rate = จำนวนหน่วยเงินนั้นต่อ 1 บาท → thb_per_unit = 1/rate
         const out = rows.map(r => {
           const rate = parseFloat(r.rate) || 0;

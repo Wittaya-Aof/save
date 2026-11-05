@@ -21,7 +21,7 @@ Module._load=function(name,...rest){
  if(name==='pg')return {Pool:class{on(){}async query(){throw Error('No database in fixture')}}};
  if(name.endsWith('/odoo-api.cjs'))return {createOdooClient:()=>({authenticate:async()=>1,searchCount:async()=>0})};
  if(name.endsWith('/odoo-boards.cjs'))return {createOdooBoards:()=>({boards:async board=>board==='import'?[{id:1,company_id:1,company_code:'KOB',po_number:'PO-FIXTURE',supplier:'Fixture Supplier',currency:'THB',currency_rate:1,amount_total:1000,odoo_state:'purchase'}]:[],poLines:async()=>[]})};
- if(name.endsWith('/odoo-services.cjs'))return {createOdooServices:()=>({vendors:async()=>({rows:[],total:0}),vendorScorecard:async()=>[],glReconciliation:async()=>[],fxRates:async()=>[],logisticsBills:async()=>({billRows:[],poRows:[]})})};
+ if(name.endsWith('/odoo-services.cjs'))return {createOdooServices:()=>({vendors:async()=>({rows:[],total:0}),vendorScorecard:async()=>[],glReconciliation:async()=>[],fxRates:async()=>{const f=path.join(process.env.DATA_DIR,'fixture-fx.json');return fs.existsSync(f)?JSON.parse(fs.readFileSync(f)):[];},logisticsBills:async()=>({billRows:[],poRows:[]})})};
  if(name==='fs')return new Proxy(fs,{get(t,k){if(k==='writeFileSync')return function(file,...args){if(String(file).includes('tracking_data.json')&&fs.existsSync(path.join(process.env.DATA_DIR,'deny-write')))throw Error('fixture disk failure');return fs.writeFileSync(file,...args)};return t[k]}});
  return real.call(this,name,...rest);
 };`);

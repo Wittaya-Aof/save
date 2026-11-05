@@ -51,6 +51,26 @@ test('FX refresh on an unknown company keeps entered rate and explains missing c
   const h=fresh();h.c.fetch=async()=>({ok:true,json:async()=>({ok:true,rows:[{currency:'USD',company_id:1,thb_per_unit:33,as_of:'2026-10-19'},{currency:'USD',company_id:2,thb_per_unit:36,as_of:'2026-10-19'}]})});
   h.run('Q.head.fx=34;renderHead()');await h.get('btnFx').onclick();assert.equal(h.run('Q.head.fx'),34);assert.match(h.get('toast').textContent,/บริษัท/);
 });
+test('FX company selector uses company-specific Odoo rates and persists scope',async()=>{
+  const h=fresh();h.c.fetch=async()=>({ok:true,json:async()=>({ok:true,rows:[{currency:'USD',company_id:1,thb_per_unit:33.8833,as_of:'2026-11-04'},{currency:'USD',company_id:2,thb_per_unit:36,as_of:'2026-11-03'}]})});
+  h.run('renderHead()');assert.match(h.get('headGrid').innerHTML,/id="quoteCompany"/);
+  h.get('quoteCompany').onchange({target:{value:'2'}});assert.equal(h.run('Q.head.fx'),null);
+  await h.get('btnFx').onclick();assert.equal(h.run('Q.head.fx'),36);assert.equal(h.run('Q.head.companyId'),2);assert.equal(h.run('Q.head.fxAsOf'),'2026-11-03');
+  assert.equal(JSON.parse(h.memory.get('kobFreightDraft')).head.companyId,2);
+  h.get('quoteCompany').onchange({target:{value:'1'}});assert.equal(h.run('Q.head.fx'),null);await h.get('btnFx').onclick();assert.equal(h.run('Q.head.fx'),33.8833);
+});
+test('FX legacy PO infers a unique company but ambiguous PO never chooses arbitrarily',async()=>{
+  const h=fresh();h.run("pos=[{po:'PO-A',companyId:2}];Q.head.ref='PO-A';");assert.equal(h.run('quoteCompany(Q)'),2);
+  h.run("pos.push({po:'PO-A',companyId:1})");assert.equal(h.run('quoteCompany(Q)'),null);
+});
+test('FX API failure is distinct from a missing company rate and preserves entered FX',async()=>{
+  const h=fresh();h.c.fetch=async()=>{throw Error('Fixture unavailable');};h.run('renderHead()');await h.get('btnFx').onclick();assert.equal(h.run('Q.head.fx'),33);assert.match(h.get('toast').textContent,/ไม่สำเร็จ/);
+});
+test('FX late response cannot overwrite a changed company or a manual rate draft',async()=>{
+  const h=fresh();let release;h.c.fetch=()=>new Promise(r=>release=()=>r({ok:true,json:async()=>({ok:true,rows:[{currency:'USD',company_id:1,thb_per_unit:33,as_of:'2026-11-04'}]})}));
+  h.run('Q.head.companyId=1;renderHead()');let pending=h.get('btnFx').onclick();h.run('setQuoteCompany(2);touch()');release();await pending;assert.equal(h.run('Q.head.fx'),null);
+  h.run('setQuoteCompany(1);renderHead()');pending=h.get('btnFx').onclick();h.run('Q.head.fx=35;touch()');release();await pending;assert.equal(h.run('Q.head.fx'),35);
+});
 test('F2 save acknowledgement preserves later edits dirty and rebases recovery draft',async()=>{
   const h=fresh();h.run('touch()');const p=pending(h);h.run("Q.head.party='LATER EDIT';touch()");p.release();await p.promise;
   assert.equal(h.run('dirty'),true);assert.equal(h.run('Q.head.party'),'LATER EDIT');const draft=JSON.parse(h.memory.get('kobFreightDraft'));assert.equal(draft.head.party,'LATER EDIT');assert.equal(draft.updatedAt,'2026-10-19T00:00:01.000Z');

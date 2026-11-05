@@ -14,7 +14,11 @@ async function audit(page,label){
   for(const role of ['admin','viewer']){
    const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage();
    page.on('pageerror',e=>errors.push(e.message));
-   await page.route('**/api/import-pos',async route=>{const response=await route.fetch();const data=await response.json();data.rows.forEach(row=>{row.supplier='บริษัท วันใหม่ จำกัด';});await route.fulfill({response,json:data});});
+   // This is a fixed translation fixture. Read it before registering the route;
+   // an in-flight route.fetch() response can be disposed during navigation.
+   const importPayload=(await f.request('/api/import-pos')).body;
+   importPayload.rows.forEach(row=>{row.supplier='บริษัท วันใหม่ จำกัด';});
+   await page.route('**/api/import-pos',route=>route.fulfill({json:importPayload}));
    await page.goto(f.base+'/login');await page.locator('#username').fill(role);await page.locator('#password').fill('fixture-'+role);await page.locator('#submit').click();await page.waitForURL(f.base+'/');
    const language=page.locator('#controlLanguage');await language.waitFor();
    const languageBox=await language.boundingBox(),logoutBox=await page.locator('#controlLogout').boundingBox();

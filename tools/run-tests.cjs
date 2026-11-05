@@ -24,6 +24,7 @@ if (process.argv.includes('--browser')) {
   tasks.push(['shared application language browser journeys', ['tests/global-language-browser.cjs']]);
   tasks.push(['language form and identity regressions', ['--test', 'tests/language-review-browser.cjs']]);
   tasks.push(['language asset cache upgrade regressions', ['--test', 'tests/language-cache-browser.cjs']]);
+  tasks.push(['freight company exchange rate browser journeys', ['tests/freight-fx-browser.cjs']]);
   tasks.push(['container correctness browser journeys', ['tests/container-correctness-browser.cjs']]);
   tasks.push(['pallet loading browser journeys', ['tests/pallet-loading-browser.cjs']]);
   tasks.push(['ETA and ATA browser journeys', ['tests/eta-ata-browser.cjs']]);
